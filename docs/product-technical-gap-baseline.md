@@ -14,6 +14,7 @@ This baseline is code-current for the bootstrap PR. Exact source heads, base tip
 | Hop-by-hop / forwarding trust | Implemented on branch | Pingora standard request policy plus explicit removal/reconstruction of forwarding identity; trusted client-IP chain configuration remains a future bounded contract |
 | Retry policy | Implemented, intentionally minimal | `max_retries=1` means one total upstream attempt and zero generic automatic retries; domain idempotency/replay policy stays with the product owner |
 | Request limits | Partial | Declared and streamed/chunked body size are bounded; configurable header, connection, concurrency and backpressure budgets remain gaps |
+| Failure recovery | Partial executable evidence | A compiled-binary loopback contract requires a refused origin connection to return HTTP 502 within the configured connection-budget envelope and proves `/readyz` remains healthy afterward. Timeout, reset, partial-response, streaming and saturation cases remain gaps |
 | Health | Implemented on branch | `/livez` and `/readyz` are served through the production Pingora path; readiness does not invent product-specific dependency probes |
 | Graceful drain | Implemented candidate behavior | SIGTERM uses a bounded 5 s grace plus 10 s runtime shutdown timeout inside a 30 s external termination budget; exact-release evidence must be reacquired |
 | Logs / metrics / traces | Partial | Low-cardinality counters and credential/cookie-safe coarse access logs exist; tracing and richer bounded operability evidence remain gaps |
@@ -45,7 +46,11 @@ GREEN for an edge migration requires a protected immutable Context Graph release
 
 ## Enterprise Architecture dependency — read only
 
-`ContextualWisdomLab/enterprise-architecture-core` is also not writable from this loop. Current Context Fabric projection tail is Draft #40, live head `b3ec93a42528ab0defc0116ac4695d669298240f`, based on #39 `b44635b686c66e78ebd7f1218343a933a510cd89`. At the latest read, exact-head `ci` (`33536723144`), `runtime-readiness` (`33536722617`), and `supply-chain` (`33536723303`) are terminal success; no submitted review or inline review thread exists. The earlier terminal-planner RED in which a fixture selected `started` instead of the verified target state is predecessor evidence: the current head records and verifies the causal fixture-isolation repair. The repository still has no GitHub Release, and #40 remains Draft/provisional against an unreleased Context Graph dependency.
+`ContextualWisdomLab/enterprise-architecture-core` is also not writable from this loop. The DDD parent for the Context Fabric projection moved during the latest sweep: Draft #39 is now exact `731b3b60264aa9a4d11db3fa5a68f86df944dd0c` on #36 `fff51536c64ba751a37d4ccfd8d2865296b115b9`. This parent now owns the explicit hosted-runner acquisition repair. At the latest read, exact-head `supply-chain` (`33538539326`) and `runtime-readiness` (`33538539392`) are terminal success while `ci` (`33538539197`) is still in progress. A queued or in-progress lane is non-passing evidence.
+
+The Context Fabric projection child #40 remains exact `b3ec93a42528ab0defc0116ac4695d669298240f`, but its recorded base is the superseded #39 head `b44635b686c66e78ebd7f1218343a933a510cd89`. Fresh comparison against current #39 reports `diverged`, merge base `b44635b...`, `ahead_by=67`, `behind_by=4`. Therefore #40's former terminal GREEN `ci` (`33536723144`), `runtime-readiness` (`33536722617`), and `supply-chain` (`33536723303`) are historical only and cannot satisfy the current parent/child integration boundary. The earlier terminal-planner fixture defect was causally repaired on that historical child head, but that repair must be preserved and re-proven after a non-destructive restack. The repository still has no GitHub Release.
+
+The Context Fabric owner path must first make current #39 terminal-clean under live policy, then non-destructively restack #40 onto that exact parent while preserving only child-owned Context Fabric/EA projection delta, and reacquire every applicable exact-head repository/security/coverage/package/SBOM/provenance/review artifact. Pingora does not perform that source or PR-state mutation.
 
 The owner path is correct when it binds one released `contracts/context-graph-dependency.json`, requires exact `ContextualWisdomLab/<repository>` ownership, `direction_code=inbound_projection`, `exchange_kind=context_assertion_cloudevent`, `ea_core_owns=false`, canonical/source refs, truth status, effective/system time and provenance, and rejects provisional PR heads as release authority.
 
@@ -55,8 +60,9 @@ For each eventual edge migration, EA admission must version `current technology/
 
 1. Reacquire exact-current-head CI, 100% owned production line/region coverage, rustdoc, k6, OCI, SAST and supply-chain evidence after every source or documentation movement; repair only evidence-backed repository defects.
 2. Keep `.github#1605` and `.github#810` fail-closed until their respective policy and GitHub dependency-review availability owner paths are resolved; do not suppress `RUSTSEC-2024-0388` generically.
-3. Add explicit concurrency/backpressure budgets and broader upstream/network failure recovery evidence, then benchmark representative consumer traffic before adopting a production 20 ms p95 objective.
-4. Add a protected release path that publishes an immutable image digest with provenance and rehearse rollback against that exact digest.
-5. Satisfy then-live protected-branch review/governance without self-approval, bot-as-human claims, stale evidence transfer, or routine administrator bypass.
-6. Wait for an immutable released Context Graph bundle and compatible GREEN EA admission path before asserting authoritative architecture execution state.
-7. Only then characterize and migrate the highest-impact consumer whose actual responsibility belongs to the shared edge bounded context.
+3. Make EA #39 terminal-clean on its current exact head, then require the Context Fabric owner to restack #40 non-destructively on that exact parent and reacquire all exact-head admission/provenance evidence; do not transfer the historical #40 GREEN runs.
+4. Add explicit concurrency/backpressure budgets and broader timeout/reset/streaming/network-failure recovery evidence, then benchmark representative consumer traffic before adopting a production 20 ms p95 objective.
+5. Add a protected release path that publishes an immutable image digest with provenance and rehearse rollback against that exact digest.
+6. Satisfy then-live protected-branch review/governance without self-approval, bot-as-human claims, stale evidence transfer, or routine administrator bypass.
+7. Wait for an immutable released Context Graph bundle and a coherent compatible GREEN EA admission path before asserting authoritative architecture execution state.
+8. Only then characterize and migrate the highest-impact consumer whose actual responsibility belongs to the shared edge bounded context.
