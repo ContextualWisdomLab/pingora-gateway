@@ -93,6 +93,10 @@ fn load_trust_bundle(path: &Path) -> Result<Box<[X509]>, PeerBuildError> {
             path: path.to_path_buf(),
             reason: error.to_string(),
         })?;
+    require_certificates(path, certificates)
+}
+
+fn require_certificates(path: &Path, certificates: Vec<X509>) -> Result<Box<[X509]>, PeerBuildError> {
     if certificates.is_empty() {
         return Err(PeerBuildError::InvalidTrustBundle {
             path: path.to_path_buf(),
@@ -100,4 +104,22 @@ fn load_trust_bundle(path: &Path) -> Result<Box<[X509]>, PeerBuildError> {
         });
     }
     Ok(certificates.into_boxed_slice())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parsed_trust_bundle_must_contain_a_certificate() {
+        let path = Path::new("/tmp/empty-trust-bundle.pem");
+
+        assert_eq!(
+            require_certificates(path, Vec::new()).unwrap_err(),
+            PeerBuildError::InvalidTrustBundle {
+                path: path.to_path_buf(),
+                reason: "bundle contains no certificates".to_string(),
+            }
+        );
+    }
 }
