@@ -13,9 +13,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use cwl_pingora_gateway::runtime_policy::{
-    V1_GRACE_PERIOD_SECONDS, V1_TERMINATION_BUDGET_SECONDS,
-};
+use cwl_pingora_gateway::runtime_policy::{V1_GRACE_PERIOD_SECONDS, V1_TERMINATION_BUDGET_SECONDS};
 use tempfile::NamedTempFile;
 
 struct GatewayProcess(Child);
