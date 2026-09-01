@@ -1,27 +1,134 @@
 # Pingora Gateway
 
-`pingora-gateway` is ContextualWisdomLab's shared Rust edge-runtime boundary for CWL-managed reverse-proxy traffic. It is built on Cloudflare Pingora, but consumer products integrate through the repository's versioned edge configuration rather than through Pingora types.
+**A shared Rust edge runtime for ContextualWisdomLab services that need a small, explicit reverse-proxy boundary.**
 
-The current `0.1.0` development line is intentionally narrow: one traffic listener, one separately declared metrics listener, one explicitly approved HTTP or HTTPS upstream, fail-closed configuration, bounded request bodies and upstream I/O budgets, liveness/readiness endpoints, credential-safe low-cardinality telemetry, distrust of client-supplied forwarding identity, and a production binary that runs through Pingora. Product-specific routing, static-site semantics, WebSocket policy, load balancing, dynamic reload, downstream TLS termination, ACME, and Kubernetes Gateway API are separate increments and must be justified by a real consumer migration.
+Pingora Gateway centralizes edge concerns that should not be reimplemented independently by every product: upstream connection handling, bounded transport policy, request-size limits, health/readiness, coarse telemetry, and container hardening. It is built on Cloudflare Pingora while exposing its own reviewed configuration contract to consumers instead of leaking Pingora types into product APIs.
 
-## Run locally
+> This README describes the current candidate branch. Protected `main` remains shipped authority until this Draft satisfies current review, security, supply-chain, and integration governance.
 
-Create a configuration from `examples/gateway.yaml`, point the upstream address at a service you control, and run:
+## Why it exists
 
-```bash
-cargo run --bin cwl-pingora-gateway -- --config ./gateway.yaml
+Shared infrastructure is useful only when it reduces duplication **without absorbing product authority**. Pingora Gateway therefore owns the reusable HTTP edge boundary and deliberately leaves business routing, product authentication, identity, certificate authority, workflow state, and domain-specific retry/failover policy with their owning products.
+
+| Need | What the current gateway provides |
+| --- | --- |
+| Edge runtime | Executable Rust/Pingora reverse-proxy path |
+| Explicit upstream | One reviewed HTTP or HTTPS upstream in the v1 configuration contract |
+| Bounded I/O | Connect/read/write/idle budgets and request-body limits |
+| Forwarding safety | Distrust of client-supplied forwarding identity and hop-by-hop header policy |
+| Operations | `/livez`, `/readyz`, low-cardinality Prometheus metrics, and coarse credential-safe access logs |
+| Container boundary | Non-root runtime, read-only-root compatibility, dropped Linux capabilities, and `no-new-privileges` contract |
+| Reproducibility | Locked Rust dependency graph and immutable Pingora git revision |
+
+## Product boundary
+
+```text
+Client traffic
+      │
+      ▼
+┌─────────────────────────────┐
+│       Pingora Gateway       │
+│ shared transport / edge     │
+└──────────────┬──────────────┘
+               │
+         explicit upstream
+               │
+               ▼
+         product service
 ```
 
-The process refuses to start when `--config` is missing, unreadable, unknown fields are present, the contract version is unsupported, the traffic and metrics listeners collide, the body limit is zero, more than one v1 upstream is configured, a timeout is zero, or TLS identity is incomplete. `/livez` and `/readyz` are served directly through the Pingora request path. Readiness currently means that the configuration was admitted and the serving path is active; it does not probe upstream health.
+Pingora Gateway does **not** own product authentication, tenant/business routing, application authorization, certificate issuance, static-site semantics, Wardnet/EgressWeave policy, Keyverse identity, or workflow state. Product-specific replay safety and failover stay outside this shared boundary because the gateway cannot infer domain idempotency.
 
-For proxied requests, inbound `Forwarded`, `X-Forwarded-*`, and `X-Real-IP` identity are discarded. The v1 cleartext downstream listener emits only `Forwarded: proto=http`; it does not assert a client IP until a separately reviewed trusted-proxy contract exists. Pingora's standard upstream request policy strips hop-by-hop and connection-nominated headers.
+## Quickstart
 
-The dedicated metrics listener serves Prometheus text and should normally be bound to loopback, a pod-only address, or another access-controlled observability network. The initial gateway metrics deliberately have no attacker-controlled labels: total completed requests, request lifecycle errors, and observed request-body bytes. Gateway access logs contain only response status, coarse outcome, and request-body byte count; the application does not log URI/query, Host, client identity, Authorization, Cookie, tokens, or configured credentials.
+The current crate is `cwl-pingora-gateway` `0.1.0`, requires Rust 1.98.0, and pins Pingora `0.8.0` to an immutable upstream revision.
 
-## Container
+Copy the example configuration, point the single upstream at a service you control, and run the gateway:
 
-`Dockerfile` runs the binary as numeric uid/gid `65532` and does not require a writable application directory. Mount configuration read-only and run the image with a read-only root filesystem. The Dockerfile is a packaging contract, not a published release: no immutable image digest exists yet, and the repository still lacks a committed `Cargo.lock`, SBOM/provenance publication, hosted container integration evidence, and release approval.
+```bash
+cp examples/gateway.yaml ./gateway.yaml
+cargo run --locked --bin cwl-pingora-gateway -- --config ./gateway.yaml
+```
 
-## Architecture and operations
+The configuration is fail-closed: unknown fields, unsupported versions, listener collisions, invalid body limits or timeouts, multiple v1 upstreams, and incomplete TLS identity are rejected rather than normalized into a guessed configuration.
 
-Start with `ARCHITECTURE.md`, `CONTEXT_MAP.md`, `UBIQUITOUS_LANGUAGE.md`, `SECURITY.md`, `THREAT_MODEL.md`, `TEST_STRATEGY.md`, `OPERABILITY.md`, and `API_CONFIG_CONTRACT.md`. Current migration gaps and organization inventory are tracked in `docs/product-technical-gap-baseline.md`; primary-source traceability is in `docs/doctoring/TRACEABILITY.md`.
+Check the local process separately for liveness and readiness:
+
+```bash
+curl -sS http://127.0.0.1:<traffic-port>/livez
+curl -sS http://127.0.0.1:<traffic-port>/readyz
+```
+
+Current readiness means the admitted configuration and serving path are active; it is **not** an upstream-health guarantee.
+
+See [`API_CONFIG_CONTRACT.md`](API_CONFIG_CONTRACT.md) for the configuration contract.
+
+## Security and traffic behavior
+
+The v1 gateway starts from distrust at the edge:
+
+- inbound `Forwarded`, `X-Forwarded-*`, and `X-Real-IP` identity is discarded;
+- the current cleartext downstream listener does not invent a trusted client IP;
+- hop-by-hop and connection-nominated request headers are removed by the upstream policy;
+- body and upstream-I/O budgets are explicit;
+- metrics use low-cardinality labels and should be exposed only on an access-controlled observability network;
+- access logs deliberately exclude URI/query, Host, client identity, authorization/cookie values, tokens, and configured credentials.
+
+For the full threat and trust boundary, read [`SECURITY.md`](SECURITY.md) and [`THREAT_MODEL.md`](THREAT_MODEL.md).
+
+## Container usage
+
+The shipped `Dockerfile` packages the current candidate binary as numeric uid/gid `65532` and is designed for a read-only root filesystem with configuration mounted read-only.
+
+This is an OCI **build/runtime contract**, not evidence of a published production image. No immutable registry digest, released image, customer cutover, or production availability claim exists unless separately backed by current release/deployment evidence.
+
+## Integration maturity
+
+The current v1 surface is intentionally narrow: one traffic listener, one metrics listener, and one upstream. Route tables, product-aware load balancing, WebSocket policy, dynamic reload, downstream TLS termination, ACME, Kubernetes Gateway API, and broader migration parity remain future increments that require a real consumer and executable acceptance evidence.
+
+Existing Nginx or Traefik use in another repository is not automatically a Pingora migration candidate. Static serving, PHP/FastCGI, certificate management, application routing, and product-specific ingress may belong to other boundaries.
+
+## Supply-chain and licensing posture
+
+The crate's dependency policy permits a reviewed commercial-friendly set including Apache-2.0, MIT, BSD, ISC, CC0-1.0, OpenSSL, Unicode-3.0, and Zlib families; unknown registries/git sources and wildcard dependencies are denied. Pingora and `pingora-prometheus` are pinned to exact version `0.8.0` plus an immutable Cloudflare git revision.
+
+Cloudflare Pingora is Apache-2.0 licensed. This repository's own crate metadata is also Apache-2.0, and the root [`LICENSE`](LICENSE) now carries that grant. Third-party dependencies retain their own license and attribution obligations; the repository license does not replace dependency provenance.
+
+Current supply-chain policy still reports inherited maintenance concerns from the pinned framework rather than relabeling them as vulnerabilities or suppressing real vulnerability/unsoundness findings. See [`deny.toml`](deny.toml) and the current supply-chain workflow for the executable policy.
+
+## Quality and status
+
+This is a **0.1.0 candidate / Draft** product line, not a released gateway. The branch contains locked format/test/Clippy/doc builds, compiled-binary loopback E2E, OCI security acceptance, security/SAST lanes, and explicit supply-chain policy. Public Rust API documentation is a build gate via `#![deny(missing_docs)]` and `RUSTDOCFLAGS="-D warnings"`.
+
+Run the core local checks with:
+
+```bash
+cargo fmt --all --check
+cargo test --workspace --locked
+cargo clippy --workspace --all-targets --locked -- -D warnings
+RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --locked
+```
+
+Do not infer benchmark, production-traffic, certification, release, or migration claims from these engineering gates. The repository's product-gap baseline tracks the remaining evidence required before those claims are possible.
+
+## Documentation map
+
+- [`ARCHITECTURE.md`](ARCHITECTURE.md) — edge-runtime architecture and responsibility boundary.
+- [`CONTEXT_MAP.md`](CONTEXT_MAP.md) — DDD context ownership and external authorities.
+- [`UBIQUITOUS_LANGUAGE.md`](UBIQUITOUS_LANGUAGE.md) — domain terminology.
+- [`API_CONFIG_CONTRACT.md`](API_CONFIG_CONTRACT.md) — public gateway configuration contract.
+- [`SECURITY.md`](SECURITY.md) / [`THREAT_MODEL.md`](THREAT_MODEL.md) — security posture and threats.
+- [`TEST_STRATEGY.md`](TEST_STRATEGY.md) — executable verification strategy.
+- [`OPERABILITY.md`](OPERABILITY.md) — runtime and operational guidance.
+- [`docs/product-technical-gap-baseline.md`](docs/product-technical-gap-baseline.md) — current gaps, evidence, and next acceptance boundaries.
+- [`docs/doctoring/TRACEABILITY.md`](docs/doctoring/TRACEABILITY.md) — primary-source traceability.
+
+## Contributing
+
+Keep the gateway generic and small. If a behavior requires product business knowledge, identity authority, certificate ownership, or domain retry semantics, implement it at the owning product boundary rather than teaching the shared edge runtime to guess.
+
+New dependencies must permit commercial use under the intended distribution model and remain covered by the repository's explicit supply-chain policy. Update code, tests, architecture/security docs, and README claims together when a public edge contract changes.
+
+## License
+
+Pingora Gateway is licensed under the [Apache License 2.0](LICENSE). Third-party components retain their applicable licenses and attribution terms.
