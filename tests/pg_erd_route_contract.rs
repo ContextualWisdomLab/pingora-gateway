@@ -52,6 +52,40 @@ fn exact_route_does_not_match_longer_path_when_no_prefix_rule_applies() {
 }
 
 #[test]
+fn route_table_requires_at_least_one_explicit_route() {
+    assert_eq!(
+        RouteTable::try_new(Vec::new()).expect_err("empty routing authority must fail"),
+        RoutePolicyError::NoRoutes
+    );
+}
+
+#[test]
+fn duplicate_route_names_fail_before_priority_ordering() {
+    let error = RouteTable::try_new(vec![
+        RouteRule {
+            name: "api".to_string(),
+            priority: 100,
+            matcher: RouteMatch::PathPrefix("/api".to_string()),
+            upstream: "backend".to_string(),
+        },
+        RouteRule {
+            name: "api".to_string(),
+            priority: 90,
+            matcher: RouteMatch::PathPrefix("/internal-api".to_string()),
+            upstream: "backend".to_string(),
+        },
+    ])
+    .expect_err("duplicate stable route identity must be rejected");
+
+    assert_eq!(
+        error,
+        RoutePolicyError::DuplicateRouteName {
+            route_name: "api".to_string()
+        }
+    );
+}
+
+#[test]
 fn equal_priorities_fail_closed_instead_of_inventing_tie_break_semantics() {
     let error = RouteTable::try_new(vec![
         RouteRule {
