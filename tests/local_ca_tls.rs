@@ -147,7 +147,7 @@ fn write_gateway_config(
     let mut file = NamedTempFile::new().expect("temporary config should be writable");
     writeln!(
         file,
-        "version: 1\nlistener: {listener}\nmetrics_listener: {metrics_listener}\nmax_request_body_bytes: 1048576\nupstreams:\n  - name: local-tls-fixture\n    address: {upstream}\n    tls: true\n    sni: {sni}\n    trust_bundle_file: {}\n    timeouts:\n      connection_ms: 1000\n      total_connection_ms: 2000\n      read_ms: 5000\n      write_ms: 5000\n      idle_ms: 10000",
+        "version: 1\nlistener: {listener}\nmetrics_listener: {metrics_listener}\nmax_request_body_bytes: 1048576\nmax_in_flight_requests: 8\nupstream_keepalive_pool_size: 4\nupstreams:\n  - name: local-tls-fixture\n    address: {upstream}\n    tls: true\n    sni: {sni}\n    trust_bundle_file: {}\n    timeouts:\n      connection_ms: 1000\n      total_connection_ms: 2000\n      read_ms: 5000\n      write_ms: 5000\n      idle_ms: 10000",
         ca_cert.display()
     )
     .expect("gateway config should be written");
