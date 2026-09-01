@@ -50,7 +50,10 @@ fn wait_until_listening(address: SocketAddr, process: &mut Child) {
         if TcpStream::connect_timeout(&address, Duration::from_millis(100)).is_ok() {
             return;
         }
-        assert!(Instant::now() < deadline, "gateway did not start within 10s");
+        assert!(
+            Instant::now() < deadline,
+            "gateway did not start within 10s"
+        );
         thread::sleep(Duration::from_millis(25));
     }
 }
@@ -75,7 +78,8 @@ fn raw_request(address: SocketAddr, request: &[u8]) -> String {
 fn get(address: SocketAddr, path: &str) -> String {
     raw_request(
         address,
-        format!("GET {path} HTTP/1.1\r\nHost: gateway.test\r\nConnection: close\r\n\r\n").as_bytes(),
+        format!("GET {path} HTTP/1.1\r\nHost: gateway.test\r\nConnection: close\r\n\r\n")
+            .as_bytes(),
     )
 }
 
@@ -96,7 +100,9 @@ fn compiled_gateway_enforces_health_limits_forwarding_and_proxy_path() {
         let mut request = Vec::new();
         let mut buffer = [0_u8; 1024];
         while !request.windows(4).any(|window| window == b"\r\n\r\n") {
-            let read = stream.read(&mut buffer).expect("request should be readable");
+            let read = stream
+                .read(&mut buffer)
+                .expect("request should be readable");
             assert!(read > 0, "gateway closed upstream request prematurely");
             request.extend_from_slice(&buffer[..read]);
         }
@@ -134,7 +140,9 @@ fn compiled_gateway_enforces_health_limits_forwarding_and_proxy_path() {
             response.starts_with("HTTP/1.1 200"),
             "health endpoint {health_path} failed: {response:?}"
         );
-        assert!(response.to_ascii_lowercase().contains("cache-control: no-store"));
+        assert!(response
+            .to_ascii_lowercase()
+            .contains("cache-control: no-store"));
     }
 
     let oversized = raw_request(
@@ -157,5 +165,8 @@ fn compiled_gateway_enforces_health_limits_forwarding_and_proxy_path() {
     assert!(response.ends_with("\r\n\r\npingora-path"));
 
     fixture.join().expect("upstream fixture should complete");
-    process.0.kill().expect("gateway process should still be running");
+    process
+        .0
+        .kill()
+        .expect("gateway process should still be running");
 }
