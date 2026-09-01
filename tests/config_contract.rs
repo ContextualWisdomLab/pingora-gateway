@@ -19,7 +19,10 @@ upstreams:
     assert_eq!(config.upstreams.len(), 1);
     assert_eq!(config.upstreams[0].name, "api");
     assert!(config.upstreams[0].tls);
-    assert_eq!(config.upstreams[0].sni.as_deref(), Some("api.internal.example"));
+    assert_eq!(
+        config.upstreams[0].sni.as_deref(),
+        Some("api.internal.example")
+    );
 }
 
 #[test]
