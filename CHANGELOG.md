@@ -6,6 +6,8 @@ All notable changes are tracked here. No release has been published yet.
 
 - Bootstrapped an executable Rust Pingora proxy through pull-request governance.
 - Added strict v1 configuration, explicit one-upstream network authority, TLS identity verification, and explicit upstream I/O budgets.
+- Added optional per-upstream absolute PEM trust-bundle consumption without taking ownership of certificate issuance/rotation; trust material is loaded fail-closed before listeners open.
+- Added an executable local-CA TLS test through the compiled gateway that holds CA trust constant and proves SNI/hostname mismatch is rejected.
 - Added fail-closed binary startup and real loopback production-path tests.
 - Added `/livez` and `/readyz` through the Pingora serving path.
 - Added request-body limits and a distrust-by-default forwarded-header policy.
@@ -17,4 +19,4 @@ All notable changes are tracked here. No release has been published yet.
 - Added missing-public-rustdoc enforcement and documentation builds with warnings denied.
 - Added DDD, product, technical, security, threat, test, operability, configuration, migration-gap, and primary-source traceability documentation.
 
-Release remains blocked on the organization decision for the exact Pingora release versus `RUSTSEC-2026-0253` (`ContextualWisdomLab/.github#1605`), exact-current-head CI/supply-chain/security/review evidence after the final source mutation, verified local-CA TLS integration including hostname failure, representative concurrency/backpressure/network-failure and benchmark evidence, an immutable registry digest with provenance and rehearsed rollback, and protected-branch integration. No consumer migration, canary, cutover, or legacy removal is claimed before those release and traffic-contract gates are satisfied.
+Release remains blocked on the organization decision for the exact Pingora release versus `RUSTSEC-2026-0253` (`ContextualWisdomLab/.github#1605`), terminal exact-current-head CI/supply-chain/security/review evidence for the local-CA repair, representative concurrency/backpressure/network-failure and benchmark evidence, an immutable registry digest with provenance and rehearsed rollback, and protected-branch integration. No consumer migration, canary, cutover, or legacy removal is claimed before those release and traffic-contract gates are satisfied.

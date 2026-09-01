@@ -6,6 +6,7 @@
 
 use std::collections::HashSet;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 
 use serde::Deserialize;
 use thiserror::Error;
@@ -62,6 +63,12 @@ pub struct UpstreamConfig {
     /// TLS server name used for SNI and hostname verification.
     #[serde(default)]
     pub sni: Option<String>,
+    /// Optional absolute PEM bundle of additional trust anchors for this TLS upstream.
+    ///
+    /// The gateway consumes trust roots supplied by the operator; it does not issue, rotate, or
+    /// otherwise become authoritative for certificates. When omitted, Pingora uses platform roots.
+    #[serde(default)]
+    pub trust_bundle_file: Option<PathBuf>,
     /// Explicit connection and I/O budgets for this upstream.
     pub timeouts: UpstreamTimeouts,
 }
@@ -115,6 +122,24 @@ pub enum GatewayConfigError {
     #[error("cleartext upstream {upstream_name} must not define an SNI server name")]
     UnexpectedTlsServerName {
         /// Upstream that specified SNI while TLS is disabled.
+        upstream_name: String,
+    },
+    /// An explicitly configured trust bundle must identify a concrete filesystem path.
+    #[error("TLS upstream {upstream_name} has an empty trust_bundle_file path")]
+    EmptyTrustBundlePath {
+        /// Upstream whose trust-bundle path is empty.
+        upstream_name: String,
+    },
+    /// Trust-bundle paths are absolute so process working-directory changes cannot alter authority.
+    #[error("TLS upstream {upstream_name} trust_bundle_file must be an absolute path")]
+    RelativeTrustBundlePath {
+        /// Upstream whose trust-bundle path is relative.
+        upstream_name: String,
+    },
+    /// Cleartext upstreams must not carry unused certificate trust configuration.
+    #[error("cleartext upstream {upstream_name} must not define trust_bundle_file")]
+    UnexpectedTrustBundle {
+        /// Upstream that specified a trust bundle while TLS is disabled.
         upstream_name: String,
     },
     /// Timeout budgets must be positive so the runtime never silently acquires an infinite budget.
@@ -200,6 +225,24 @@ impl UpstreamConfig {
                 });
             }
             _ => {}
+        }
+
+        if let Some(path) = self.trust_bundle_file.as_ref() {
+            if path.as_os_str().is_empty() || path.to_string_lossy().trim().is_empty() {
+                return Err(GatewayConfigError::EmptyTrustBundlePath {
+                    upstream_name: normalized_name.to_string(),
+                });
+            }
+            if !path.is_absolute() {
+                return Err(GatewayConfigError::RelativeTrustBundlePath {
+                    upstream_name: normalized_name.to_string(),
+                });
+            }
+            if !self.tls {
+                return Err(GatewayConfigError::UnexpectedTrustBundle {
+                    upstream_name: normalized_name.to_string(),
+                });
+            }
         }
 
         for (timeout_name, timeout_value) in [

@@ -6,7 +6,7 @@ Configuration files, downstream requests, forwarding headers, upstream certifica
 
 The gateway contacts only the socket address admitted at startup. It is not a forward proxy and accepts no request-controlled upstream URI, preventing this runtime from becoming a generic SSRF primitive.
 
-HTTPS upstreams use certificate and hostname verification with an explicit SNI. Certificate issuance/rotation and downstream TLS termination are separate operational responsibilities; this repository does not acquire ACME ownership merely because legacy Nginx/Certbot deployments co-located them.
+HTTPS upstreams use certificate and hostname verification with an explicit SNI. An operator may additionally provide an absolute `trust_bundle_file`; the process reads and parses that PEM bundle before opening listeners and fails closed on missing, empty, or malformed material. This is trust-anchor consumption only. Certificate issuance, rotation, revocation workflow, downstream TLS termination, ACME, and key custody remain with their canonical owners and are not absorbed into the gateway.
 
 Inbound forwarding identity is deleted before proxying. V1 emits only `Forwarded: proto=http`; it deliberately does not claim a client IP. A future trusted-proxy feature must define allowed proxy CIDRs/hops and RFC 7239 semantics as a versioned contract with spoofing tests.
 
@@ -14,7 +14,7 @@ Request bodies and upstream connect/read/write/idle time are bounded. The Pingor
 
 ## Logging and data minimization
 
-The production path emits coarse status/outcome/request-body-byte access logs and label-free Prometheus request/error/body-byte counters. It does not log Authorization, Proxy-Authorization, Cookie, Set-Cookie, request/response bodies, access tokens, configuration credentials, arbitrary headers, route values, or other unbounded request-derived labels. Distributed tracing and richer bounded operability evidence remain release gaps.
+The production path emits coarse status/outcome/request-body-byte access logs and label-free Prometheus request/error/body-byte counters. It does not log Authorization, Proxy-Authorization, Cookie, Set-Cookie, request/response bodies, access tokens, configuration credentials, arbitrary headers, route values, trust-bundle contents, or other unbounded request-derived labels. Distributed tracing and richer bounded operability evidence remain release gaps.
 
 ## Supply chain
 

@@ -2,7 +2,9 @@
 
 ## Start
 
-Run `cwl-pingora-gateway --config /path/to/gateway.yaml`. Configuration is read and validated before the listener is registered. Invalid or missing configuration exits non-zero.
+Run `cwl-pingora-gateway --config /path/to/gateway.yaml`. Configuration is read and validated before the listener is registered. Invalid or missing configuration exits non-zero. If a TLS upstream declares `trust_bundle_file`, that absolute PEM bundle is also read and parsed before listeners open; unreadable, empty, or malformed trust material prevents activation.
+
+The trust bundle is deployment input, not certificate-authority ownership. Mount it read-only from the platform or canonical secret/certificate owner and rotate it by replacing the deployment revision. The gateway does not issue certificates, manage ACME, or write trust material.
 
 ## Health
 
@@ -14,11 +16,11 @@ Version 1 does not inherit Pingora's retry or drain defaults. `src/runtime_polic
 
 SIGTERM uses Pingora graceful termination with an explicit 5-second request-drain grace period and a 10-second runtime-shutdown timeout. The pinned Pingora server calls Tokio `Runtime::shutdown_timeout` with that timeout and then sleeps for the same timeout while service runtimes are shut down in parallel. The v1 policy therefore requires a 30-second supervisor hard-kill budget: its modeled worst-case Pingora process budget is 25 seconds plus scheduler/process-exit overhead. A Kubernetes-style deployment must set `terminationGracePeriodSeconds` to at least 30 or provide an equivalent supervisor budget; a shorter external kill deadline is not an admitted deployment contract.
 
-`tests/graceful_shutdown.rs` exercises the compiled binary with a held upstream response, sends SIGTERM only after the request is in flight, requires the response to finish during the 5-second grace period, and requires clean process exit before the 30-second supervisor budget. This test must be terminal-success on the exact release candidate; predecessor-head success never transfers.
+`tests/graceful_shutdown.rs` exercises the compiled binary with a held upstream response, sends SIGTERM only after the request is in flight, requires the response to finish during the 5-second grace period, and requires clean process exit before the 30-second supervisor budget. `tests/local_ca_tls.rs` generates an ephemeral local CA/server certificate, proves successful TLS through the compiled binary with the explicit trust bundle, and proves hostname mismatch fails closed. These tests must be terminal-success on the exact release candidate; predecessor-head success never transfers.
 
 ## Container
 
-Run as a non-root user and prefer a read-only root filesystem. Mount only the versioned config read-only. The runtime does not intentionally write logs or state files; stdout/stderr should be collected by the platform. Do not bake secrets into the image or config.
+Run as a non-root user and prefer a read-only root filesystem. Mount only the versioned config and any required upstream trust bundle read-only. The runtime does not intentionally write logs or state files; stdout/stderr should be collected by the platform. Do not bake secrets or private keys into the image or config.
 
 ## Rollback
 

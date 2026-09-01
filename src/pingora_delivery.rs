@@ -4,11 +4,41 @@
 //! converted into Pingora connection objects. Consumer products should depend on the contract,
 //! not on Pingora types.
 
+use std::fs;
+use std::io::ErrorKind;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
+use pingora::tls::x509::X509;
 use pingora::upstreams::peer::{HttpPeer, HttpUpstreamRequestPolicy, ALPN};
+use thiserror::Error;
 
 use crate::edge_contract::{GatewayConfigError, UpstreamConfig};
+
+/// Failures while translating an admitted edge contract into Pingora transport authority.
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+pub enum PeerBuildError {
+    /// The transport-neutral upstream contract itself is invalid.
+    #[error("invalid upstream configuration: {0}")]
+    InvalidConfiguration(#[from] GatewayConfigError),
+    /// The configured trust bundle cannot be read before network authority is granted.
+    #[error("unable to read TLS trust bundle {path:?}: {kind:?}")]
+    ReadTrustBundle {
+        /// Operator-selected absolute trust-bundle path.
+        path: PathBuf,
+        /// Stable operating-system error category.
+        kind: ErrorKind,
+    },
+    /// The configured trust bundle is not a usable PEM certificate bundle.
+    #[error("invalid TLS trust bundle {path:?}: {reason}")]
+    InvalidTrustBundle {
+        /// Operator-selected absolute trust-bundle path.
+        path: PathBuf,
+        /// Stable diagnostic without embedding certificate contents.
+        reason: String,
+    },
+}
 
 /// Builds a Pingora upstream peer from one validated edge-contract upstream.
 ///
@@ -16,17 +46,19 @@ use crate::edge_contract::{GatewayConfigError, UpstreamConfig};
 /// constructing an [`UpstreamConfig`] directly. TLS certificate and hostname verification remain
 /// enabled explicitly, HTTP/1.1 is the only accepted upstream protocol in the initial contract,
 /// and every timeout comes from the versioned configuration rather than a hidden default.
-pub fn build_peer(upstream: &UpstreamConfig) -> Result<HttpPeer, GatewayConfigError> {
+pub fn build_peer(upstream: &UpstreamConfig) -> Result<HttpPeer, PeerBuildError> {
     upstream.validate()?;
-    Ok(build_peer_from_validated(upstream))
+    build_peer_from_validated(upstream)
 }
 
 /// Constructs Pingora transport state after the enclosing gateway contract has already validated
 /// this upstream.
 ///
-/// Keeping this helper crate-private avoids repeating a logically impossible validation failure on
-/// every proxied request while preserving [`build_peer`] as the fail-closed public entry point.
-pub(crate) fn build_peer_from_validated(upstream: &UpstreamConfig) -> HttpPeer {
+/// Configuration semantics have already been checked, but an explicit trust bundle still requires
+/// fail-closed filesystem and PEM loading before listeners are opened.
+pub(crate) fn build_peer_from_validated(
+    upstream: &UpstreamConfig,
+) -> Result<HttpPeer, PeerBuildError> {
     let mut peer = HttpPeer::new(
         upstream.address,
         upstream.tls,
@@ -44,5 +76,29 @@ pub(crate) fn build_peer_from_validated(upstream: &UpstreamConfig) -> HttpPeer {
     peer.options.idle_timeout = Some(Duration::from_millis(upstream.timeouts.idle_ms));
     peer.options.http_upstream_request_policy = HttpUpstreamRequestPolicy::standard();
 
-    peer
+    if let Some(path) = upstream.trust_bundle_file.as_deref() {
+        peer.options.ca = Some(Arc::new(load_trust_bundle(path)?));
+    }
+
+    Ok(peer)
+}
+
+fn load_trust_bundle(path: &Path) -> Result<Box<[X509]>, PeerBuildError> {
+    let source = fs::read(path).map_err(|error| PeerBuildError::ReadTrustBundle {
+        path: path.to_path_buf(),
+        kind: error.kind(),
+    })?;
+    let certificates = X509::stack_from_pem(&source).map_err(|error| {
+        PeerBuildError::InvalidTrustBundle {
+            path: path.to_path_buf(),
+            reason: error.to_string(),
+        }
+    })?;
+    if certificates.is_empty() {
+        return Err(PeerBuildError::InvalidTrustBundle {
+            path: path.to_path_buf(),
+            reason: "bundle contains no certificates".to_string(),
+        });
+    }
+    Ok(certificates.into_boxed_slice())
 }

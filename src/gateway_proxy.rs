@@ -15,7 +15,7 @@ use pingora_prometheus::prometheus::{register_int_counter, IntCounter};
 use thiserror::Error;
 
 use crate::edge_contract::{GatewayConfig, GatewayConfigError};
-use crate::pingora_delivery::build_peer_from_validated;
+use crate::pingora_delivery::{build_peer_from_validated, PeerBuildError};
 
 /// Stable process-local liveness endpoint.
 pub const LIVENESS_PATH: &str = "/livez";
@@ -60,6 +60,9 @@ pub enum GatewayProxyError {
     /// The edge configuration itself violates a fail-closed invariant.
     #[error("invalid edge configuration: {0}")]
     InvalidConfiguration(#[from] GatewayConfigError),
+    /// A validated upstream could not be materialized safely as Pingora transport authority.
+    #[error("unable to activate upstream transport: {0}")]
+    UpstreamActivation(#[from] PeerBuildError),
 }
 
 /// Pingora HTTP application backed by one explicitly configured upstream.
@@ -74,13 +77,13 @@ impl GatewayProxy {
     ///
     /// Contract validation owns upstream-count and network-authority rules. The adapter constructs
     /// immutable Pingora transport state once during activation rather than repeating validation on
-    /// every proxied request.
+    /// every proxied request. Explicit trust material is also loaded before any listener is opened.
     pub fn try_from_config(config: &GatewayConfig) -> std::result::Result<Self, GatewayProxyError> {
         config.validate()?;
         let upstream = &config.upstreams[0];
 
         Ok(Self {
-            upstream_peer: build_peer_from_validated(upstream),
+            upstream_peer: build_peer_from_validated(upstream)?,
             max_request_body_bytes: config.max_request_body_bytes,
         })
     }
