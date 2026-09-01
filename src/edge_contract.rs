@@ -26,6 +26,10 @@ pub struct GatewayConfig {
     pub metrics_listener: SocketAddr,
     /// Maximum request body admitted by this gateway process, in bytes.
     pub max_request_body_bytes: u64,
+    /// Maximum number of non-health downstream requests admitted concurrently by this process.
+    pub max_in_flight_requests: usize,
+    /// Maximum number of reusable upstream keepalive connections retained by Pingora.
+    pub upstream_keepalive_pool_size: usize,
     /// Explicit set of upstream services that the gateway may contact.
     pub upstreams: Vec<UpstreamConfig>,
 }
@@ -88,6 +92,12 @@ pub enum GatewayConfigError {
     /// A zero request-body limit would reject every body and is almost certainly misconfiguration.
     #[error("max_request_body_bytes must be greater than zero")]
     InvalidRequestBodyLimit,
+    /// A zero in-flight budget would reject every proxied request.
+    #[error("max_in_flight_requests must be greater than zero")]
+    InvalidInFlightRequestLimit,
+    /// A zero keepalive pool silently disables reusable upstream connections and changes capacity.
+    #[error("upstream_keepalive_pool_size must be greater than zero")]
+    InvalidUpstreamKeepalivePoolSize,
     /// At least one upstream is required so the proxy cannot start in an ambiguous state.
     #[error("gateway configuration must contain at least one upstream")]
     NoUpstreams,
@@ -174,6 +184,12 @@ impl GatewayConfig {
         }
         if self.max_request_body_bytes == 0 {
             return Err(GatewayConfigError::InvalidRequestBodyLimit);
+        }
+        if self.max_in_flight_requests == 0 {
+            return Err(GatewayConfigError::InvalidInFlightRequestLimit);
+        }
+        if self.upstream_keepalive_pool_size == 0 {
+            return Err(GatewayConfigError::InvalidUpstreamKeepalivePoolSize);
         }
         if self.upstreams.is_empty() {
             return Err(GatewayConfigError::NoUpstreams);
