@@ -98,22 +98,16 @@ impl GatewayProxy {
     }
 
     fn reject_oversize_declared_body(&self, session: &Session) -> pingora::Result<()> {
-        let Some(value) = session.req_header().headers.get("content-length") else {
-            return Ok(());
-        };
-        let raw = value.to_str().map_err(|_| {
-            Error::explain(
-                ErrorType::HTTPStatus(400),
-                "Content-Length is not valid visible ASCII",
-            )
-        })?;
-        let declared = raw.parse::<u64>().map_err(|_| {
-            Error::explain(
-                ErrorType::HTTPStatus(400),
-                "Content-Length is not a valid unsigned integer",
-            )
-        })?;
-        if declared > self.max_request_body_bytes {
+        // Pingora's HTTP admission reconciles Content-Length framing and rejects invalid values
+        // before ProxyHttp filters run. Keep this layer focused on the gateway's size policy while
+        // the streamed-body filter remains the fail-closed backstop for absent framing.
+        let declared = session
+            .req_header()
+            .headers
+            .get("content-length")
+            .and_then(|value| value.to_str().ok())
+            .and_then(|raw| raw.parse::<u64>().ok());
+        if declared.is_some_and(|length| length > self.max_request_body_bytes) {
             return Err(Error::explain(
                 ErrorType::HTTPStatus(413),
                 "request body exceeds configured max_request_body_bytes",
