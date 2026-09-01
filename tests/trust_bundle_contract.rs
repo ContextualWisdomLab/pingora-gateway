@@ -2,7 +2,7 @@ use cwl_pingora_gateway::edge_contract::{GatewayConfig, GatewayConfigError};
 
 fn yaml(tls: bool, sni_line: &str, trust_bundle_line: &str) -> String {
     format!(
-        "version: 1\nlistener: 127.0.0.1:6188\nmetrics_listener: 127.0.0.1:6192\nmax_request_body_bytes: 1048576\nupstreams:\n  - name: api\n    address: 127.0.0.1:8443\n    tls: {tls}\n{sni_line}{trust_bundle_line}    timeouts:\n      connection_ms: 1250\n      total_connection_ms: 2500\n      read_ms: 7500\n      write_ms: 6500\n      idle_ms: 15000\n"
+        "version: 1\nlistener: 127.0.0.1:6188\nmetrics_listener: 127.0.0.1:6192\nmax_request_body_bytes: 1048576\nmax_in_flight_requests: 8\nupstream_keepalive_pool_size: 4\nupstreams:\n  - name: api\n    address: 127.0.0.1:8443\n    tls: {tls}\n{sni_line}{trust_bundle_line}    timeouts:\n      connection_ms: 1250\n      total_connection_ms: 2500\n      read_ms: 7500\n      write_ms: 6500\n      idle_ms: 15000\n"
     )
 }
 
