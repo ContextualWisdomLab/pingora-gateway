@@ -34,11 +34,13 @@ jobs:
       - name: Verify formatting
         run: cargo fmt --all -- --check
       - name: Compile and test
-        run: cargo test --all-targets
+        run: cargo test --all-targets --locked
       - name: Lint
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --all-targets --locked -- -D warnings
       - name: Verify resolved dependency lock
-        run: test -s Cargo.lock
+        run: |
+          test -s Cargo.lock
+          git diff --exit-code -- Cargo.lock
       - name: Upload resolved dependency lock evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
