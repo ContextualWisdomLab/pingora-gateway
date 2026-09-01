@@ -102,11 +102,14 @@ fn compiled_gateway_enforces_health_limits_forwarding_proxy_and_telemetry_paths(
     let upstream_address = upstream_listener
         .local_addr()
         .expect("fixture upstream should expose its address");
+    let fixture_listener = upstream_listener
+        .try_clone()
+        .expect("fixture listener should be clonable so the upstream stays available for streaming-limit characterization");
     let (gateway_address, metrics_address) = reserve_distinct_loopback_addresses();
     let config = write_gateway_config(gateway_address, metrics_address, upstream_address);
 
     let fixture = thread::spawn(move || {
-        let (mut stream, _) = upstream_listener
+        let (mut stream, _) = fixture_listener
             .accept()
             .expect("gateway should connect to fixture upstream");
         let mut request = Vec::new();
@@ -179,6 +182,21 @@ fn compiled_gateway_enforces_health_limits_forwarding_proxy_and_telemetry_paths(
     assert!(response.ends_with("\r\n\r\npingora-path"));
 
     fixture.join().expect("upstream fixture should complete");
+
+    let chunked_oversized = raw_request(
+        gateway_address,
+        b"POST /too-large-chunked HTTP/1.1\r\nHost: gateway.test\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n9\r\n123456789\r\n0\r\n\r\n",
+    );
+    assert!(
+        chunked_oversized.starts_with("HTTP/1.1 413"),
+        "streamed request without Content-Length must still enforce the configured body limit: {chunked_oversized:?}"
+    );
+
+    let recovered = get(gateway_address, "/readyz");
+    assert!(
+        recovered.starts_with("HTTP/1.1 200"),
+        "gateway must remain ready after rejecting an oversized streamed body: {recovered:?}"
+    );
 
     let metrics = get(metrics_address, "/metrics");
     assert!(metrics.starts_with("HTTP/1.1 200"));
