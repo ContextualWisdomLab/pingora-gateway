@@ -45,6 +45,12 @@ upstreams:
 }
 
 #[test]
+fn rejects_malformed_yaml_before_network_authority() {
+    let error = GatewayConfig::from_yaml("version: [not-a-number]").unwrap_err();
+    assert!(matches!(error, GatewayConfigError::Parse(_)));
+}
+
+#[test]
 fn rejects_unknown_contract_version() {
     let yaml = with_runtime_limits(
         r#"
@@ -143,6 +149,87 @@ upstreams:
         Err(GatewayConfigError::MissingTlsServerName {
             upstream_name: "api".to_string()
         })
+    );
+}
+
+#[test]
+fn rejects_empty_tls_server_name() {
+    let yaml = with_runtime_limits(
+        r#"
+version: 1
+listener: 127.0.0.1:6188
+upstreams:
+  - name: api
+    address: 127.0.0.1:8443
+    tls: true
+    sni: "   "
+    timeouts:
+      connection_ms: 1250
+      total_connection_ms: 2500
+      read_ms: 7500
+      write_ms: 6500
+      idle_ms: 15000
+"#,
+    );
+
+    assert_eq!(
+        GatewayConfig::from_yaml(&yaml),
+        Err(GatewayConfigError::EmptyTlsServerName {
+            upstream_name: "api".to_string()
+        })
+    );
+}
+
+#[test]
+fn rejects_sni_on_cleartext_upstream() {
+    let yaml = with_runtime_limits(
+        r#"
+version: 1
+listener: 127.0.0.1:6188
+upstreams:
+  - name: api
+    address: 127.0.0.1:8080
+    tls: false
+    sni: api.internal.example
+    timeouts:
+      connection_ms: 1250
+      total_connection_ms: 2500
+      read_ms: 7500
+      write_ms: 6500
+      idle_ms: 15000
+"#,
+    );
+
+    assert_eq!(
+        GatewayConfig::from_yaml(&yaml),
+        Err(GatewayConfigError::UnexpectedTlsServerName {
+            upstream_name: "api".to_string()
+        })
+    );
+}
+
+#[test]
+fn rejects_empty_upstream_name() {
+    let yaml = with_runtime_limits(
+        r#"
+version: 1
+listener: 127.0.0.1:6188
+upstreams:
+  - name: "   "
+    address: 127.0.0.1:8080
+    tls: false
+    timeouts:
+      connection_ms: 1250
+      total_connection_ms: 2500
+      read_ms: 7500
+      write_ms: 6500
+      idle_ms: 15000
+"#,
+    );
+
+    assert_eq!(
+        GatewayConfig::from_yaml(&yaml),
+        Err(GatewayConfigError::EmptyUpstreamName)
     );
 }
 
