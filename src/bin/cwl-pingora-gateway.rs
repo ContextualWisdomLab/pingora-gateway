@@ -17,7 +17,8 @@ use pingora::server::RunArgs;
 fn main() -> ExitCode {
     env_logger::init();
 
-    let command = match GatewayCommand::parse(env::args_os()) {
+    let args: Vec<_> = env::args_os().collect();
+    let command = match GatewayCommand::parse(&args) {
         Ok(command) => command,
         Err(error) => return exit_with_error(error),
     };
