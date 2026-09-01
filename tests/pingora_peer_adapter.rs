@@ -2,13 +2,24 @@ use cwl_pingora_gateway::{
     edge_contract::{GatewayConfigError, UpstreamConfig, UpstreamTimeouts},
     pingora_delivery::{build_peer, PeerBuildError},
 };
-use pingora::tls::x509::X509;
 use pingora::upstreams::peer::ALPN;
 use std::io::Write;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Duration;
 use tempfile::NamedTempFile;
+
+const TEST_CA_PEM: &[u8] = br#"-----BEGIN CERTIFICATE-----
+MIIBfDCCASOgAwIBAgIUHhoBFSioWeuugEa6XR3bzgxJjUEwCgYIKoZIzj0EAwIw
+FDESMBAGA1UEAwwJdW5pdC50ZXN0MB4XDTI2MDkwMTE5MTk0OFoXDTM2MDgyOTE5
+MTk0OFowFDESMBAGA1UEAwwJdW5pdC50ZXN0MFkwEwYHKoZIzj0CAQYIKoZIzj0D
+AQcDQgAERUmcWIZ+kd60HZwyDBmG8Ex5UWQ0qdC3YYaAxwCnq4/sFJMHhLLFhIFE
+QOsCMT4OVgBOjA1Ax5iNKjaKJTwqVaNTMFEwHQYDVR0OBBYEFEd/F+luTaSvUHcP
+WzA7Lnncrb27MB8GA1UdIwQYMBaAFEd/F+luTaSvUHcPWzA7Lnncrb27MA8GA1Ud
+EwEB/wQFMAMBAf8wCgYIKoZIzj0EAwIDRwAwRAIgKmUl5WzLSOrdea0keXCoPWGd
+8L80YV1ybUWBBDMrUJICIDqyvmib9/xXDFsqi+8Ewk3Zjva5Dg8v1s94gEncVx0f
+-----END CERTIFICATE-----
+"#;
 
 fn upstream(tls: bool, sni: Option<&str>) -> UpstreamConfig {
     UpstreamConfig {
@@ -74,15 +85,8 @@ fn tls_peer_verifies_identity_and_uses_explicit_io_budgets() {
 #[test]
 fn valid_explicit_trust_bundle_is_loaded_into_peer_authority() {
     let mut bundle = NamedTempFile::new().expect("temporary trust bundle");
-    let certificate = X509::builder()
-        .expect("OpenSSL should allocate an X509 builder")
-        .build();
     bundle
-        .write_all(
-            &certificate
-                .to_pem()
-                .expect("test certificate should serialize as PEM"),
-        )
+        .write_all(TEST_CA_PEM)
         .expect("valid trust bundle should be writable");
 
     let mut tls = upstream(true, Some("api.internal.example"));
