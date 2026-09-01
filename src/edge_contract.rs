@@ -88,8 +88,8 @@ impl GatewayConfig {
     /// Validation is intentionally separate from Pingora construction so configuration can be
     /// audited and tested deterministically before the runtime obtains network authority.
     pub fn from_yaml(input: &str) -> Result<Self, GatewayConfigError> {
-        let config: Self =
-            serde_yaml::from_str(input).map_err(|error| GatewayConfigError::Parse(error.to_string()))?;
+        let config: Self = serde_yaml::from_str(input)
+            .map_err(|error| GatewayConfigError::Parse(error.to_string()))?;
         config.validate()?;
         Ok(config)
     }
