@@ -24,7 +24,10 @@ fn tls_peer_verifies_identity_and_bounds_upstream_io() {
     assert_eq!(peer.sni, "api.internal.example");
     assert!(peer.options.verify_cert);
     assert!(peer.options.verify_hostname);
-    assert_eq!(peer.options.connection_timeout, Some(DEFAULT_CONNECTION_TIMEOUT));
+    assert_eq!(
+        peer.options.connection_timeout,
+        Some(DEFAULT_CONNECTION_TIMEOUT)
+    );
     assert_eq!(
         peer.options.total_connection_timeout,
         Some(DEFAULT_TOTAL_CONNECTION_TIMEOUT)
