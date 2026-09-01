@@ -96,7 +96,10 @@ fn load_trust_bundle(path: &Path) -> Result<Box<[X509]>, PeerBuildError> {
     require_certificates(path, certificates)
 }
 
-fn require_certificates(path: &Path, certificates: Vec<X509>) -> Result<Box<[X509]>, PeerBuildError> {
+fn require_certificates(
+    path: &Path,
+    certificates: Vec<X509>,
+) -> Result<Box<[X509]>, PeerBuildError> {
     if certificates.is_empty() {
         return Err(PeerBuildError::InvalidTrustBundle {
             path: path.to_path_buf(),
