@@ -55,8 +55,27 @@ fn wait_until_listening(address: SocketAddr, process: &mut Child) {
     }
 }
 
+fn request(address: SocketAddr, path: &str) -> String {
+    let mut downstream =
+        TcpStream::connect(address).expect("gateway should accept downstream traffic");
+    downstream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .expect("downstream timeout should be configurable");
+    write!(
+        downstream,
+        "GET {path} HTTP/1.1\r\nHost: gateway.test\r\nConnection: close\r\n\r\n"
+    )
+    .expect("downstream request should be writable");
+
+    let mut response = String::new();
+    downstream
+        .read_to_string(&mut response)
+        .expect("gateway response should be readable");
+    response
+}
+
 #[test]
-fn compiled_gateway_proxies_http_through_pingora() {
+fn compiled_gateway_serves_health_and_proxies_http_through_pingora() {
     let upstream_listener =
         TcpListener::bind("127.0.0.1:0").expect("fixture upstream should bind loopback");
     let upstream_address = upstream_listener
@@ -99,20 +118,16 @@ fn compiled_gateway_proxies_http_through_pingora() {
     wait_until_listening(gateway_address, &mut child);
     let mut process = GatewayProcess(child);
 
-    let mut downstream =
-        TcpStream::connect(gateway_address).expect("gateway should accept downstream traffic");
-    downstream
-        .set_read_timeout(Some(Duration::from_secs(5)))
-        .expect("downstream timeout should be configurable");
-    downstream
-        .write_all(b"GET /through-pingora HTTP/1.1\r\nHost: gateway.test\r\nConnection: close\r\n\r\n")
-        .expect("downstream request should be writable");
+    for health_path in ["/livez", "/readyz"] {
+        let response = request(gateway_address, health_path);
+        assert!(
+            response.starts_with("HTTP/1.1 200"),
+            "health endpoint {health_path} failed: {response:?}"
+        );
+        assert!(response.to_ascii_lowercase().contains("cache-control: no-store"));
+    }
 
-    let mut response = String::new();
-    downstream
-        .read_to_string(&mut response)
-        .expect("gateway response should be readable");
-
+    let response = request(gateway_address, "/through-pingora");
     assert!(
         response.starts_with("HTTP/1.1 200"),
         "unexpected downstream response: {response:?}"

@@ -4,11 +4,16 @@
 //! that invariant. This Pingora adapter does not invent routing or load-balancing domain rules.
 
 use async_trait::async_trait;
-use pingora::prelude::{Error, ErrorType, HttpPeer, ProxyHttp, Session};
+use pingora::prelude::{Error, ErrorType, HttpPeer, ProxyHttp, ResponseHeader, Session};
 use thiserror::Error;
 
 use crate::edge_contract::{GatewayConfig, GatewayConfigError, UpstreamConfig};
 use crate::pingora_delivery::build_peer;
+
+/// Stable process-local liveness endpoint.
+pub const LIVENESS_PATH: &str = "/livez";
+/// Stable readiness endpoint reached through the production Pingora serving path.
+pub const READINESS_PATH: &str = "/readyz";
 
 /// Activation failures that occur after the transport-neutral configuration is parsed.
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
@@ -44,6 +49,15 @@ impl GatewayProxy {
     pub fn build_upstream_peer(&self) -> std::result::Result<HttpPeer, GatewayConfigError> {
         build_peer(&self.upstream)
     }
+
+    async fn respond_healthy(session: &mut Session) -> pingora::Result<()> {
+        let mut response = ResponseHeader::build(200, None)?;
+        response.insert_header("Content-Length", "0")?;
+        response.insert_header("Cache-Control", "no-store")?;
+        session
+            .write_response_header(Box::new(response), true)
+            .await
+    }
 }
 
 #[async_trait]
@@ -51,6 +65,23 @@ impl ProxyHttp for GatewayProxy {
     type CTX = ();
 
     fn new_ctx(&self) -> Self::CTX {}
+
+    async fn request_filter(
+        &self,
+        session: &mut Session,
+        _ctx: &mut Self::CTX,
+    ) -> pingora::Result<bool>
+    where
+        Self::CTX: Send + Sync,
+    {
+        match session.req_header().uri.path() {
+            LIVENESS_PATH | READINESS_PATH => {
+                Self::respond_healthy(session).await?;
+                Ok(true)
+            }
+            _ => Ok(false),
+        }
+    }
 
     async fn upstream_peer(
         &self,
