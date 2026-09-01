@@ -9,6 +9,7 @@ use std::fmt::Display;
 use std::process;
 
 use cwl_pingora_gateway::gateway_proxy::GatewayProxy;
+use cwl_pingora_gateway::runtime_policy::build_server_conf;
 use cwl_pingora_gateway::startup::GatewayCommand;
 use pingora::prelude::{http_proxy_service, Server};
 
@@ -25,7 +26,7 @@ fn main() {
     let listener = config.listener.to_string();
     let metrics_listener = config.metrics_listener.to_string();
 
-    let mut server = Server::new(None).unwrap_or_else(|error| exit_with_error(error));
+    let mut server = Server::new_with_opt_and_conf(None, build_server_conf());
     server.bootstrap();
 
     let mut proxy_service = http_proxy_service(&server.configuration, proxy);
