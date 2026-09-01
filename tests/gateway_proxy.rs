@@ -45,7 +45,9 @@ fn version_one_proxy_builds_the_configured_peer_without_hidden_defaults() {
     };
 
     let proxy = GatewayProxy::try_from_config(&config).expect("single upstream is unambiguous");
-    let peer = proxy.build_upstream_peer().expect("validated upstream must build");
+    let peer = proxy
+        .build_upstream_peer()
+        .expect("validated upstream must build");
 
     assert_eq!(peer.address().to_string(), "127.0.0.1:8080");
     assert_eq!(peer.options.alpn, ALPN::H1);
