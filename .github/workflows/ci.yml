@@ -37,6 +37,8 @@ jobs:
         run: cargo test --all-targets --locked
       - name: Lint
         run: cargo clippy --all-targets --locked -- -D warnings
+      - name: Prove public Rust API documentation
+        run: RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --locked
       - name: Verify resolved dependency lock
         run: |
           test -s Cargo.lock
