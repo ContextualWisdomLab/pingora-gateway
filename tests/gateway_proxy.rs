@@ -1,6 +1,6 @@
 use cwl_pingora_gateway::{
-    edge_contract::{GatewayConfig, UpstreamConfig, UpstreamTimeouts},
-    gateway_proxy::GatewayProxy,
+    edge_contract::{GatewayConfig, GatewayConfigError, UpstreamConfig, UpstreamTimeouts},
+    gateway_proxy::{GatewayProxy, GatewayProxyError},
 };
 use pingora::upstreams::peer::{Peer, ALPN};
 use std::net::SocketAddr;
@@ -40,5 +40,22 @@ fn version_one_proxy_builds_the_configured_peer_without_hidden_defaults() {
     assert_eq!(
         peer.options.read_timeout,
         Some(Duration::from_millis(5_000))
+    );
+}
+
+#[test]
+fn proxy_activation_revalidates_programmatically_constructed_contracts() {
+    let config = GatewayConfig {
+        version: 1,
+        listener: SocketAddr::from(([127, 0, 0, 1], 6188)),
+        metrics_listener: SocketAddr::from(([127, 0, 0, 1], 6188)),
+        max_request_body_bytes: 1_048_576,
+        upstreams: vec![upstream("api", 8080)],
+    };
+
+    let error = GatewayProxy::try_from_config(&config).unwrap_err();
+    assert_eq!(
+        error,
+        GatewayProxyError::InvalidConfiguration(GatewayConfigError::ListenerCollision)
     );
 }
