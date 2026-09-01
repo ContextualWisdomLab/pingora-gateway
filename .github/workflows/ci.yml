@@ -111,6 +111,8 @@ jobs:
           listener: 127.0.0.1:18080
           metrics_listener: 127.0.0.1:18082
           max_request_body_bytes: 1048576
+          max_in_flight_requests: 128
+          upstream_keepalive_pool_size: 32
           upstreams:
             - name: load-fixture
               address: 127.0.0.1:18081
