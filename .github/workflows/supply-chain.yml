@@ -1,0 +1,100 @@
+name: Supply Chain
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: supply-chain-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+
+jobs:
+  candidate-evidence:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          ref: ${{ env.EXPECTED_SHA }}
+          persist-credentials: false
+
+      - name: Verify checkout identity
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+
+      - name: Install Rust 1.98.0
+        run: |
+          rustup toolchain install 1.98.0 --profile minimal
+          rustup default 1.98.0
+
+      - name: Install pinned dependency-policy tool
+        run: cargo install cargo-deny --version 0.20.2 --locked
+
+      - name: Audit committed dependency graph
+        run: |
+          test -s Cargo.lock
+          cargo deny check advisories licenses sources bans
+          git diff --exit-code -- Cargo.lock
+
+      - name: Build exact candidate image
+        run: docker build --tag "cwl-pingora-gateway:${EXPECTED_SHA}" .
+
+      - name: Generate SPDX dependency SBOM
+        uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26
+        with:
+          path: .
+          format: spdx-json
+          output-file: candidate.spdx.json
+          dependency-snapshot: false
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Scan exact candidate image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          scan-type: image
+          image-ref: cwl-pingora-gateway:${{ env.EXPECTED_SHA }}
+          version: v0.70.0
+          scanners: vuln
+          vuln-type: os,library
+          severity: CRITICAL,HIGH
+          ignore-unfixed: false
+          format: json
+          output: trivy-image.json
+          exit-code: '1'
+
+      - name: Bind candidate evidence to exact source
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          for evidence in Cargo.lock deny.toml candidate.spdx.json trivy-image.json; do
+            test -s "$evidence"
+          done
+          image_id="$(docker image inspect "cwl-pingora-gateway:${EXPECTED_SHA}" --format '{{.Id}}')"
+          {
+            printf 'evidence_kind=unreleased-candidate\n'
+            printf 'source_sha=%s\n' "$EXPECTED_SHA"
+            printf 'local_image_id=%s\n' "$image_id"
+            sha256sum Cargo.lock deny.toml candidate.spdx.json trivy-image.json
+          } > candidate-evidence.txt
+
+      - name: Upload exact candidate evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: candidate-evidence-${{ env.EXPECTED_SHA }}
+          path: |
+            Cargo.lock
+            deny.toml
+            candidate.spdx.json
+            trivy-image.json
+            candidate-evidence.txt
+          if-no-files-found: error
+          retention-days: 7
