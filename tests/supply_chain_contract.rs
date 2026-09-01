@@ -3,7 +3,8 @@
 use std::fs;
 
 fn read_repository_file(path: &str) -> String {
-    fs::read_to_string(path).unwrap_or_else(|error| panic!("required repository evidence {path} is missing: {error}"))
+    fs::read_to_string(path)
+        .unwrap_or_else(|error| panic!("required repository evidence {path} is missing: {error}"))
 }
 
 /// Candidate supply-chain evidence must be generated from the exact reviewed source revision.
