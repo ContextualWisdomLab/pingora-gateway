@@ -122,9 +122,7 @@ fn sigterm_drains_an_in_flight_request_before_process_exit() {
             .recv_timeout(Duration::from_secs(5))
             .expect("test should release the held response");
         stream
-            .write_all(
-                b"HTTP/1.1 200 OK\r\nContent-Length: 7\r\nConnection: close\r\n\r\ndrained",
-            )
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 7\r\nConnection: close\r\n\r\ndrained")
             .expect("held upstream response should be writable");
     });
 
@@ -146,9 +144,7 @@ fn sigterm_drains_an_in_flight_request_before_process_exit() {
             .set_read_timeout(Some(Duration::from_secs(8)))
             .expect("downstream timeout should be configurable");
         stream
-            .write_all(
-                b"GET /held HTTP/1.1\r\nHost: gateway.test\r\nConnection: close\r\n\r\n",
-            )
+            .write_all(b"GET /held HTTP/1.1\r\nHost: gateway.test\r\nConnection: close\r\n\r\n")
             .expect("downstream request should be writable");
         let mut response = String::new();
         stream
