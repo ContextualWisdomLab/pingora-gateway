@@ -6,10 +6,9 @@ use std::fs;
 fn command_requires_an_explicit_config_path() {
     let args = [OsString::from("cwl-pingora-gateway")];
 
-    assert_eq!(
-        GatewayCommand::parse(args).unwrap_err(),
-        GatewayCommandError::MissingConfigOption
-    );
+    let error = GatewayCommand::parse(args).unwrap_err();
+    assert_eq!(error, GatewayCommandError::MissingConfigOption);
+    assert_eq!(error.path(), None);
 }
 
 #[test]
@@ -31,10 +30,12 @@ fn command_rejects_unknown_or_ambiguous_arguments() {
         OsString::from("--listen"),
         OsString::from("127.0.0.1:6188"),
     ];
+    let unknown_error = GatewayCommand::parse(unknown).unwrap_err();
     assert_eq!(
-        GatewayCommand::parse(unknown).unwrap_err(),
+        unknown_error,
         GatewayCommandError::UnexpectedArgument("--listen".to_string())
     );
+    assert_eq!(unknown_error.path(), None);
 
     let duplicate = [
         OsString::from("cwl-pingora-gateway"),
@@ -43,10 +44,12 @@ fn command_rejects_unknown_or_ambiguous_arguments() {
         OsString::from("--config"),
         OsString::from("b.yaml"),
     ];
+    let duplicate_error = GatewayCommand::parse(duplicate).unwrap_err();
     assert_eq!(
-        GatewayCommand::parse(duplicate).unwrap_err(),
+        duplicate_error,
         GatewayCommandError::DuplicateConfigOption
     );
+    assert_eq!(duplicate_error.path(), None);
 }
 
 #[test]
