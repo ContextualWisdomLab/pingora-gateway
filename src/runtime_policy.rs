@@ -1,9 +1,10 @@
 //! Explicit Pingora process policy for the version-1 shared edge runtime.
 //!
 //! Pingora's upstream defaults are framework defaults, not CWL product semantics. In particular,
-//! the pinned Pingora line initializes `ServerConf::max_retries` to 16 and leaves graceful
-//! shutdown timing unset. The shared runtime overrides those values deliberately so a framework
-//! upgrade cannot silently change request replay or drain behavior.
+//! the pinned Pingora line initializes `ServerConf::max_retries` to 16 and the upstream keepalive
+//! pool to 128, while leaving graceful shutdown timing unset. The shared runtime overrides those
+//! values deliberately so a framework upgrade cannot silently change replay, capacity, or drain
+//! behavior.
 
 use pingora::server::configuration::ServerConf;
 
@@ -34,13 +35,14 @@ const _: () = assert!(
 
 /// Builds the Pingora server configuration admitted by the version-1 runtime policy.
 ///
-/// Retry behavior is deliberately fixed to a single upstream attempt. Product-specific retry
-/// semantics require idempotency knowledge and therefore remain outside the generic gateway until
-/// a later version introduces an explicit, reviewed contract. Graceful shutdown is bounded rather
-/// than inheriting Pingora's framework fallback.
-pub fn build_server_conf() -> ServerConf {
+/// Retry behavior is fixed to a single upstream attempt. The caller supplies the already-validated
+/// edge-contract keepalive-pool budget instead of inheriting Pingora's framework default. Product-
+/// specific retry semantics require idempotency knowledge and therefore remain outside the generic
+/// gateway. Graceful shutdown is bounded rather than inheriting Pingora's framework fallback.
+pub fn build_server_conf(upstream_keepalive_pool_size: usize) -> ServerConf {
     ServerConf {
         max_retries: V1_MAX_UPSTREAM_ATTEMPTS,
+        upstream_keepalive_pool_size,
         grace_period_seconds: Some(V1_GRACE_PERIOD_SECONDS),
         graceful_shutdown_timeout_seconds: Some(V1_GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS),
         ..ServerConf::default()
