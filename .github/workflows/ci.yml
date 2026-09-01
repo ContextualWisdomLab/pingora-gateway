@@ -26,7 +26,7 @@ jobs:
       - name: Verify checkout identity
         run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
       - name: Install native dependencies
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends pkg-config libssl-dev
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends pkg-config libssl-dev openssl
       - name: Install Rust 1.98.0
         run: |
           rustup toolchain install 1.98.0 --profile minimal --component clippy,rustfmt
