@@ -55,11 +55,11 @@ pub enum GatewayCommandError {
 
 impl GatewayCommand {
     /// Parses process arguments and requires exactly one explicit configuration path.
-    pub fn parse<I>(args: I) -> Result<Self, GatewayCommandError>
-    where
-        I: IntoIterator<Item = OsString>,
-    {
-        let mut arguments = args.into_iter();
+    ///
+    /// A slice keeps this parser monomorphic: coverage and failure evidence then describe the same
+    /// executable parser used by the process instead of compiler-generated generic instantiations.
+    pub fn parse(args: &[OsString]) -> Result<Self, GatewayCommandError> {
+        let mut arguments = args.iter();
         let _program_name = arguments.next();
         let mut config_path = None;
 
@@ -75,7 +75,7 @@ impl GatewayCommand {
             let value = arguments
                 .next()
                 .ok_or(GatewayCommandError::MissingConfigValue)?;
-            config_path = Some(PathBuf::from(value));
+            config_path = Some(PathBuf::from(value.as_os_str()));
         }
 
         config_path
