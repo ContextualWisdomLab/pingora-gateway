@@ -6,9 +6,9 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
-COPY Cargo.toml ./
+COPY Cargo.toml Cargo.lock ./
 COPY src ./src
-RUN cargo build --release --bin cwl-pingora-gateway
+RUN cargo build --locked --release --bin cwl-pingora-gateway
 
 FROM debian:bookworm-slim AS runtime
 RUN apt-get update \
