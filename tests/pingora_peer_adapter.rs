@@ -1,7 +1,8 @@
 use cwl_pingora_gateway::{
-    edge_contract::{UpstreamConfig, UpstreamTimeouts},
+    edge_contract::{GatewayConfigError, UpstreamConfig, UpstreamTimeouts},
     pingora_delivery::build_peer,
 };
+use pingora::upstreams::peer::ALPN;
 use std::net::SocketAddr;
 use std::time::Duration;
 
@@ -23,12 +24,14 @@ fn upstream(tls: bool, sni: Option<&str>) -> UpstreamConfig {
 
 #[test]
 fn tls_peer_verifies_identity_and_uses_explicit_io_budgets() {
-    let peer = build_peer(&upstream(true, Some("api.internal.example")));
+    let peer = build_peer(&upstream(true, Some("api.internal.example")))
+        .expect("validated TLS upstream must build a peer");
 
     assert!(peer.is_tls());
     assert_eq!(peer.sni, "api.internal.example");
     assert!(peer.options.verify_cert);
     assert!(peer.options.verify_hostname);
+    assert_eq!(peer.options.alpn, ALPN::H1);
     assert_eq!(
         peer.options.connection_timeout,
         Some(Duration::from_millis(1_250))
@@ -64,8 +67,21 @@ fn tls_peer_verifies_identity_and_uses_explicit_io_budgets() {
 
 #[test]
 fn cleartext_peer_does_not_invent_a_tls_identity() {
-    let peer = build_peer(&upstream(false, None));
+    let peer = build_peer(&upstream(false, None)).expect("validated HTTP upstream must build a peer");
 
     assert!(!peer.is_tls());
     assert!(peer.sni.is_empty());
+    assert_eq!(peer.options.alpn, ALPN::H1);
+}
+
+#[test]
+fn direct_peer_construction_still_fails_closed_for_invalid_tls_identity() {
+    let invalid = upstream(true, None);
+
+    assert_eq!(
+        build_peer(&invalid).unwrap_err(),
+        GatewayConfigError::MissingTlsServerName {
+            upstream_name: "api".to_string(),
+        }
+    );
 }
