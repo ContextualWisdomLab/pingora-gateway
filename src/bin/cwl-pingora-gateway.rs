@@ -25,10 +25,11 @@ fn main() -> ExitCode {
         Ok(config) => config,
         Err(error) => return exit_with_error(error),
     };
-    let proxy = match GatewayProxy::try_from_config(&config) {
-        Ok(proxy) => proxy,
-        Err(error) => return exit_with_error(error),
-    };
+    // `load_config()` has already validated this exact in-memory contract. Revalidation here is a
+    // defensive invariant assertion, not a second user-controlled failure boundary; keeping it as
+    // such removes an unreachable process branch while preserving fail-closed adapter construction.
+    let proxy = GatewayProxy::try_from_config(&config)
+        .expect("GatewayCommand::load_config must return a validated edge contract");
     let listener = config.listener.to_string();
     let metrics_listener = config.metrics_listener.to_string();
 
