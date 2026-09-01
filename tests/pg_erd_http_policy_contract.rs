@@ -38,7 +38,9 @@ fn pg_erd_cloud_security_headers_preserve_live_traefik_contract() {
         policy.value_for("permissions-policy"),
         Some("geolocation=(), microphone=(), camera=()")
     );
+    assert_eq!(policy.value_for("server"), None);
     assert_eq!(policy.len(), 4);
+    assert!(!policy.is_empty());
 }
 
 #[test]
@@ -85,6 +87,15 @@ fn malformed_header_authority_is_rejected_before_activation() {
     for (rule, expected) in [
         (
             ResponseHeaderRule {
+                name: "".to_string(),
+                value: "value".to_string(),
+            },
+            HeaderPolicyError::InvalidHeaderName {
+                header_name: "".to_string(),
+            },
+        ),
+        (
+            ResponseHeaderRule {
                 name: "Bad Header".to_string(),
                 value: "value".to_string(),
             },
@@ -104,7 +115,16 @@ fn malformed_header_authority_is_rejected_before_activation() {
         (
             ResponseHeaderRule {
                 name: "X-Test".to_string(),
-                value: "safe\r\nInjected: yes".to_string(),
+                value: "safe\rInjected: yes".to_string(),
+            },
+            HeaderPolicyError::InvalidHeaderValue {
+                header_name: "X-Test".to_string(),
+            },
+        ),
+        (
+            ResponseHeaderRule {
+                name: "X-Test".to_string(),
+                value: "safe\nInjected: yes".to_string(),
             },
             HeaderPolicyError::InvalidHeaderValue {
                 header_name: "X-Test".to_string(),
