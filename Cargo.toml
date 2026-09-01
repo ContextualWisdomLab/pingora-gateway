@@ -1,0 +1,26 @@
+[package]
+name = "cwl-pingora-gateway"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.97.1"
+license = "Apache-2.0"
+description = "ContextualWisdomLab shared edge runtime built on Cloudflare Pingora"
+repository = "https://github.com/ContextualWisdomLab/pingora-gateway"
+
+[lib]
+name = "cwl_pingora_gateway"
+path = "src/lib.rs"
+
+[[bin]]
+name = "cwl-pingora-gateway"
+path = "src/bin/cwl-pingora-gateway.rs"
+
+[dependencies]
+async-trait = "0.1.89"
+pingora = { git = "https://github.com/cloudflare/pingora.git", rev = "6463ad6407a1d3fe256f1951dd0ecb054477e3f6", features = ["proxy", "openssl"] }
+serde = { version = "1.0.219", features = ["derive"] }
+serde_yaml = "0.9.34"
+thiserror = "2.0.16"
+
+[dev-dependencies]
+tempfile = "3.21.0"
