@@ -9,7 +9,7 @@ This baseline is code-current for the bootstrap PR. Exact source heads, base tip
 | Executable Pingora path | Implemented on branch | Production binary composes `GatewayCommand` -> `GatewayConfig` -> `GatewayProxy` -> `http_proxy_service`; every changed head must reacquire hosted evidence |
 | DDD ownership | Implemented | Edge invariants live in `edge_contract`; Pingora types and trust-bundle loading stay in delivery/application modules; product auth/business policy, certificate issuance/rotation, Wardnet/EgressWeave decisions, and Keyverse identity remain outside this boundary |
 | Fail-closed config | Implemented | Strict YAML, version/body/upstream/TLS/trust-path/timeout validation; v1 deliberately admits exactly one upstream and cannot replace a multi-route edge |
-| Upstream TLS | Repair candidate | RED `269f2b444970480889e88ea9ec1a61d0db0cd39e` added compiled-binary local-CA/hostname verification. The repair adds optional absolute PEM `trust_bundle_file`, loads it before listeners, keeps certificate+hostname verification enabled, and fails closed on unreadable/empty/malformed material. Exact-current-head GREEN is required before this is release evidence |
+| Upstream TLS | Repair candidate | Compiled-binary local-CA/hostname verification now has a causal trust-bundle repair and rustfmt repair; every later source identity, including load/OCI changes, must reacquire exact-current-head GREEN before this becomes release evidence |
 | HTTP protocol scope | Partial | Initial upstream adapter explicitly uses HTTP/1.1. No HTTP/2 or HTTP/3 parity claim exists without executable downstream/upstream contract evidence |
 | Hop-by-hop / forwarding trust | Implemented on branch | Pingora standard request policy plus explicit removal/reconstruction of forwarding identity; trusted client-IP chain configuration remains a future bounded contract |
 | Retry policy | Implemented, intentionally minimal | `max_retries=1` means one total upstream attempt and zero generic automatic retries; domain idempotency/replay policy stays with the product owner |
@@ -17,10 +17,10 @@ This baseline is code-current for the bootstrap PR. Exact source heads, base tip
 | Health | Implemented on branch | `/livez` and `/readyz` are served through the production Pingora path; readiness does not invent product-specific dependency probes |
 | Graceful drain | Implemented candidate behavior | SIGTERM uses a bounded 5 s grace plus 10 s runtime shutdown timeout inside a 30 s external termination budget; exact-release evidence must be reacquired |
 | Logs / metrics / traces | Partial | Low-cardinality counters and credential/cookie-safe coarse access logs exist; tracing and richer bounded operability evidence remain gaps |
-| OCI isolation | Implemented candidate hardening | Hosted CI has exercised uid/gid 65532, read-only root, all capabilities dropped and `no-new-privileges`; later heads must reacquire this evidence |
-| Dependency policy | Release-blocked | Current immutable post-release Pingora commit carries patched `lru`; `.github#1605` must resolve conflict with the organization exact-release rule before release/cutover. Known-unsound downgrade or blanket advisory waiver is prohibited |
-| Coverage / public API docs | Gates implemented | Owned production line/region coverage is required at 100%; `#![deny(missing_docs)]` and warning-denied rustdoc cover public APIs. New trust-bundle code must satisfy the same exact-head gates |
-| Benchmark | RED | No representative latency/throughput/CPU/RSS/connection-reuse/TLS benchmark supports a 20 ms p95 claim yet |
+| OCI isolation | Implemented candidate hardening | Runtime is uid/gid 65532, read-only-root compatible, capability-free and `no-new-privileges`; both builder and runtime base images are digest-pinned after the Scorecard review finding, and exact-head OCI/Scorecard evidence must reacquire |
+| Dependency policy | Release-blocked | `.github#1605` owns the exact-release Pingora vs patched-`lru` decision; current upstream also carries unmaintained `derivative 2.2.0` (`RUSTSEC-2024-0388`, no fixed release). `.github#810` independently owns the public non-fork Dependency Review compare-API HTTP 403 availability incident. Known-unsound downgrade, blanket advisory waiver, fail-open 403 handling, or substitute-scanner promotion is prohibited |
+| Coverage / public API docs | Gates implemented | Owned production line/region coverage is required at 100%; `#![deny(missing_docs)]` and warning-denied rustdoc cover public APIs. Every changed head must satisfy the same gates |
+| Load / 20 ms p95 | Executable candidate | Checksum-pinned k6 2.2.0 now exercises 400 release-mode loopback requests across four VUs and gates the minimal HTTP/1.1 path at p95 <20 ms with zero failures. This is only a local regression bound; representative consumer/TLS/network deployment evidence is still required before a 20 ms production SLO is claimed |
 | Rollback | Documented, not rehearsed | Rehearsal requires an immutable protected release artifact/digest |
 
 ## Organization edge inventory
@@ -45,7 +45,7 @@ GREEN for an edge migration requires a protected immutable Context Graph release
 
 ## Enterprise Architecture dependency — read only
 
-`ContextualWisdomLab/enterprise-architecture-core` is also not writable from this loop. Current Context Fabric projection tail is Draft #40, live head `82d099d5a728efc8bf0bc846e5207b3ee6a1673b`, based on #39 `b44635b686c66e78ebd7f1218343a933a510cd89`. At the latest read, repository-owned `ci`, `runtime-readiness`, and `supply-chain` for that exact head were queued; no submitted review or inline review thread exists. Queued evidence is non-passing.
+`ContextualWisdomLab/enterprise-architecture-core` is also not writable from this loop. Current Context Fabric projection tail is Draft #40, live head `82d099d5a728efc8bf0bc846e5207b3ee6a1673b`, based on #39 `b44635b686c66e78ebd7f1218343a933a510cd89`. At the latest read, exact-head `runtime-readiness` and `supply-chain` are terminal success while `ci` is terminal failure; no submitted review or inline review thread exists. The failing PostgreSQL invariant says a verified target state bypasses freshness monitoring in the canonical planner: `project_technology_target_state_plan(...)` must deterministically return `transformation_state_code='verified'`, `decision_readiness_code='target_state_verified'`, and `recommended_action_code='monitor_target_state'` before Pingora may assert `validated execution` through this owner path.
 
 The owner path is correct when it binds one released `contracts/context-graph-dependency.json`, requires exact `ContextualWisdomLab/<repository>` ownership, `direction_code=inbound_projection`, `exchange_kind=context_assertion_cloudevent`, `ea_core_owns=false`, canonical/source refs, truth status, effective/system time and provenance, and rejects provisional PR heads as release authority.
 
@@ -53,10 +53,10 @@ For each eventual edge migration, EA admission must version `current technology/
 
 ## Dependency-ordered blockers
 
-1. Make the local-CA trust/hostname repair terminal GREEN on its exact head with 100% owned production line/region coverage, rustdoc, CI, SAST, security, dependency and OCI evidence; repair only evidence-backed failures.
-2. Keep `.github#1605` fail-closed until the policy owner chooses and encodes a bounded exact-release/security path.
-3. Add realistic concurrency/backpressure/load and upstream/network failure recovery evidence, then benchmark representative gateway traffic before deciding whether 20 ms p95 is realistic.
+1. Make the local-CA trust/hostname repair plus loopback k6 load contract terminal GREEN on one exact head with 100% owned production line/region coverage, rustdoc, CI, SAST, security, dependency and OCI evidence; repair only evidence-backed failures.
+2. Keep `.github#1605` and `.github#810` fail-closed until their respective policy and GitHub dependency-review availability owner paths are resolved; do not suppress `RUSTSEC-2024-0388` generically.
+3. Add explicit concurrency/backpressure budgets and broader upstream/network failure recovery evidence, then benchmark representative consumer traffic before adopting a production 20 ms p95 objective.
 4. Add a protected release path that publishes an immutable image digest with provenance and rehearse rollback against that exact digest.
 5. Satisfy then-live protected-branch review/governance without self-approval, bot-as-human claims, stale evidence transfer, or routine administrator bypass.
-6. Wait for an immutable released Context Graph bundle and compatible EA admission path before asserting authoritative architecture execution state.
+6. Wait for an immutable released Context Graph bundle and compatible GREEN EA admission path before asserting authoritative architecture execution state.
 7. Only then characterize and migrate the highest-impact consumer whose actual responsibility belongs to the shared edge bounded context.

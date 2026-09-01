@@ -68,6 +68,98 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  load-contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          ref: ${{ env.EXPECTED_SHA }}
+          persist-credentials: false
+      - name: Verify checkout identity
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - name: Install native dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ca-certificates cmake curl libssl-dev pkg-config
+      - name: Install Rust 1.98.0
+        run: |
+          rustup toolchain install 1.98.0 --profile minimal
+          rustup default 1.98.0
+      - name: Build exact gateway candidate
+        run: cargo build --release --locked --bin cwl-pingora-gateway
+      - name: Install checksum-pinned k6 2.2.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="k6-v2.2.0-linux-amd64.tar.gz"
+          curl --fail --location --silent --show-error \
+            "https://github.com/grafana/k6/releases/download/v2.2.0/${archive}" \
+            --output "/tmp/${archive}"
+          echo "b5a8003c86f35f5cd5ceef1490312c48e587696c94d998cefc6d7b3b4cb1597d  /tmp/${archive}" | sha256sum --check --strict
+          tar -xzf "/tmp/${archive}" -C /tmp
+          sudo install -m 0755 /tmp/k6-v2.2.0-linux-amd64/k6 /usr/local/bin/k6
+          k6 version
+      - name: Exercise concurrent loopback traffic contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tests/load/upstream_fixture.py >/tmp/upstream-fixture.log 2>&1 &
+          upstream_pid=$!
+
+          cat >/tmp/gateway-load.yaml <<'EOF'
+          version: 1
+          listener: 127.0.0.1:18080
+          metrics_listener: 127.0.0.1:18082
+          max_request_body_bytes: 1048576
+          upstreams:
+            - name: load-fixture
+              address: 127.0.0.1:18081
+              tls: false
+              timeouts:
+                connection_ms: 500
+                total_connection_ms: 1000
+                read_ms: 2000
+                write_ms: 2000
+                idle_ms: 5000
+          EOF
+
+          target/release/cwl-pingora-gateway --config /tmp/gateway-load.yaml >/tmp/gateway-load.log 2>&1 &
+          gateway_pid=$!
+          cleanup() {
+            status=$?
+            kill "$gateway_pid" "$upstream_pid" >/dev/null 2>&1 || true
+            wait "$gateway_pid" >/dev/null 2>&1 || true
+            wait "$upstream_pid" >/dev/null 2>&1 || true
+            if [ "$status" -ne 0 ]; then
+              echo "--- gateway log ---"
+              cat /tmp/gateway-load.log || true
+              echo "--- upstream fixture log ---"
+              cat /tmp/upstream-fixture.log || true
+            fi
+          }
+          trap cleanup EXIT
+
+          for _ in $(seq 1 80); do
+            if curl --fail --silent --show-error --max-time 1 http://127.0.0.1:18080/livez >/dev/null; then
+              break
+            fi
+            if ! kill -0 "$gateway_pid" 2>/dev/null; then
+              echo "gateway exited before the load contract became live" >&2
+              exit 1
+            fi
+            sleep 0.1
+          done
+          curl --fail --silent --show-error --max-time 1 http://127.0.0.1:18080/livez >/dev/null
+
+          GATEWAY_URL=http://127.0.0.1:18080 k6 run --quiet tests/load/gateway_smoke.js
+      - name: Upload loopback latency evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: k6-loopback-${{ env.EXPECTED_SHA }}
+          path: k6-summary.json
+          if-no-files-found: error
+          retention-days: 7
+
   oci-runtime:
     runs-on: ubuntu-24.04
     steps:
