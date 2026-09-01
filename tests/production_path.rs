@@ -95,6 +95,35 @@ fn get(address: SocketAddr, path: &str) -> String {
     )
 }
 
+fn read_fixture_request(stream: &mut TcpStream) -> Vec<u8> {
+    let mut request = Vec::new();
+    let mut buffer = [0_u8; 1024];
+    let header_end = loop {
+        if let Some(position) = request.windows(4).position(|window| window == b"\r\n\r\n") {
+            break position + 4;
+        }
+        let read = stream.read(&mut buffer).expect("request should be readable");
+        assert!(read > 0, "gateway closed upstream request prematurely");
+        request.extend_from_slice(&buffer[..read]);
+    };
+
+    let headers = String::from_utf8_lossy(&request[..header_end]);
+    let content_length = headers
+        .lines()
+        .find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            name.eq_ignore_ascii_case("content-length")
+                .then(|| value.trim().parse::<usize>().expect("fixture content length"))
+        })
+        .unwrap_or(0);
+    while request.len() < header_end + content_length {
+        let read = stream.read(&mut buffer).expect("request body should be readable");
+        assert!(read > 0, "gateway closed upstream body prematurely");
+        request.extend_from_slice(&buffer[..read]);
+    }
+    request
+}
+
 #[test]
 fn compiled_gateway_enforces_health_limits_forwarding_proxy_and_telemetry_paths() {
     let upstream_listener =
@@ -109,33 +138,42 @@ fn compiled_gateway_enforces_health_limits_forwarding_proxy_and_telemetry_paths(
     let config = write_gateway_config(gateway_address, metrics_address, upstream_address);
 
     let fixture = thread::spawn(move || {
-        let (mut stream, _) = fixture_listener
-            .accept()
-            .expect("gateway should connect to fixture upstream");
-        let mut request = Vec::new();
-        let mut buffer = [0_u8; 1024];
-        while !request.windows(4).any(|window| window == b"\r\n\r\n") {
-            let read = stream
-                .read(&mut buffer)
-                .expect("request should be readable");
-            assert!(read > 0, "gateway closed upstream request prematurely");
-            request.extend_from_slice(&buffer[..read]);
-        }
-        let request = String::from_utf8_lossy(&request);
-        assert!(
-            request.starts_with("GET /through-pingora HTTP/1.1\r\n"),
-            "unexpected upstream request: {request:?}"
-        );
-        let lowered = request.to_ascii_lowercase();
-        assert!(lowered.contains("forwarded: proto=http\r\n"));
-        assert!(!lowered.contains("x-forwarded-for:"));
-        assert!(!lowered.contains("x-real-ip:"));
-        assert!(!lowered.contains("for=203.0.113.7"));
-        stream
-            .write_all(
-                b"HTTP/1.1 200 OK\r\nContent-Length: 12\r\nConnection: close\r\n\r\npingora-path",
+        for (expected_start, expected_body, response_body) in [
+            ("GET /through-pingora HTTP/1.1\r\n", None, "pingora-path"),
+            (
+                "POST /small-body HTTP/1.1\r\n",
+                Some("ping"),
+                "small-ok",
+            ),
+        ] {
+            let (mut stream, _) = fixture_listener
+                .accept()
+                .expect("gateway should connect to fixture upstream");
+            let request = read_fixture_request(&mut stream);
+            let request_text = String::from_utf8_lossy(&request);
+            assert!(
+                request_text.starts_with(expected_start),
+                "unexpected upstream request: {request_text:?}"
+            );
+            if let Some(expected_body) = expected_body {
+                assert!(
+                    request.ends_with(expected_body.as_bytes()),
+                    "gateway did not forward the admitted body: {request_text:?}"
+                );
+            }
+            let lowered = request_text.to_ascii_lowercase();
+            assert!(lowered.contains("forwarded: proto=http\r\n"));
+            assert!(!lowered.contains("x-forwarded-for:"));
+            assert!(!lowered.contains("x-real-ip:"));
+            assert!(!lowered.contains("for=203.0.113.7"));
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                response_body.len(),
+                response_body
             )
             .expect("fixture response should be writable");
+        }
     });
 
     let mut child = Command::new(env!("CARGO_BIN_EXE_cwl-pingora-gateway"))
@@ -162,6 +200,24 @@ fn compiled_gateway_enforces_health_limits_forwarding_proxy_and_telemetry_paths(
             .contains("cache-control: no-store"));
     }
 
+    let malformed_length = raw_request(
+        gateway_address,
+        b"POST /bad-length HTTP/1.1\r\nHost: gateway.test\r\nContent-Length: not-a-number\r\nConnection: close\r\n\r\n",
+    );
+    assert!(
+        malformed_length.starts_with("HTTP/1.1 400"),
+        "non-numeric Content-Length must fail closed: {malformed_length:?}"
+    );
+
+    let non_ascii_length = raw_request(
+        gateway_address,
+        b"POST /bad-length-encoding HTTP/1.1\r\nHost: gateway.test\r\nContent-Length: \xff\r\nConnection: close\r\n\r\n",
+    );
+    assert!(
+        non_ascii_length.starts_with("HTTP/1.1 400"),
+        "non-ASCII Content-Length must fail closed: {non_ascii_length:?}"
+    );
+
     let oversized = raw_request(
         gateway_address,
         b"POST /too-large HTTP/1.1\r\nHost: gateway.test\r\nContent-Length: 9\r\nConnection: close\r\n\r\n123456789",
@@ -180,6 +236,16 @@ fn compiled_gateway_enforces_health_limits_forwarding_proxy_and_telemetry_paths(
         "unexpected downstream response: {response:?}"
     );
     assert!(response.ends_with("\r\n\r\npingora-path"));
+
+    let small_body = raw_request(
+        gateway_address,
+        b"POST /small-body HTTP/1.1\r\nHost: gateway.test\r\nContent-Length: 4\r\nConnection: close\r\n\r\nping",
+    );
+    assert!(
+        small_body.starts_with("HTTP/1.1 200"),
+        "body within the configured limit should reach upstream: {small_body:?}"
+    );
+    assert!(small_body.ends_with("\r\n\r\nsmall-ok"));
 
     fixture.join().expect("upstream fixture should complete");
 
