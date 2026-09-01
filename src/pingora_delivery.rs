@@ -29,9 +29,8 @@ pub fn build_peer(upstream: &UpstreamConfig) -> Result<HttpPeer, GatewayConfigEr
     peer.options.verify_hostname = true;
     peer.options.alpn = ALPN::H1;
     peer.options.connection_timeout = Some(Duration::from_millis(upstream.timeouts.connection_ms));
-    peer.options.total_connection_timeout = Some(Duration::from_millis(
-        upstream.timeouts.total_connection_ms,
-    ));
+    peer.options.total_connection_timeout =
+        Some(Duration::from_millis(upstream.timeouts.total_connection_ms));
     peer.options.read_timeout = Some(Duration::from_millis(upstream.timeouts.read_ms));
     peer.options.write_timeout = Some(Duration::from_millis(upstream.timeouts.write_ms));
     peer.options.idle_timeout = Some(Duration::from_millis(upstream.timeouts.idle_ms));
