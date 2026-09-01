@@ -45,6 +45,33 @@ upstreams:
 }
 
 #[test]
+fn admits_explicit_connection_and_backpressure_budgets() {
+    let yaml = r#"
+version: 1
+listener: 127.0.0.1:6188
+metrics_listener: 127.0.0.1:6192
+max_request_body_bytes: 1048576
+max_in_flight_requests: 128
+upstream_keepalive_pool_size: 32
+upstreams:
+  - name: api
+    address: 127.0.0.1:8080
+    tls: false
+    timeouts:
+      connection_ms: 1250
+      total_connection_ms: 2500
+      read_ms: 7500
+      write_ms: 6500
+      idle_ms: 15000
+"#;
+
+    assert!(
+        GatewayConfig::from_yaml(yaml).is_ok(),
+        "v1 must admit explicit downstream concurrency and upstream keepalive budgets"
+    );
+}
+
+#[test]
 fn rejects_malformed_yaml_before_network_authority() {
     let error = GatewayConfig::from_yaml("version: [not-a-number]").unwrap_err();
     assert!(matches!(error, GatewayConfigError::Parse(_)));
