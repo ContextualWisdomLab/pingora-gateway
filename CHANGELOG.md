@@ -6,10 +6,12 @@ All notable changes are tracked here. No release has been published yet.
 
 - Bootstrapped an executable Rust Pingora proxy through pull-request governance.
 - Added strict v1 configuration, explicit one-upstream network authority, TLS identity verification, and explicit upstream I/O budgets.
+- Added mandatory positive `max_in_flight_requests` and `upstream_keepalive_pool_size` capacity budgets; Pingora's framework keepalive default is overridden from the validated edge contract.
+- Added process-local fail-fast backpressure: non-health requests above the in-flight budget receive HTTP 503, health remains observable, rejection telemetry increments, and capacity is released after request completion or failure.
 - Added optional per-upstream absolute PEM trust-bundle consumption without taking ownership of certificate issuance/rotation; trust material is loaded fail-closed before listeners open.
 - Added an executable local-CA TLS test through the compiled gateway that holds CA trust constant and proves SNI/hostname mismatch is rejected.
 - Added a focused transport-adapter regression proving an upstream without a custom trust bundle leaves Pingora's platform trust roots selected rather than replacing the CA store.
-- Added fail-closed binary startup and real loopback production-path tests.
+- Added fail-closed binary startup and real loopback production-path tests, including held-request saturation/recovery at an in-flight budget of one.
 - Added `/livez` and `/readyz` through the Pingora serving path.
 - Added request-body limits and a distrust-by-default forwarded-header policy.
 - Added low-cardinality metrics plus credential/cookie-safe access logging through the production path.
@@ -20,4 +22,4 @@ All notable changes are tracked here. No release has been published yet.
 - Added missing-public-rustdoc enforcement and documentation builds with warnings denied.
 - Added DDD, product, technical, security, threat, test, operability, configuration, migration-gap, and primary-source traceability documentation.
 
-Release remains blocked on the organization decision for the exact Pingora release versus `RUSTSEC-2026-0253` and the separate time-bounded disposition of unmaintained `derivative 2.2.0` / `RUSTSEC-2024-0388` (`ContextualWisdomLab/.github#1605`), restoration of authoritative public non-fork Dependency Review evidence (`ContextualWisdomLab/.github#810`), terminal exact-current-head CI/supply-chain/security/review evidence, representative concurrency/backpressure/network-failure and benchmark evidence, an immutable registry digest with provenance and rehearsed rollback, and protected-branch integration. No consumer migration, canary, cutover, or legacy removal is claimed before those release and traffic-contract gates are satisfied.
+Release remains blocked on the organization decision for the exact Pingora release versus `RUSTSEC-2026-0253` and the separate time-bounded disposition of unmaintained `derivative 2.2.0` / `RUSTSEC-2024-0388` (`ContextualWisdomLab/.github#1605`), restoration of authoritative public non-fork Dependency Review evidence (`ContextualWisdomLab/.github#810`), terminal exact-current-head CI/supply-chain/security/review evidence, representative consumer-specific concurrency/origin-capacity/network-failure and benchmark evidence, an immutable registry digest with provenance and rehearsed rollback, and protected-branch integration. No consumer migration, canary, cutover, or legacy removal is claimed before those release and traffic-contract gates are satisfied.
