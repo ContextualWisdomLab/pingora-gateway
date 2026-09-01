@@ -6,14 +6,15 @@ use std::fs;
 fn command_requires_an_explicit_config_path() {
     let args = [OsString::from("cwl-pingora-gateway")];
 
-    let error = GatewayCommand::parse(args).unwrap_err();
+    let error = GatewayCommand::parse(&args).unwrap_err();
     assert_eq!(error, GatewayCommandError::MissingConfigOption);
     assert_eq!(error.path(), None);
 }
 
 #[test]
 fn command_treats_empty_argv_as_missing_config() {
-    let error = GatewayCommand::parse(std::iter::empty::<OsString>()).unwrap_err();
+    let args: [OsString; 0] = [];
+    let error = GatewayCommand::parse(&args).unwrap_err();
 
     assert_eq!(error, GatewayCommandError::MissingConfigOption);
     assert_eq!(error.path(), None);
@@ -26,7 +27,7 @@ fn command_rejects_config_without_a_value() {
         OsString::from("--config"),
     ];
 
-    let error = GatewayCommand::parse(args).unwrap_err();
+    let error = GatewayCommand::parse(&args).unwrap_err();
     assert_eq!(error, GatewayCommandError::MissingConfigValue);
     assert_eq!(error.path(), None);
 }
@@ -38,7 +39,7 @@ fn command_rejects_unknown_or_ambiguous_arguments() {
         OsString::from("--listen"),
         OsString::from("127.0.0.1:6188"),
     ];
-    let unknown_error = GatewayCommand::parse(unknown).unwrap_err();
+    let unknown_error = GatewayCommand::parse(&unknown).unwrap_err();
     assert_eq!(
         unknown_error,
         GatewayCommandError::UnexpectedArgument("--listen".to_string())
@@ -52,7 +53,7 @@ fn command_rejects_unknown_or_ambiguous_arguments() {
         OsString::from("--config"),
         OsString::from("b.yaml"),
     ];
-    let duplicate_error = GatewayCommand::parse(duplicate).unwrap_err();
+    let duplicate_error = GatewayCommand::parse(&duplicate).unwrap_err();
     assert_eq!(duplicate_error, GatewayCommandError::DuplicateConfigOption);
     assert_eq!(duplicate_error.path(), None);
 }
@@ -65,7 +66,7 @@ fn command_reports_non_utf8_unexpected_arguments_lossily() {
     let invalid = OsString::from_vec(vec![b'-', b'-', b'x', 0xff]);
     let args = [OsString::from("cwl-pingora-gateway"), invalid];
 
-    let error = GatewayCommand::parse(args).unwrap_err();
+    let error = GatewayCommand::parse(&args).unwrap_err();
 
     assert_eq!(
         error,
@@ -104,7 +105,7 @@ upstreams:
         OsString::from("--config"),
         path.clone().into_os_string(),
     ];
-    let command = GatewayCommand::parse(args).expect("explicit config option must parse");
+    let command = GatewayCommand::parse(&args).expect("explicit config option must parse");
     let config = command.load_config().expect("valid config file must load");
 
     assert_eq!(command.config_path(), path.as_path());
@@ -143,7 +144,7 @@ upstreams:
         OsString::from("--config"),
         path.clone().into_os_string(),
     ];
-    let command = GatewayCommand::parse(args).expect("argument shape is valid");
+    let command = GatewayCommand::parse(&args).expect("argument shape is valid");
 
     let error = command.load_config().unwrap_err();
     assert!(matches!(error, GatewayCommandError::InvalidConfig { .. }));
@@ -158,7 +159,7 @@ fn command_does_not_hide_a_missing_config_file() {
         OsString::from("--config"),
         path.clone().into_os_string(),
     ];
-    let command = GatewayCommand::parse(args).expect("argument shape is valid");
+    let command = GatewayCommand::parse(&args).expect("argument shape is valid");
 
     let error = command.load_config().unwrap_err();
     assert!(matches!(
