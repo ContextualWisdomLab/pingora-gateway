@@ -318,3 +318,45 @@ fn compiled_gateway_enforces_health_limits_forwarding_proxy_and_telemetry_paths(
     assert!(!logs.contains("super-secret-token"));
     assert!(!logs.contains("super-secret-cookie"));
 }
+
+#[test]
+fn upstream_connection_failure_is_bounded_and_does_not_poison_readiness() {
+    let unavailable_upstream =
+        TcpListener::bind("127.0.0.1:0").expect("ephemeral upstream port should be reservable");
+    let upstream_address = unavailable_upstream
+        .local_addr()
+        .expect("reserved upstream should expose its address");
+    drop(unavailable_upstream);
+
+    let (gateway_address, metrics_address) = reserve_distinct_loopback_addresses();
+    let config = write_gateway_config(gateway_address, metrics_address, upstream_address);
+    let mut child = Command::new(env!("CARGO_BIN_EXE_cwl-pingora-gateway"))
+        .args(["--config", config.path().to_str().expect("UTF-8 temp path")])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("compiled gateway binary should start");
+
+    wait_until_listening(gateway_address, &mut child);
+    let mut process = GatewayProcess(child);
+
+    let started = Instant::now();
+    let response = get(gateway_address, "/unavailable-upstream");
+    assert!(
+        response.starts_with("HTTP/1.1 502"),
+        "a refused upstream connection must surface as Bad Gateway: {response:?}"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(4),
+        "a refused upstream connection must stay within the configured connection budgets"
+    );
+
+    let readiness = get(gateway_address, "/readyz");
+    assert!(
+        readiness.starts_with("HTTP/1.1 200"),
+        "one upstream connection failure must not poison process readiness: {readiness:?}"
+    );
+
+    terminate_gateway(&mut process.0);
+}
