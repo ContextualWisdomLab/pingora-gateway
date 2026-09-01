@@ -13,12 +13,15 @@ use cwl_pingora_gateway::startup::GatewayCommand;
 use pingora::prelude::{http_proxy_service, Server};
 
 fn main() {
-    let command = GatewayCommand::parse(env::args_os()).unwrap_or_else(exit_with_error);
-    let config = command.load_config().unwrap_or_else(exit_with_error);
-    let proxy = GatewayProxy::try_from_config(&config).unwrap_or_else(exit_with_error);
+    let command = GatewayCommand::parse(env::args_os()).unwrap_or_else(|error| exit_with_error(error));
+    let config = command
+        .load_config()
+        .unwrap_or_else(|error| exit_with_error(error));
+    let proxy = GatewayProxy::try_from_config(&config)
+        .unwrap_or_else(|error| exit_with_error(error));
     let listener = config.listener.to_string();
 
-    let mut server = Server::new(None).unwrap_or_else(exit_with_error);
+    let mut server = Server::new(None).unwrap_or_else(|error| exit_with_error(error));
     server.bootstrap();
 
     let mut proxy_service = http_proxy_service(&server.configuration, proxy);
