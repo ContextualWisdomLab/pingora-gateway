@@ -1,0 +1,13 @@
+version: 1
+listener: 0.0.0.0:6188
+max_request_body_bytes: 1048576
+upstreams:
+  - name: application
+    address: 192.0.2.10:8080
+    tls: false
+    timeouts:
+      connection_ms: 1000
+      total_connection_ms: 2000
+      read_ms: 5000
+      write_ms: 5000
+      idle_ms: 10000

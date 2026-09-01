@@ -1,0 +1,9 @@
+# Test Strategy
+
+Tests are organized by responsibility rather than by implementation layer.
+
+`tests/config_contract.rs` proves strict parsing and Edge Contract invariants. `tests/startup_contract.rs` proves explicit fail-closed startup. `tests/pingora_peer_adapter.rs` proves TLS identity, timeout, and Pingora hop-by-hop policy mapping. `tests/gateway_proxy.rs` proves admitted config produces the expected peer. `tests/binary_startup.rs` exercises the compiled process for invalid startup. `tests/production_path.rs` drives the compiled binary through a loopback Pingora listener and real local upstream fixture, covering health, a pre-upstream 413 body-limit rejection, forwarding-identity sanitization, and HTTP proxy response.
+
+Every behavioral migration should begin with characterization against the old owned edge behavior, then add equivalent production-path evidence for Pingora. Static-serving consumers must cover route precedence, SPA fallback, MIME, ETag/cache, Range/HEAD/304/416, redirects/security headers and compression as applicable. Proxy consumers must cover Host/SNI/TLS, forwarding trust, WebSocket/upgrade, limits, timeouts/retries, streaming/uploads, errors, health/readiness and drain.
+
+Release-quality gaps: no property/fuzz tests yet; no chunked-over-limit production-path test; no graceful SIGTERM/drain test; no TLS local-CA integration fixture; no OCI non-root/read-only-root test; no load/concurrency/recovery test; no coverage policy evidence; no SBOM/provenance test; and no benchmark against replaced Nginx traffic. Performance claims are forbidden until representative latency/throughput/CPU/RSS/connection-reuse/TLS measurements exist.
