@@ -22,28 +22,30 @@ pub const LIVENESS_PATH: &str = "/livez";
 /// Stable readiness endpoint reached through the production Pingora serving path.
 pub const READINESS_PATH: &str = "/readyz";
 
+fn register_counter(name: &'static str, help: &'static str) -> IntCounter {
+    register_int_counter!(name, help)
+        .unwrap_or_else(|error| panic!("gateway metric {name} must register exactly once: {error}"))
+}
+
 static REQUESTS_TOTAL: LazyLock<IntCounter> = LazyLock::new(|| {
-    register_int_counter!(
+    register_counter(
         "cwl_pingora_gateway_requests_total",
-        "Completed downstream requests observed by the shared edge runtime"
+        "Completed downstream requests observed by the shared edge runtime",
     )
-    .expect("gateway request metric must register exactly once")
 });
 
 static REQUEST_ERRORS_TOTAL: LazyLock<IntCounter> = LazyLock::new(|| {
-    register_int_counter!(
+    register_counter(
         "cwl_pingora_gateway_request_errors_total",
-        "Completed downstream requests whose Pingora lifecycle ended with an error"
+        "Completed downstream requests whose Pingora lifecycle ended with an error",
     )
-    .expect("gateway request error metric must register exactly once")
 });
 
 static REQUEST_BODY_BYTES_TOTAL: LazyLock<IntCounter> = LazyLock::new(|| {
-    register_int_counter!(
+    register_counter(
         "cwl_pingora_gateway_request_body_bytes_total",
-        "Downstream request body bytes observed before completion or rejection"
+        "Downstream request body bytes observed before completion or rejection",
     )
-    .expect("gateway request body byte metric must register exactly once")
 });
 
 /// Per-request delivery state. Product domain state does not belong here.
@@ -215,5 +217,23 @@ impl ProxyHttp for GatewayProxy {
             "gateway_request status={status} outcome={outcome} request_body_bytes={}",
             ctx.request_body_bytes
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::panic;
+
+    use super::register_counter;
+
+    #[test]
+    fn duplicate_metric_registration_fails_closed() {
+        let name = "cwl_pingora_gateway_test_duplicate_registration_total";
+        let help = "Coverage-only counter proving duplicate registration fails closed";
+        let _first = register_counter(name, help);
+
+        let duplicate = panic::catch_unwind(|| register_counter(name, help));
+
+        assert!(duplicate.is_err());
     }
 }
