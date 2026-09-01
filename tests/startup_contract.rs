@@ -46,6 +46,7 @@ fn command_loads_and_validates_the_explicit_config_file() {
         r#"
 version: 1
 listener: 127.0.0.1:6188
+max_request_body_bytes: 1048576
 upstreams:
   - name: api
     address: 127.0.0.1:8080
@@ -70,6 +71,7 @@ upstreams:
 
     assert_eq!(command.config_path(), path.as_path());
     assert_eq!(config.listener.to_string(), "127.0.0.1:6188");
+    assert_eq!(config.max_request_body_bytes, 1_048_576);
 }
 
 #[test]

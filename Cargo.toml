@@ -17,6 +17,7 @@ path = "src/bin/cwl-pingora-gateway.rs"
 
 [dependencies]
 async-trait = "0.1.89"
+bytes = "1.10.1"
 pingora = { git = "https://github.com/cloudflare/pingora.git", rev = "6463ad6407a1d3fe256f1951dd0ecb054477e3f6", features = ["proxy", "openssl"] }
 serde = { version = "1.0.219", features = ["derive"] }
 serde_yaml = { package = "yaml_serde", version = "0.10.7" }

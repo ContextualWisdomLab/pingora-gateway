@@ -4,7 +4,8 @@
 //! that invariant. This Pingora adapter does not invent routing or load-balancing domain rules.
 
 use async_trait::async_trait;
-use pingora::prelude::{Error, ErrorType, HttpPeer, ProxyHttp, ResponseHeader, Session};
+use bytes::Bytes;
+use pingora::prelude::{Error, ErrorType, HttpPeer, ProxyHttp, RequestHeader, ResponseHeader, Session};
 use thiserror::Error;
 
 use crate::edge_contract::{GatewayConfig, GatewayConfigError, UpstreamConfig};
@@ -14,6 +15,12 @@ use crate::pingora_delivery::build_peer;
 pub const LIVENESS_PATH: &str = "/livez";
 /// Stable readiness endpoint reached through the production Pingora serving path.
 pub const READINESS_PATH: &str = "/readyz";
+
+/// Per-request delivery state. Product domain state does not belong here.
+#[derive(Debug, Default)]
+pub struct RequestContext {
+    request_body_bytes: u64,
+}
 
 /// Activation failures that occur after the transport-neutral configuration is parsed.
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
@@ -27,13 +34,14 @@ pub enum GatewayProxyError {
 #[derive(Debug, Clone)]
 pub struct GatewayProxy {
     upstream: UpstreamConfig,
+    max_request_body_bytes: u64,
 }
 
 impl GatewayProxy {
     /// Builds the version-1 delivery adapter from a validated edge configuration.
     ///
     /// Contract validation owns upstream-count and network-authority rules. The adapter only
-    /// copies the admitted upstream value into Pingora-facing state.
+    /// copies admitted values into Pingora-facing state.
     pub fn try_from_config(config: &GatewayConfig) -> std::result::Result<Self, GatewayProxyError> {
         config.validate()?;
         let upstream = config
@@ -42,7 +50,10 @@ impl GatewayProxy {
             .cloned()
             .ok_or(GatewayConfigError::NoUpstreams)?;
 
-        Ok(Self { upstream })
+        Ok(Self {
+            upstream,
+            max_request_body_bytes: config.max_request_body_bytes,
+        })
     }
 
     /// Constructs a fresh Pingora peer using the versioned upstream network-authority contract.
@@ -58,13 +69,40 @@ impl GatewayProxy {
             .write_response_header(Box::new(response), true)
             .await
     }
+
+    fn reject_oversize_declared_body(&self, session: &Session) -> pingora::Result<()> {
+        let Some(value) = session.req_header().headers.get("content-length") else {
+            return Ok(());
+        };
+        let raw = value.to_str().map_err(|_| {
+            Error::explain(
+                ErrorType::HTTPStatus(400),
+                "Content-Length is not valid visible ASCII",
+            )
+        })?;
+        let declared = raw.parse::<u64>().map_err(|_| {
+            Error::explain(
+                ErrorType::HTTPStatus(400),
+                "Content-Length is not a valid unsigned integer",
+            )
+        })?;
+        if declared > self.max_request_body_bytes {
+            return Err(Error::explain(
+                ErrorType::HTTPStatus(413),
+                "request body exceeds configured max_request_body_bytes",
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[async_trait]
 impl ProxyHttp for GatewayProxy {
-    type CTX = ();
+    type CTX = RequestContext;
 
-    fn new_ctx(&self) -> Self::CTX {}
+    fn new_ctx(&self) -> Self::CTX {
+        RequestContext::default()
+    }
 
     async fn request_filter(
         &self,
@@ -79,8 +117,32 @@ impl ProxyHttp for GatewayProxy {
                 Self::respond_healthy(session).await?;
                 Ok(true)
             }
-            _ => Ok(false),
+            _ => {
+                self.reject_oversize_declared_body(session)?;
+                Ok(false)
+            }
         }
+    }
+
+    async fn request_body_filter(
+        &self,
+        _session: &mut Session,
+        body: &mut Option<Bytes>,
+        _end_of_stream: bool,
+        ctx: &mut Self::CTX,
+    ) -> pingora::Result<()>
+    where
+        Self::CTX: Send + Sync,
+    {
+        let chunk_bytes = body.as_ref().map_or(0_u64, |chunk| chunk.len() as u64);
+        ctx.request_body_bytes = ctx.request_body_bytes.saturating_add(chunk_bytes);
+        if ctx.request_body_bytes > self.max_request_body_bytes {
+            return Err(Error::explain(
+                ErrorType::HTTPStatus(413),
+                "streamed request body exceeds configured max_request_body_bytes",
+            ));
+        }
+        Ok(())
     }
 
     async fn upstream_peer(
@@ -95,5 +157,27 @@ impl ProxyHttp for GatewayProxy {
                 error,
             )
         })
+    }
+
+    async fn upstream_request_filter(
+        &self,
+        _session: &mut Session,
+        upstream_request: &mut RequestHeader,
+        _ctx: &mut Self::CTX,
+    ) -> pingora::Result<()>
+    where
+        Self::CTX: Send + Sync,
+    {
+        for header in [
+            "Forwarded",
+            "X-Forwarded-For",
+            "X-Forwarded-Host",
+            "X-Forwarded-Proto",
+            "X-Real-IP",
+        ] {
+            upstream_request.remove_header(header);
+        }
+        upstream_request.insert_header("Forwarded", "proto=http")?;
+        Ok(())
     }
 }
