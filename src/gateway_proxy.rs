@@ -3,11 +3,15 @@
 //! Version 1 activates one upstream per process because the transport-neutral edge contract owns
 //! that invariant. This Pingora adapter does not invent routing or load-balancing domain rules.
 
+use std::sync::LazyLock;
+
 use async_trait::async_trait;
 use bytes::Bytes;
+use log::info;
 use pingora::prelude::{
     Error, ErrorType, HttpPeer, ProxyHttp, RequestHeader, ResponseHeader, Session,
 };
+use prometheus::{register_int_counter, IntCounter};
 use thiserror::Error;
 
 use crate::edge_contract::{GatewayConfig, GatewayConfigError, UpstreamConfig};
@@ -17,6 +21,30 @@ use crate::pingora_delivery::build_peer;
 pub const LIVENESS_PATH: &str = "/livez";
 /// Stable readiness endpoint reached through the production Pingora serving path.
 pub const READINESS_PATH: &str = "/readyz";
+
+static REQUESTS_TOTAL: LazyLock<IntCounter> = LazyLock::new(|| {
+    register_int_counter!(
+        "cwl_pingora_gateway_requests_total",
+        "Completed downstream requests observed by the shared edge runtime"
+    )
+    .expect("gateway request metric must register exactly once")
+});
+
+static REQUEST_ERRORS_TOTAL: LazyLock<IntCounter> = LazyLock::new(|| {
+    register_int_counter!(
+        "cwl_pingora_gateway_request_errors_total",
+        "Completed downstream requests whose Pingora lifecycle ended with an error"
+    )
+    .expect("gateway request error metric must register exactly once")
+});
+
+static REQUEST_BODY_BYTES_TOTAL: LazyLock<IntCounter> = LazyLock::new(|| {
+    register_int_counter!(
+        "cwl_pingora_gateway_request_body_bytes_total",
+        "Downstream request body bytes observed before completion or rejection"
+    )
+    .expect("gateway request body byte metric must register exactly once")
+});
 
 /// Per-request delivery state. Product domain state does not belong here.
 #[derive(Debug, Default)]
@@ -181,5 +209,30 @@ impl ProxyHttp for GatewayProxy {
         }
         upstream_request.insert_header("Forwarded", "proto=http")?;
         Ok(())
+    }
+
+    async fn logging(
+        &self,
+        session: &mut Session,
+        error: Option<&Error>,
+        ctx: &mut Self::CTX,
+    ) where
+        Self::CTX: Send + Sync,
+    {
+        let status = session
+            .response_written()
+            .map_or(0, |response| response.status.as_u16());
+        let outcome = if error.is_some() { "error" } else { "ok" };
+
+        REQUESTS_TOTAL.inc();
+        REQUEST_BODY_BYTES_TOTAL.inc_by(ctx.request_body_bytes);
+        if error.is_some() {
+            REQUEST_ERRORS_TOTAL.inc();
+        }
+
+        info!(
+            "gateway_request status={status} outcome={outcome} request_body_bytes={}",
+            ctx.request_body_bytes
+        );
     }
 }
