@@ -36,9 +36,7 @@ impl GatewayProxy {
     ///
     /// The constructor revalidates the public contract and then refuses to invent routing or load
     /// balancing semantics when more than one upstream is present.
-    pub fn try_from_config(
-        config: &GatewayConfig,
-    ) -> std::result::Result<Self, GatewayProxyError> {
+    pub fn try_from_config(config: &GatewayConfig) -> std::result::Result<Self, GatewayProxyError> {
         config.validate()?;
         if config.upstreams.len() != 1 {
             return Err(GatewayProxyError::UnsupportedUpstreamCount {
@@ -52,9 +50,7 @@ impl GatewayProxy {
     }
 
     /// Constructs a fresh Pingora peer using the versioned upstream network-authority contract.
-    pub fn build_upstream_peer(
-        &self,
-    ) -> std::result::Result<HttpPeer, GatewayConfigError> {
+    pub fn build_upstream_peer(&self) -> std::result::Result<HttpPeer, GatewayConfigError> {
         build_peer(&self.upstream)
     }
 }
