@@ -16,8 +16,16 @@ pub const V1_MAX_UPSTREAM_ATTEMPTS: usize = 1;
 /// Time allowed after SIGTERM before runtime shutdown begins.
 pub const V1_GRACE_PERIOD_SECONDS: u64 = 5;
 
-/// Maximum time Pingora waits for service runtimes to finish after the grace period.
-pub const V1_GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS: u64 = 30;
+/// Timeout passed to each Pingora service runtime after the grace period.
+///
+/// The pinned Pingora server subsequently sleeps for this duration after `Runtime::shutdown_timeout`
+/// returns. With runtimes shut down in parallel, the worst-case process budget is therefore the
+/// grace period plus twice this value. Ten seconds keeps that bound below the 30-second external
+/// termination budget while still allowing bounded in-flight cleanup.
+pub const V1_GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS: u64 = 10;
+
+/// External hard-kill budget required from the process supervisor for a graceful SIGTERM exit.
+pub const V1_TERMINATION_BUDGET_SECONDS: u64 = 30;
 
 /// Builds the Pingora server configuration admitted by the version-1 runtime policy.
 ///
@@ -26,6 +34,11 @@ pub const V1_GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS: u64 = 30;
 /// a later version introduces an explicit, reviewed contract. Graceful shutdown is bounded rather
 /// than inheriting Pingora's framework fallback.
 pub fn build_server_conf() -> ServerConf {
+    debug_assert!(
+        V1_GRACE_PERIOD_SECONDS + 2 * V1_GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS
+            < V1_TERMINATION_BUDGET_SECONDS
+    );
+
     ServerConf {
         max_retries: V1_MAX_UPSTREAM_ATTEMPTS,
         grace_period_seconds: Some(V1_GRACE_PERIOD_SECONDS),
