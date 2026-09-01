@@ -2,6 +2,7 @@ use cwl_pingora_gateway::{
     edge_contract::{GatewayConfigError, UpstreamConfig, UpstreamTimeouts},
     pingora_delivery::{build_peer, PeerBuildError},
 };
+use pingora::tls::x509::X509;
 use pingora::upstreams::peer::ALPN;
 use std::io::Write;
 use std::net::SocketAddr;
@@ -68,6 +69,33 @@ fn tls_peer_verifies_identity_and_uses_explicit_io_budgets() {
             .http_upstream_request_policy
             .reject_malformed_connection_nominations
     );
+}
+
+#[test]
+fn valid_explicit_trust_bundle_is_loaded_into_peer_authority() {
+    let mut bundle = NamedTempFile::new().expect("temporary trust bundle");
+    let certificate = X509::builder()
+        .expect("OpenSSL should allocate an X509 builder")
+        .build();
+    bundle
+        .write_all(
+            &certificate
+                .to_pem()
+                .expect("test certificate should serialize as PEM"),
+        )
+        .expect("valid trust bundle should be writable");
+
+    let mut tls = upstream(true, Some("api.internal.example"));
+    tls.trust_bundle_file = Some(bundle.path().to_path_buf());
+
+    let peer = build_peer(&tls).expect("valid explicit trust bundle must build a peer");
+    let configured_roots = peer
+        .options
+        .ca
+        .as_ref()
+        .expect("explicit trust bundle must replace the default CA source");
+
+    assert_eq!(configured_roots.len(), 1);
 }
 
 #[test]
