@@ -31,20 +31,40 @@ fn supply_chain_workflow_binds_evidence_to_exact_source() {
     }
 }
 
-/// Dependency sources must fail closed except for crates.io and the explicitly pinned Pingora repository.
+/// Pingora git dependencies must carry both immutable revision and exact package-version assertions.
 #[test]
-fn dependency_source_policy_is_fail_closed() {
+fn pinned_pingora_dependencies_are_not_wildcard_versions() {
+    let manifest = read_repository_file("Cargo.toml");
+
+    for required in [
+        "pingora = { version = \"=0.8.0\", git = \"https://github.com/cloudflare/pingora.git\", rev = \"09696b51bc59315353d96686355861604d0bb48c\"",
+        "pingora-prometheus = { version = \"=0.8.0\", git = \"https://github.com/cloudflare/pingora.git\", rev = \"09696b51bc59315353d96686355861604d0bb48c\"",
+    ] {
+        assert!(
+            manifest.contains(required),
+            "Pingora dependencies must be exact-version and exact-revision pinned: {required}"
+        );
+    }
+}
+
+/// Dependency policy must fail closed while distinguishing upstream maintenance status from security defects.
+#[test]
+fn dependency_source_and_advisory_policy_is_fail_closed() {
     let policy = read_repository_file("deny.toml");
 
     for required in [
+        "unmaintained = \"workspace\"",
+        "unsound = \"all\"",
+        "\"CC0-1.0\"",
         "unknown-registry = \"deny\"",
         "unknown-git = \"deny\"",
+        "required-git-spec = \"rev\"",
         "allow-registry = [\"https://github.com/rust-lang/crates.io-index\"]",
         "allow-git = [\"https://github.com/cloudflare/pingora.git\"]",
     ] {
         assert!(
             policy.contains(required),
-            "dependency source policy must preserve fail-closed contract: {required}"
+            "dependency policy must preserve the fail-closed supply-chain contract: {required}"
         );
     }
 }
