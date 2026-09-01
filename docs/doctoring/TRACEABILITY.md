@@ -16,7 +16,7 @@ This file links material technical/security claims to primary standards or upstr
 | TLS 1.3 protocol semantics | RFC 8446; the current candidate proves verified upstream TLS mapping but still lacks a local-CA hostname-failure integration fixture |
 | March 2026 Pingora request-smuggling/cache-key advisories are patched in 0.8.0 | GitHub Security Advisories GHSA-xq2h-p299-vjwv, GHSA-hj7x-879w-vrp7, GHSA-f93w-pcj3-rggc |
 | Pingora 0.8.1 is the latest release observed on 2026-09-01 and bounds default HTTP/2 server limits | Cloudflare Pingora GitHub Releases, 0.8.1, 2026-06-04 |
-| Rust 1.97.1 is the pinned toolchain and repairs a miscompilation affecting the 1.97.0 line | Rust Release Team, Rust 1.97.1 announcement, 2026-07-16 |
+| Rust 1.98.0 is the latest stable toolchain observed on 2026-09-01 | Rust Release Team, Rust 1.98.0 announcement, 2026-08-20 |
 | OCI runtime-spec 1.2.1 is the latest released runtime specification observed on 2026-09-01 | Open Container Initiative runtime-spec v1.2.1 release notice, 2025-02-27; runtime hardening claims still require executable container evidence |
 | `lru` versions before 0.18.2 are affected by RUSTSEC-2026-0253 | RustSec advisory RUSTSEC-2026-0253; hosted resolution for this branch selected 0.18.3, but release must use a committed audited lock |
 
@@ -50,6 +50,6 @@ Petersson, A., & Nilsson, M. (2014). *Forwarded HTTP extension* (RFC 7239). RFC 
 
 Open Container Initiative. (2025, February 27). *OCI runtime-spec v. 1.2.1 release notice*. https://opencontainers.org/release-notices/v1-2-1-runtime-spec/
 
-Rust Release Team. (2026, July 16). *Announcing Rust 1.97.1*. Rust Blog. https://blog.rust-lang.org/2026/07/16/Rust-1.97.1/
+Rust Release Team. (2026, August 20). *Announcing Rust 1.98.0*. Rust Blog. https://blog.rust-lang.org/2026/08/20/Rust-1.98.0/
 
 Rust Secure Code Working Group. (2026, August 11). *RUSTSEC-2026-0253: lru—memory safety issue under panic*. RustSec Advisory Database. https://rustsec.org/advisories/RUSTSEC-2026-0253.html
