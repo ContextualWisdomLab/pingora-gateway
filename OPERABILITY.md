@@ -8,9 +8,11 @@ Run `cwl-pingora-gateway --config /path/to/gateway.yaml`. Configuration is read 
 
 `/livez` and `/readyz` return 200 with `Cache-Control: no-store` through the Pingora serving path. In v1 readiness is process/configuration readiness, not upstream reachability. Do not use it as proof that a dependent application is healthy.
 
-## Shutdown
+## Retry and shutdown
 
-The binary delegates lifecycle handling to Pingora `Server::run_forever()`, whose documented server lifecycle handles termination/drain. This repository has not yet captured its own exact SIGTERM/in-flight-request GREEN test, so graceful shutdown is a release gap rather than a completed claim.
+Version 1 does not inherit Pingora's retry or drain defaults. `src/runtime_policy.rs` sets Pingora's `max_retries` field to `1`; in the pinned proxy loop that value means one total upstream attempt, so the generic edge performs no automatic retry. Retry policy requires request-idempotency knowledge and stays with a later explicit contract rather than being inferred by the gateway.
+
+SIGTERM uses Pingora graceful termination with an explicit 5-second grace period followed by a 30-second runtime-shutdown timeout. These values are bounded process policy, not Pingora framework defaults. The repository still lacks its own exact in-flight SIGTERM GREEN test, so graceful-drain behavior remains a release gap even though the configured timing is now deterministic.
 
 ## Container
 
