@@ -13,7 +13,8 @@ use cwl_pingora_gateway::startup::GatewayCommand;
 use pingora::prelude::{http_proxy_service, Server};
 
 fn main() {
-    let command = GatewayCommand::parse(env::args_os()).unwrap_or_else(|error| exit_with_error(error));
+    let command =
+        GatewayCommand::parse(env::args_os()).unwrap_or_else(|error| exit_with_error(error));
     let config = command
         .load_config()
         .unwrap_or_else(|error| exit_with_error(error));
