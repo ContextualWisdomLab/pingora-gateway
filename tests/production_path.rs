@@ -337,12 +337,8 @@ fn exhausted_in_flight_budget_rejects_with_503_and_recovers_without_poisoning_he
         .local_addr()
         .expect("fixture upstream should expose its address");
     let (gateway_address, metrics_address) = reserve_distinct_loopback_addresses();
-    let config = write_gateway_config_with_limit(
-        gateway_address,
-        metrics_address,
-        upstream_address,
-        1,
-    );
+    let config =
+        write_gateway_config_with_limit(gateway_address, metrics_address, upstream_address, 1);
 
     let (request_seen_tx, request_seen_rx) = mpsc::channel();
     let (release_response_tx, release_response_rx) = mpsc::channel();
@@ -351,7 +347,9 @@ fn exhausted_in_flight_budget_rejects_with_503_and_recovers_without_poisoning_he
             .accept()
             .expect("first admitted request should connect upstream");
         let first_request = read_fixture_request(&mut first);
-        assert!(String::from_utf8_lossy(&first_request).starts_with("GET /held-capacity HTTP/1.1\r\n"));
+        assert!(
+            String::from_utf8_lossy(&first_request).starts_with("GET /held-capacity HTTP/1.1\r\n")
+        );
         request_seen_tx
             .send(())
             .expect("test should observe the admitted in-flight request");
@@ -369,7 +367,9 @@ fn exhausted_in_flight_budget_rejects_with_503_and_recovers_without_poisoning_he
         assert!(String::from_utf8_lossy(&recovered_request)
             .starts_with("GET /after-capacity HTTP/1.1\r\n"));
         recovered
-            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 9\r\nConnection: close\r\n\r\nrecovered")
+            .write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Length: 9\r\nConnection: close\r\n\r\nrecovered",
+            )
             .expect("recovery response should be writable");
     });
 
@@ -407,7 +407,9 @@ fn exhausted_in_flight_budget_rejects_with_503_and_recovers_without_poisoning_he
     release_response_tx
         .send(())
         .expect("held response should be released");
-    let first_response = held.join().expect("held downstream request should complete");
+    let first_response = held
+        .join()
+        .expect("held downstream request should complete");
     assert!(first_response.starts_with("HTTP/1.1 200"));
     assert!(first_response.ends_with("\r\n\r\nfirst"));
 

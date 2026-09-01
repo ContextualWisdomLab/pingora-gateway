@@ -33,10 +33,8 @@ fn main() -> ExitCode {
     let listener = config.listener.to_string();
     let metrics_listener = config.metrics_listener.to_string();
 
-    let mut server = Server::new_with_opt_and_conf(
-        None,
-        build_server_conf(config.upstream_keepalive_pool_size),
-    );
+    let mut server =
+        Server::new_with_opt_and_conf(None, build_server_conf(config.upstream_keepalive_pool_size));
     server.bootstrap();
 
     let mut proxy_service = http_proxy_service(&server.configuration, proxy);

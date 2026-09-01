@@ -71,11 +71,11 @@ impl RequestAdmissionBudget {
     }
 
     fn acquire_or_reject(&self) -> pingora::Result<RequestAdmission> {
-        let admitted = self.in_flight.fetch_update(
-            Ordering::AcqRel,
-            Ordering::Acquire,
-            |current| (current < self.limit).then_some(current + 1),
-        );
+        let admitted =
+            self.in_flight
+                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+                    (current < self.limit).then_some(current + 1)
+                });
 
         match admitted {
             Ok(_) => Ok(RequestAdmission {
@@ -310,7 +310,9 @@ mod tests {
     #[test]
     fn admission_budget_rejects_at_capacity_and_recovers_after_release() {
         let budget = RequestAdmissionBudget::new(1);
-        let first = budget.acquire_or_reject().expect("first request is admitted");
+        let first = budget
+            .acquire_or_reject()
+            .expect("first request is admitted");
         assert!(budget.acquire_or_reject().is_err());
 
         drop(first);
