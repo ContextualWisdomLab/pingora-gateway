@@ -1,11 +1,9 @@
 use cwl_pingora_gateway::{
-    edge_contract::UpstreamConfig,
-    pingora_delivery::{
-        build_peer, DEFAULT_CONNECTION_TIMEOUT, DEFAULT_IDLE_TIMEOUT, DEFAULT_READ_TIMEOUT,
-        DEFAULT_TOTAL_CONNECTION_TIMEOUT, DEFAULT_WRITE_TIMEOUT,
-    },
+    edge_contract::{UpstreamConfig, UpstreamTimeouts},
+    pingora_delivery::build_peer,
 };
 use std::net::SocketAddr;
+use std::time::Duration;
 
 fn upstream(tls: bool, sni: Option<&str>) -> UpstreamConfig {
     UpstreamConfig {
@@ -13,11 +11,18 @@ fn upstream(tls: bool, sni: Option<&str>) -> UpstreamConfig {
         address: "127.0.0.1:8443".parse::<SocketAddr>().unwrap(),
         tls,
         sni: sni.map(str::to_string),
+        timeouts: UpstreamTimeouts {
+            connection_ms: 1_250,
+            total_connection_ms: 2_500,
+            read_ms: 7_500,
+            write_ms: 6_500,
+            idle_ms: 15_000,
+        },
     }
 }
 
 #[test]
-fn tls_peer_verifies_identity_and_bounds_upstream_io() {
+fn tls_peer_verifies_identity_and_uses_explicit_io_budgets() {
     let peer = build_peer(&upstream(true, Some("api.internal.example")));
 
     assert!(peer.is_tls());
@@ -26,15 +31,24 @@ fn tls_peer_verifies_identity_and_bounds_upstream_io() {
     assert!(peer.options.verify_hostname);
     assert_eq!(
         peer.options.connection_timeout,
-        Some(DEFAULT_CONNECTION_TIMEOUT)
+        Some(Duration::from_millis(1_250))
     );
     assert_eq!(
         peer.options.total_connection_timeout,
-        Some(DEFAULT_TOTAL_CONNECTION_TIMEOUT)
+        Some(Duration::from_millis(2_500))
     );
-    assert_eq!(peer.options.read_timeout, Some(DEFAULT_READ_TIMEOUT));
-    assert_eq!(peer.options.write_timeout, Some(DEFAULT_WRITE_TIMEOUT));
-    assert_eq!(peer.options.idle_timeout, Some(DEFAULT_IDLE_TIMEOUT));
+    assert_eq!(
+        peer.options.read_timeout,
+        Some(Duration::from_millis(7_500))
+    );
+    assert_eq!(
+        peer.options.write_timeout,
+        Some(Duration::from_millis(6_500))
+    );
+    assert_eq!(
+        peer.options.idle_timeout,
+        Some(Duration::from_millis(15_000))
+    );
     assert!(peer.options.http_upstream_request_policy.strip_hop_by_hop);
     assert!(
         peer.options
