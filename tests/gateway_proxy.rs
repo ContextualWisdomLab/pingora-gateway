@@ -2,7 +2,7 @@ use cwl_pingora_gateway::{
     edge_contract::{GatewayConfig, UpstreamConfig, UpstreamTimeouts},
     gateway_proxy::{GatewayProxy, GatewayProxyError},
 };
-use pingora::upstreams::peer::ALPN;
+use pingora::upstreams::peer::{Peer, ALPN};
 use std::net::SocketAddr;
 use std::time::Duration;
 
