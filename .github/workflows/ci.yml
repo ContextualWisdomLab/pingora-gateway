@@ -153,6 +153,7 @@ jobs:
 
           GATEWAY_URL=http://127.0.0.1:18080 k6 run --quiet tests/load/gateway_smoke.js
       - name: Upload loopback latency evidence
+        if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: k6-loopback-${{ env.EXPECTED_SHA }}
