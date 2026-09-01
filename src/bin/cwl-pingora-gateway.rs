@@ -18,8 +18,8 @@ fn main() {
     let config = command
         .load_config()
         .unwrap_or_else(|error| exit_with_error(error));
-    let proxy = GatewayProxy::try_from_config(&config)
-        .unwrap_or_else(|error| exit_with_error(error));
+    let proxy =
+        GatewayProxy::try_from_config(&config).unwrap_or_else(|error| exit_with_error(error));
     let listener = config.listener.to_string();
 
     let mut server = Server::new(None).unwrap_or_else(|error| exit_with_error(error));
