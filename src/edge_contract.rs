@@ -21,6 +21,8 @@ pub struct GatewayConfig {
     pub version: u32,
     /// Socket address on which the gateway accepts downstream connections.
     pub listener: SocketAddr,
+    /// Separate socket address that exposes only low-cardinality Prometheus metrics.
+    pub metrics_listener: SocketAddr,
     /// Maximum request body admitted by this gateway process, in bytes.
     pub max_request_body_bytes: u64,
     /// Explicit set of upstream services that the gateway may contact.
@@ -73,6 +75,9 @@ pub enum GatewayConfigError {
     /// The configuration requests a contract version this binary does not implement.
     #[error("unsupported gateway configuration version {0}")]
     UnsupportedVersion(u32),
+    /// Traffic and metrics endpoints must never compete for the same socket authority.
+    #[error("listener and metrics_listener must use distinct socket addresses")]
+    ListenerCollision,
     /// A zero request-body limit would reject every body and is almost certainly misconfiguration.
     #[error("max_request_body_bytes must be greater than zero")]
     InvalidRequestBodyLimit,
@@ -138,6 +143,9 @@ impl GatewayConfig {
     pub fn validate(&self) -> Result<(), GatewayConfigError> {
         if self.version != CURRENT_GATEWAY_CONFIG_VERSION {
             return Err(GatewayConfigError::UnsupportedVersion(self.version));
+        }
+        if self.listener == self.metrics_listener {
+            return Err(GatewayConfigError::ListenerCollision);
         }
         if self.max_request_body_bytes == 0 {
             return Err(GatewayConfigError::InvalidRequestBodyLimit);
