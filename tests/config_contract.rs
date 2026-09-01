@@ -95,6 +95,38 @@ upstreams: []
 }
 
 #[test]
+fn rejects_multiple_upstreams_in_version_one() {
+    let yaml = r#"
+version: 1
+listener: 127.0.0.1:6188
+upstreams:
+  - name: api
+    address: 127.0.0.1:8080
+    tls: false
+    timeouts:
+      connection_ms: 1250
+      total_connection_ms: 2500
+      read_ms: 7500
+      write_ms: 6500
+      idle_ms: 15000
+  - name: other
+    address: 127.0.0.1:8081
+    tls: false
+    timeouts:
+      connection_ms: 1250
+      total_connection_ms: 2500
+      read_ms: 7500
+      write_ms: 6500
+      idle_ms: 15000
+"#;
+
+    assert_eq!(
+        GatewayConfig::from_yaml(yaml),
+        Err(GatewayConfigError::UnsupportedUpstreamCount { actual: 2 })
+    );
+}
+
+#[test]
 fn rejects_duplicate_upstream_names() {
     let yaml = r#"
 version: 1

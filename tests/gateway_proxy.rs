@@ -1,6 +1,6 @@
 use cwl_pingora_gateway::{
     edge_contract::{GatewayConfig, UpstreamConfig, UpstreamTimeouts},
-    gateway_proxy::{GatewayProxy, GatewayProxyError},
+    gateway_proxy::GatewayProxy,
 };
 use pingora::upstreams::peer::{Peer, ALPN};
 use std::net::SocketAddr;
@@ -20,20 +20,6 @@ fn upstream(name: &str, port: u16) -> UpstreamConfig {
             idle_ms: 10_000,
         },
     }
-}
-
-#[test]
-fn version_one_proxy_requires_one_unambiguous_upstream() {
-    let config = GatewayConfig {
-        version: 1,
-        listener: SocketAddr::from(([127, 0, 0, 1], 6188)),
-        upstreams: vec![upstream("api", 8080), upstream("other", 8081)],
-    };
-
-    assert_eq!(
-        GatewayProxy::try_from_config(&config).unwrap_err(),
-        GatewayProxyError::UnsupportedUpstreamCount { actual: 2 }
-    );
 }
 
 #[test]

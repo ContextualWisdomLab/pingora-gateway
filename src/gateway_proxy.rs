@@ -1,8 +1,7 @@
 //! Initial executable proxy application for the shared gateway.
 //!
-//! Version 1 intentionally activates only one upstream per process. The configuration contract can
-//! describe more than one explicit upstream for forward compatibility, but the runtime refuses an
-//! ambiguous selection until a separately versioned route or load-balancing contract is accepted.
+//! Version 1 activates one upstream per process because the transport-neutral edge contract owns
+//! that invariant. This Pingora adapter does not invent routing or load-balancing domain rules.
 
 use async_trait::async_trait;
 use pingora::prelude::{Error, ErrorType, HttpPeer, ProxyHttp, Session};
@@ -17,12 +16,6 @@ pub enum GatewayProxyError {
     /// The edge configuration itself violates a fail-closed invariant.
     #[error("invalid edge configuration: {0}")]
     InvalidConfiguration(#[from] GatewayConfigError),
-    /// Version 1 has no implicit routing or load-balancing policy and therefore accepts one target.
-    #[error("version 1 requires exactly one upstream; received {actual}")]
-    UnsupportedUpstreamCount {
-        /// Number of configured upstreams presented for activation.
-        actual: usize,
-    },
 }
 
 /// Pingora HTTP application backed by one explicitly configured upstream.
@@ -32,21 +25,19 @@ pub struct GatewayProxy {
 }
 
 impl GatewayProxy {
-    /// Builds the version-1 proxy application from an already parsed edge configuration.
+    /// Builds the version-1 delivery adapter from a validated edge configuration.
     ///
-    /// The constructor revalidates the public contract and then refuses to invent routing or load
-    /// balancing semantics when more than one upstream is present.
+    /// Contract validation owns upstream-count and network-authority rules. The adapter only
+    /// copies the admitted upstream value into Pingora-facing state.
     pub fn try_from_config(config: &GatewayConfig) -> std::result::Result<Self, GatewayProxyError> {
         config.validate()?;
-        if config.upstreams.len() != 1 {
-            return Err(GatewayProxyError::UnsupportedUpstreamCount {
-                actual: config.upstreams.len(),
-            });
-        }
+        let upstream = config
+            .upstreams
+            .first()
+            .cloned()
+            .ok_or(GatewayConfigError::NoUpstreams)?;
 
-        Ok(Self {
-            upstream: config.upstreams[0].clone(),
-        })
+        Ok(Self { upstream })
     }
 
     /// Constructs a fresh Pingora peer using the versioned upstream network-authority contract.

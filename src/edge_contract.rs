@@ -74,6 +74,12 @@ pub enum GatewayConfigError {
     /// At least one upstream is required so the proxy cannot start in an ambiguous state.
     #[error("gateway configuration must contain at least one upstream")]
     NoUpstreams,
+    /// Version 1 deliberately has no routing or load-balancing semantics, so one target is allowed.
+    #[error("gateway configuration version 1 requires exactly one upstream; received {actual}")]
+    UnsupportedUpstreamCount {
+        /// Number of explicit upstream authorities presented by the configuration.
+        actual: usize,
+    },
     /// Upstream names are stable identifiers and therefore must be unique.
     #[error("duplicate upstream name: {upstream_name}")]
     DuplicateUpstreamName {
@@ -141,6 +147,12 @@ impl GatewayConfig {
                     upstream_name: normalized_name.to_string(),
                 });
             }
+        }
+
+        if self.upstreams.len() != 1 {
+            return Err(GatewayConfigError::UnsupportedUpstreamCount {
+                actual: self.upstreams.len(),
+            });
         }
 
         Ok(())
