@@ -126,8 +126,12 @@ fn reserve_distinct_loopback_addresses() -> (SocketAddr, SocketAddr) {
     let traffic = TcpListener::bind("127.0.0.1:0").expect("traffic port should be available");
     let metrics = TcpListener::bind("127.0.0.1:0").expect("metrics port should be available");
     let addresses = (
-        traffic.local_addr().expect("traffic reservation has an address"),
-        metrics.local_addr().expect("metrics reservation has an address"),
+        traffic
+            .local_addr()
+            .expect("traffic reservation has an address"),
+        metrics
+            .local_addr()
+            .expect("metrics reservation has an address"),
     );
     assert_ne!(addresses.0, addresses.1);
     addresses
@@ -162,7 +166,10 @@ fn wait_until_listening(address: SocketAddr, process: &mut Child) {
         if TcpStream::connect_timeout(&address, Duration::from_millis(100)).is_ok() {
             return;
         }
-        assert!(Instant::now() < deadline, "gateway did not start within 10s");
+        assert!(
+            Instant::now() < deadline,
+            "gateway did not start within 10s"
+        );
         thread::sleep(Duration::from_millis(25));
     }
 }
@@ -173,7 +180,9 @@ fn raw_get(address: SocketAddr) -> String {
         .set_read_timeout(Some(Duration::from_secs(5)))
         .expect("downstream timeout should be configurable");
     stream
-        .write_all(b"GET /through-local-tls HTTP/1.1\r\nHost: gateway.test\r\nConnection: close\r\n\r\n")
+        .write_all(
+            b"GET /through-local-tls HTTP/1.1\r\nHost: gateway.test\r\nConnection: close\r\n\r\n",
+        )
         .expect("downstream request should be writable");
     let mut response = String::new();
     stream
@@ -184,7 +193,10 @@ fn raw_get(address: SocketAddr) -> String {
 
 fn spawn_gateway(config: &NamedTempFile) -> GatewayProcess {
     let mut child = Command::new(env!("CARGO_BIN_EXE_cwl-pingora-gateway"))
-        .args(["--config", config.path().to_str().expect("UTF-8 config path")])
+        .args([
+            "--config",
+            config.path().to_str().expect("UTF-8 config path"),
+        ])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::inherit())
@@ -218,7 +230,9 @@ fn compiled_gateway_trusts_an_explicit_local_ca_and_rejects_hostname_mismatch() 
             .accept(stream)
             .expect("trusted CA plus matching hostname should complete TLS");
         let mut request = [0_u8; 4096];
-        let read = stream.read(&mut request).expect("TLS request should be readable");
+        let read = stream
+            .read(&mut request)
+            .expect("TLS request should be readable");
         assert!(read > 0);
         stream
             .write_all(
