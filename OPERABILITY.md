@@ -2,21 +2,25 @@
 
 ## Start
 
-Run `cwl-pingora-gateway --config /path/to/gateway.yaml`. Configuration is read and validated before the listener is registered. Invalid or missing configuration exits non-zero. If a TLS upstream declares `trust_bundle_file`, that absolute PEM bundle is also read and parsed before listeners open; unreadable, empty, or malformed trust material prevents activation.
+Run `cwl-pingora-gateway --config /path/to/gateway.yaml`. Configuration is read and validated before the listener is registered. Invalid or missing configuration exits non-zero. `max_request_body_bytes`, `max_in_flight_requests`, and `upstream_keepalive_pool_size` are mandatory positive deployment inputs; the process will not start with a zero value or silently inherit a Pingora keepalive default. If a TLS upstream declares `trust_bundle_file`, that absolute PEM bundle is also read and parsed before listeners open; unreadable, empty, or malformed trust material prevents activation.
 
 The trust bundle is deployment input, not certificate-authority ownership. Mount it read-only from the platform or canonical secret/certificate owner and rotate it by replacing the deployment revision. The gateway does not issue certificates, manage ACME, or write trust material.
 
-## Health
+## Health and backpressure
 
 `/livez` and `/readyz` return 200 with `Cache-Control: no-store` through the Pingora serving path. In v1 readiness is process/configuration readiness, not upstream reachability. Do not use it as proof that a dependent application is healthy.
 
+`max_in_flight_requests` limits concurrently admitted non-health requests for one gateway process. At capacity the gateway fails new application traffic fast with HTTP 503 and increments `cwl_pingora_gateway_backpressure_rejections_total`; it does not queue unbounded work. Health probes bypass that admission budget so operators can distinguish process health from traffic saturation. The request lease is released when the Pingora request context ends, including error paths, and a subsequent request is admissible again.
+
+`upstream_keepalive_pool_size` is copied into Pingora `ServerConf` before bootstrap. Choose it with the expected upstream concurrency, origin capacity, instance count, and connection reuse profile in mind. It limits retained reusable upstream connections; it is not a substitute for the downstream in-flight admission limit and does not create product-domain load-balancing semantics.
+
 ## Retry and shutdown
 
-Version 1 does not inherit Pingora's retry or drain defaults. `src/runtime_policy.rs` sets Pingora's `max_retries` field to `1`; in the pinned proxy loop that value means one total upstream attempt, so the generic edge performs no automatic retry. Retry policy requires request-idempotency knowledge and stays with a later explicit contract rather than being inferred by the gateway.
+Version 1 does not inherit Pingora's retry, keepalive-pool, or drain defaults. `src/runtime_policy.rs` sets Pingora's `max_retries` field to `1`; in the pinned proxy loop that value means one total upstream attempt, so the generic edge performs no automatic retry. Retry policy requires request-idempotency knowledge and stays with a later explicit contract rather than being inferred by the gateway.
 
 SIGTERM uses Pingora graceful termination with an explicit 5-second request-drain grace period and a 10-second runtime-shutdown timeout. The pinned Pingora server calls Tokio `Runtime::shutdown_timeout` with that timeout and then sleeps for the same timeout while service runtimes are shut down in parallel. The v1 policy therefore requires a 30-second supervisor hard-kill budget: its modeled worst-case Pingora process budget is 25 seconds plus scheduler/process-exit overhead. A Kubernetes-style deployment must set `terminationGracePeriodSeconds` to at least 30 or provide an equivalent supervisor budget; a shorter external kill deadline is not an admitted deployment contract.
 
-`tests/graceful_shutdown.rs` exercises the compiled binary with a held upstream response, sends SIGTERM only after the request is in flight, requires the response to finish during the 5-second grace period, and requires clean process exit before the 30-second supervisor budget. `tests/local_ca_tls.rs` generates an ephemeral local CA/server certificate, proves successful TLS through the compiled binary with the explicit trust bundle, and proves hostname mismatch fails closed. These tests must be terminal-success on the exact release candidate; predecessor-head success never transfers.
+`tests/graceful_shutdown.rs` exercises the compiled binary with a held upstream response, sends SIGTERM only after the request is in flight, requires the response to finish during the 5-second grace period, and requires clean process exit before the 30-second supervisor budget. `tests/production_path.rs` also holds the sole admission lease at `max_in_flight_requests: 1`, requires a second request to fail with 503, proves `/readyz` remains healthy under saturation, and proves capacity is released for a later request. `tests/local_ca_tls.rs` generates an ephemeral local CA/server certificate, proves successful TLS through the compiled binary with the explicit trust bundle, and proves hostname mismatch fails closed. These tests must be terminal-success on the exact release candidate; predecessor-head success never transfers.
 
 ## Container
 
