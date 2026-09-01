@@ -25,6 +25,25 @@ pub struct GatewayConfig {
     pub upstreams: Vec<UpstreamConfig>,
 }
 
+/// Explicit I/O budgets for one upstream connection.
+///
+/// The gateway intentionally has no hidden timeout defaults. Operators must choose budgets that
+/// match the owning product's latency and failure contract, and every budget must be positive.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct UpstreamTimeouts {
+    /// Maximum time allowed to establish one TCP/TLS connection attempt, in milliseconds.
+    pub connection_ms: u64,
+    /// Maximum total time across connection establishment attempts, in milliseconds.
+    pub total_connection_ms: u64,
+    /// Maximum time allowed while waiting for upstream response bytes, in milliseconds.
+    pub read_ms: u64,
+    /// Maximum time allowed while writing request bytes upstream, in milliseconds.
+    pub write_ms: u64,
+    /// Maximum reusable upstream-connection idle time, in milliseconds.
+    pub idle_ms: u64,
+}
+
 /// An explicitly approved upstream target.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -39,6 +58,8 @@ pub struct UpstreamConfig {
     /// TLS server name used for SNI and hostname verification.
     #[serde(default)]
     pub sni: Option<String>,
+    /// Explicit connection and I/O budgets for this upstream.
+    pub timeouts: UpstreamTimeouts,
 }
 
 /// Reasons an edge configuration is not safe to activate.
@@ -80,6 +101,14 @@ pub enum GatewayConfigError {
         /// Upstream that specified SNI while TLS is disabled.
         upstream_name: String,
     },
+    /// Timeout budgets must be positive so the runtime never silently acquires an infinite budget.
+    #[error("upstream {upstream_name} has invalid zero timeout budget {timeout_name}")]
+    InvalidTimeoutBudget {
+        /// Upstream with the invalid timeout.
+        upstream_name: String,
+        /// Stable edge-contract field name whose value is invalid.
+        timeout_name: &'static str,
+    },
 }
 
 impl GatewayConfig {
@@ -105,33 +134,58 @@ impl GatewayConfig {
 
         let mut names = HashSet::with_capacity(self.upstreams.len());
         for upstream in &self.upstreams {
+            upstream.validate()?;
             let normalized_name = upstream.name.trim();
-            if normalized_name.is_empty() {
-                return Err(GatewayConfigError::EmptyUpstreamName);
-            }
             if !names.insert(normalized_name) {
                 return Err(GatewayConfigError::DuplicateUpstreamName {
                     upstream_name: normalized_name.to_string(),
                 });
             }
+        }
 
-            match (upstream.tls, upstream.sni.as_deref()) {
-                (true, None) => {
-                    return Err(GatewayConfigError::MissingTlsServerName {
-                        upstream_name: normalized_name.to_string(),
-                    });
-                }
-                (true, Some(server_name)) if server_name.trim().is_empty() => {
-                    return Err(GatewayConfigError::EmptyTlsServerName {
-                        upstream_name: normalized_name.to_string(),
-                    });
-                }
-                (false, Some(_)) => {
-                    return Err(GatewayConfigError::UnexpectedTlsServerName {
-                        upstream_name: normalized_name.to_string(),
-                    });
-                }
-                _ => {}
+        Ok(())
+    }
+}
+
+impl UpstreamConfig {
+    /// Validates the invariants required before this upstream can become network authority.
+    pub fn validate(&self) -> Result<(), GatewayConfigError> {
+        let normalized_name = self.name.trim();
+        if normalized_name.is_empty() {
+            return Err(GatewayConfigError::EmptyUpstreamName);
+        }
+
+        match (self.tls, self.sni.as_deref()) {
+            (true, None) => {
+                return Err(GatewayConfigError::MissingTlsServerName {
+                    upstream_name: normalized_name.to_string(),
+                });
+            }
+            (true, Some(server_name)) if server_name.trim().is_empty() => {
+                return Err(GatewayConfigError::EmptyTlsServerName {
+                    upstream_name: normalized_name.to_string(),
+                });
+            }
+            (false, Some(_)) => {
+                return Err(GatewayConfigError::UnexpectedTlsServerName {
+                    upstream_name: normalized_name.to_string(),
+                });
+            }
+            _ => {}
+        }
+
+        for (timeout_name, timeout_value) in [
+            ("connection_ms", self.timeouts.connection_ms),
+            ("total_connection_ms", self.timeouts.total_connection_ms),
+            ("read_ms", self.timeouts.read_ms),
+            ("write_ms", self.timeouts.write_ms),
+            ("idle_ms", self.timeouts.idle_ms),
+        ] {
+            if timeout_value == 0 {
+                return Err(GatewayConfigError::InvalidTimeoutBudget {
+                    upstream_name: normalized_name.to_string(),
+                    timeout_name,
+                });
             }
         }
 
