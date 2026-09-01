@@ -6,7 +6,7 @@
 
 use std::env;
 use std::fmt::Display;
-use std::process;
+use std::process::ExitCode;
 
 use cwl_pingora_gateway::gateway_proxy::GatewayProxy;
 use cwl_pingora_gateway::runtime_policy::build_server_conf;
@@ -14,16 +14,21 @@ use cwl_pingora_gateway::startup::GatewayCommand;
 use pingora::prelude::{http_proxy_service, Server};
 use pingora::server::RunArgs;
 
-fn main() {
+fn main() -> ExitCode {
     env_logger::init();
 
-    let command =
-        GatewayCommand::parse(env::args_os()).unwrap_or_else(|error| exit_with_error(error));
-    let config = command
-        .load_config()
-        .unwrap_or_else(|error| exit_with_error(error));
-    let proxy =
-        GatewayProxy::try_from_config(&config).unwrap_or_else(|error| exit_with_error(error));
+    let command = match GatewayCommand::parse(env::args_os()) {
+        Ok(command) => command,
+        Err(error) => return exit_with_error(error),
+    };
+    let config = match command.load_config() {
+        Ok(config) => config,
+        Err(error) => return exit_with_error(error),
+    };
+    let proxy = match GatewayProxy::try_from_config(&config) {
+        Ok(proxy) => proxy,
+        Err(error) => return exit_with_error(error),
+    };
     let listener = config.listener.to_string();
     let metrics_listener = config.metrics_listener.to_string();
 
@@ -38,13 +43,14 @@ fn main() {
     metrics_service.add_tcp(&metrics_listener);
     server.add_service(metrics_service);
 
-    // `run_forever()` calls `process::exit(0)` after the same drain path, which skips
-    // process-exit destructors and coverage/profile flushing. Returning from `main` after
-    // `run()` preserves Pingora's graceful shutdown semantics while allowing normal cleanup.
+    // `run_forever()` calls `process::exit(0)` after the same drain path. Returning an ExitCode
+    // from `main` after `run()` preserves Pingora's graceful shutdown while allowing process
+    // destructors, profile data and diagnostics to flush on both success and startup failure.
     server.run(RunArgs::default());
+    ExitCode::SUCCESS
 }
 
-fn exit_with_error(error: impl Display) -> ! {
+fn exit_with_error(error: impl Display) -> ExitCode {
     eprintln!("{error}");
-    process::exit(2);
+    ExitCode::from(2)
 }
