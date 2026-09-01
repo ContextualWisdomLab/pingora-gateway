@@ -1,8 +1,8 @@
 //! Unix process-level SIGTERM acceptance for the compiled gateway binary.
 //!
 //! The fixture holds one upstream response open, sends SIGTERM only after the request has reached
-//! the upstream, then releases the response. The downstream request must complete before Pingora's
-//! configured grace period expires and the process must terminate without a forced kill.
+//! the upstream, then releases the response. The downstream request must complete during the
+//! configured grace period and the process must terminate before the external hard-kill budget.
 
 #![cfg(unix)]
 
@@ -13,6 +13,9 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use cwl_pingora_gateway::runtime_policy::{
+    V1_GRACE_PERIOD_SECONDS, V1_TERMINATION_BUDGET_SECONDS,
+};
 use tempfile::NamedTempFile;
 
 struct GatewayProcess(Child);
@@ -74,7 +77,7 @@ fn wait_until_listening(address: SocketAddr, process: &mut Child) {
 }
 
 fn wait_for_exit(process: &mut Child) -> std::process::ExitStatus {
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + Duration::from_secs(V1_TERMINATION_BUDGET_SECONDS);
     loop {
         if let Some(status) = process
             .try_wait()
@@ -84,7 +87,7 @@ fn wait_for_exit(process: &mut Child) -> std::process::ExitStatus {
         }
         assert!(
             Instant::now() < deadline,
-            "gateway did not terminate within the bounded shutdown window"
+            "gateway did not terminate before the external hard-kill budget"
         );
         thread::sleep(Duration::from_millis(25));
     }
@@ -119,8 +122,8 @@ fn sigterm_drains_an_in_flight_request_before_process_exit() {
             .send(())
             .expect("test should observe the in-flight request");
         release_response_rx
-            .recv_timeout(Duration::from_secs(5))
-            .expect("test should release the held response");
+            .recv_timeout(Duration::from_secs(V1_GRACE_PERIOD_SECONDS))
+            .expect("test should release the held response during the grace period");
         stream
             .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 7\r\nConnection: close\r\n\r\ndrained")
             .expect("held upstream response should be writable");
@@ -141,7 +144,7 @@ fn sigterm_drains_an_in_flight_request_before_process_exit() {
         let mut stream =
             TcpStream::connect(gateway_address).expect("gateway should accept downstream traffic");
         stream
-            .set_read_timeout(Some(Duration::from_secs(8)))
+            .set_read_timeout(Some(Duration::from_secs(V1_TERMINATION_BUDGET_SECONDS)))
             .expect("downstream timeout should be configurable");
         stream
             .write_all(b"GET /held HTTP/1.1\r\nHost: gateway.test\r\nConnection: close\r\n\r\n")
@@ -157,6 +160,7 @@ fn sigterm_drains_an_in_flight_request_before_process_exit() {
         .recv_timeout(Duration::from_secs(5))
         .expect("request should reach upstream before SIGTERM");
 
+    let signal_sent_at = Instant::now();
     let signal_status = Command::new("kill")
         .args(["-TERM", &process.0.id().to_string()])
         .status()
@@ -174,6 +178,10 @@ fn sigterm_drains_an_in_flight_request_before_process_exit() {
         "in-flight request should complete during graceful drain: {response:?}"
     );
     assert!(response.ends_with("\r\n\r\ndrained"));
+    assert!(
+        signal_sent_at.elapsed() < Duration::from_secs(V1_GRACE_PERIOD_SECONDS + 1),
+        "in-flight response should complete during the configured grace period"
+    );
 
     upstream.join().expect("upstream fixture should complete");
     let exit_status = wait_for_exit(&mut process.0);
