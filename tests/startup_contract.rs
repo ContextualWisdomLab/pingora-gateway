@@ -86,6 +86,8 @@ version: 1
 listener: 127.0.0.1:6188
 metrics_listener: 127.0.0.1:6192
 max_request_body_bytes: 1048576
+max_in_flight_requests: 128
+upstream_keepalive_pool_size: 32
 upstreams:
   - name: api
     address: 127.0.0.1:8080
@@ -112,6 +114,8 @@ upstreams:
     assert_eq!(config.listener.to_string(), "127.0.0.1:6188");
     assert_eq!(config.metrics_listener.to_string(), "127.0.0.1:6192");
     assert_eq!(config.max_request_body_bytes, 1_048_576);
+    assert_eq!(config.max_in_flight_requests, 128);
+    assert_eq!(config.upstream_keepalive_pool_size, 32);
 }
 
 #[test]
@@ -125,6 +129,8 @@ version: 2
 listener: 127.0.0.1:6188
 metrics_listener: 127.0.0.1:6192
 max_request_body_bytes: 1048576
+max_in_flight_requests: 128
+upstream_keepalive_pool_size: 32
 upstreams:
   - name: api
     address: 127.0.0.1:8080
