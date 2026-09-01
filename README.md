@@ -2,7 +2,7 @@
 
 **A shared Rust edge runtime for ContextualWisdomLab services that need a small, explicit reverse-proxy boundary.**
 
-Pingora Gateway centralizes edge concerns that should not be reimplemented independently by every product: upstream connection handling, bounded transport policy, request-size limits, health/readiness, coarse telemetry, and container hardening. It is built on Cloudflare Pingora while exposing its own reviewed configuration contract to consumers instead of leaking Pingora types into product APIs.
+Pingora Gateway centralizes edge concerns that should not be reimplemented independently by every product: upstream connection handling, bounded transport policy, request-size and in-flight limits, health/readiness, coarse telemetry, and container hardening. It is built on Cloudflare Pingora while exposing its own reviewed configuration contract to consumers instead of leaking Pingora types into product APIs.
 
 > This README describes the current candidate branch. Protected `main` remains shipped authority until this Draft satisfies current review, security, supply-chain, and integration governance.
 
@@ -14,7 +14,8 @@ Shared infrastructure is useful only when it reduces duplication **without absor
 | --- | --- |
 | Edge runtime | Executable Rust/Pingora reverse-proxy path |
 | Explicit upstream | One reviewed HTTP or HTTPS upstream in the v1 configuration contract |
-| Bounded I/O | Connect/read/write/idle budgets and request-body limits |
+| Bounded I/O | Connect/read/write/idle, request-body, process in-flight, and upstream keepalive-pool budgets |
+| Backpressure | Fail-fast HTTP 503 when the configured non-health in-flight budget is exhausted; health remains observable |
 | Forwarding safety | Distrust of client-supplied forwarding identity and hop-by-hop header policy |
 | Operations | `/livez`, `/readyz`, low-cardinality Prometheus metrics, and coarse credential-safe access logs |
 | Container boundary | Non-root runtime, read-only-root compatibility, dropped Linux capabilities, and `no-new-privileges` contract |
@@ -43,14 +44,14 @@ Pingora Gateway does **not** own product authentication, tenant/business routing
 
 The current crate is `cwl-pingora-gateway` `0.1.0`, requires Rust 1.98.0, and pins Pingora `0.8.0` to an immutable upstream revision.
 
-Copy the example configuration, point the single upstream at a service you control, and run the gateway:
+Copy the example configuration, point the single upstream at a service you control, choose explicit positive `max_in_flight_requests` and `upstream_keepalive_pool_size` budgets, and run the gateway:
 
 ```bash
 cp examples/gateway.yaml ./gateway.yaml
 cargo run --locked --bin cwl-pingora-gateway -- --config ./gateway.yaml
 ```
 
-The configuration is fail-closed: unknown fields, unsupported versions, listener collisions, invalid body limits or timeouts, multiple v1 upstreams, and incomplete TLS identity are rejected rather than normalized into a guessed configuration.
+The configuration is fail-closed: unknown fields, unsupported versions, listener collisions, zero body/concurrency/keepalive budgets or timeouts, multiple v1 upstreams, and incomplete TLS identity are rejected rather than normalized into a guessed configuration.
 
 Check the local process separately for liveness and readiness:
 
@@ -59,7 +60,7 @@ curl -sS http://127.0.0.1:<traffic-port>/livez
 curl -sS http://127.0.0.1:<traffic-port>/readyz
 ```
 
-Current readiness means the admitted configuration and serving path are active; it is **not** an upstream-health guarantee.
+Current readiness means the admitted configuration and serving path are active; it is **not** an upstream-health guarantee. Health endpoints bypass the application in-flight admission budget so process health remains visible while application traffic is saturated.
 
 See [`API_CONFIG_CONTRACT.md`](API_CONFIG_CONTRACT.md) for the configuration contract.
 
@@ -70,7 +71,7 @@ The v1 gateway starts from distrust at the edge:
 - inbound `Forwarded`, `X-Forwarded-*`, and `X-Real-IP` identity is discarded;
 - the current cleartext downstream listener does not invent a trusted client IP;
 - hop-by-hop and connection-nominated request headers are removed by the upstream policy;
-- body and upstream-I/O budgets are explicit;
+- body, in-flight request, upstream keepalive-pool, and upstream-I/O budgets are explicit;
 - metrics use low-cardinality labels and should be exposed only on an access-controlled observability network;
 - access logs deliberately exclude URI/query, Host, client identity, authorization/cookie values, tokens, and configured credentials.
 
@@ -98,7 +99,7 @@ Current supply-chain policy still reports inherited maintenance concerns from th
 
 ## Quality and status
 
-This is a **0.1.0 candidate / Draft** product line, not a released gateway. The branch contains locked format/test/Clippy/doc builds, compiled-binary loopback E2E, OCI security acceptance, security/SAST lanes, and explicit supply-chain policy. Public Rust API documentation is a build gate via `#![deny(missing_docs)]` and `RUSTDOCFLAGS="-D warnings"`.
+This is a **0.1.0 candidate / Draft** product line, not a released gateway. The branch contains locked format/test/Clippy/doc builds, compiled-binary loopback E2E including saturation/recovery, OCI security acceptance, security/SAST lanes, and explicit supply-chain policy. Public Rust API documentation is a build gate via `#![deny(missing_docs)]` and `RUSTDOCFLAGS="-D warnings"`.
 
 Run the core local checks with:
 
