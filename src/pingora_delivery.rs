@@ -112,6 +112,34 @@ fn require_certificates(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::edge_contract::UpstreamTimeouts;
+
+    fn cleartext_upstream_without_custom_roots() -> UpstreamConfig {
+        UpstreamConfig {
+            name: "origin".to_string(),
+            address: "127.0.0.1:8080"
+                .parse()
+                .expect("loopback upstream must parse"),
+            tls: false,
+            sni: None,
+            trust_bundle_file: None,
+            timeouts: UpstreamTimeouts {
+                connection_ms: 100,
+                total_connection_ms: 200,
+                read_ms: 300,
+                write_ms: 400,
+                idle_ms: 500,
+            },
+        }
+    }
+
+    #[test]
+    fn peer_without_custom_trust_bundle_preserves_platform_roots() {
+        let peer = build_peer(&cleartext_upstream_without_custom_roots())
+            .expect("valid cleartext upstream should build a peer");
+
+        assert!(peer.options.ca.is_none());
+    }
 
     #[test]
     fn parsed_trust_bundle_must_contain_a_certificate() {
