@@ -75,8 +75,7 @@ fn raw_request(address: SocketAddr, request: &[u8]) -> String {
 fn get(address: SocketAddr, path: &str) -> String {
     raw_request(
         address,
-        format!("GET {path} HTTP/1.1\r\nHost: gateway.test\r\nConnection: close\r\n\r\n")
-            .as_bytes(),
+        format!("GET {path} HTTP/1.1\r\nHost: gateway.test\r\nConnection: close\r\n\r\n").as_bytes(),
     )
 }
 

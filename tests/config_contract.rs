@@ -1,12 +1,17 @@
 use cwl_pingora_gateway::edge_contract::{GatewayConfig, GatewayConfigError};
 
 fn with_body_limit(yaml: &str) -> String {
-    yaml.replacen("listener: 127.0.0.1:6188", "listener: 127.0.0.1:6188\nmax_request_body_bytes: 1048576", 1)
+    yaml.replacen(
+        "listener: 127.0.0.1:6188",
+        "listener: 127.0.0.1:6188\nmax_request_body_bytes: 1048576",
+        1,
+    )
 }
 
 #[test]
 fn parses_minimal_https_upstream_contract() {
-    let yaml = with_body_limit(r#"
+    let yaml = with_body_limit(
+        r#"
 version: 1
 listener: 127.0.0.1:6188
 upstreams:
@@ -20,7 +25,8 @@ upstreams:
       read_ms: 7500
       write_ms: 6500
       idle_ms: 15000
-"#);
+"#,
+    );
 
     let config = GatewayConfig::from_yaml(&yaml).expect("valid gateway contract");
 
@@ -39,7 +45,8 @@ upstreams:
 
 #[test]
 fn rejects_unknown_contract_version() {
-    let yaml = with_body_limit(r#"
+    let yaml = with_body_limit(
+        r#"
 version: 2
 listener: 127.0.0.1:6188
 upstreams:
@@ -52,7 +59,8 @@ upstreams:
       read_ms: 7500
       write_ms: 6500
       idle_ms: 15000
-"#);
+"#,
+    );
 
     assert_eq!(
         GatewayConfig::from_yaml(&yaml),
@@ -86,7 +94,8 @@ upstreams:
 
 #[test]
 fn rejects_tls_upstream_without_sni() {
-    let yaml = with_body_limit(r#"
+    let yaml = with_body_limit(
+        r#"
 version: 1
 listener: 127.0.0.1:6188
 upstreams:
@@ -99,7 +108,8 @@ upstreams:
       read_ms: 7500
       write_ms: 6500
       idle_ms: 15000
-"#);
+"#,
+    );
 
     assert_eq!(
         GatewayConfig::from_yaml(&yaml),
@@ -126,7 +136,8 @@ upstreams: []
 
 #[test]
 fn rejects_multiple_upstreams_in_version_one() {
-    let yaml = with_body_limit(r#"
+    let yaml = with_body_limit(
+        r#"
 version: 1
 listener: 127.0.0.1:6188
 upstreams:
@@ -148,7 +159,8 @@ upstreams:
       read_ms: 7500
       write_ms: 6500
       idle_ms: 15000
-"#);
+"#,
+    );
 
     assert_eq!(
         GatewayConfig::from_yaml(&yaml),
@@ -158,7 +170,8 @@ upstreams:
 
 #[test]
 fn rejects_duplicate_upstream_names() {
-    let yaml = with_body_limit(r#"
+    let yaml = with_body_limit(
+        r#"
 version: 1
 listener: 127.0.0.1:6188
 upstreams:
@@ -180,7 +193,8 @@ upstreams:
       read_ms: 7500
       write_ms: 6500
       idle_ms: 15000
-"#);
+"#,
+    );
 
     assert_eq!(
         GatewayConfig::from_yaml(&yaml),
@@ -192,7 +206,8 @@ upstreams:
 
 #[test]
 fn rejects_zero_timeout_budget() {
-    let yaml = with_body_limit(r#"
+    let yaml = with_body_limit(
+        r#"
 version: 1
 listener: 127.0.0.1:6188
 upstreams:
@@ -205,7 +220,8 @@ upstreams:
       read_ms: 7500
       write_ms: 6500
       idle_ms: 15000
-"#);
+"#,
+    );
 
     assert_eq!(
         GatewayConfig::from_yaml(&yaml),

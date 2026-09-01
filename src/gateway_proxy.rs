@@ -5,7 +5,9 @@
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use pingora::prelude::{Error, ErrorType, HttpPeer, ProxyHttp, RequestHeader, ResponseHeader, Session};
+use pingora::prelude::{
+    Error, ErrorType, HttpPeer, ProxyHttp, RequestHeader, ResponseHeader, Session,
+};
 use thiserror::Error;
 
 use crate::edge_contract::{GatewayConfig, GatewayConfigError, UpstreamConfig};
