@@ -102,7 +102,9 @@ fn read_fixture_request(stream: &mut TcpStream) -> Vec<u8> {
         if let Some(position) = request.windows(4).position(|window| window == b"\r\n\r\n") {
             break position + 4;
         }
-        let read = stream.read(&mut buffer).expect("request should be readable");
+        let read = stream
+            .read(&mut buffer)
+            .expect("request should be readable");
         assert!(read > 0, "gateway closed upstream request prematurely");
         request.extend_from_slice(&buffer[..read]);
     };
@@ -112,12 +114,18 @@ fn read_fixture_request(stream: &mut TcpStream) -> Vec<u8> {
         .lines()
         .find_map(|line| {
             let (name, value) = line.split_once(':')?;
-            name.eq_ignore_ascii_case("content-length")
-                .then(|| value.trim().parse::<usize>().expect("fixture content length"))
+            name.eq_ignore_ascii_case("content-length").then(|| {
+                value
+                    .trim()
+                    .parse::<usize>()
+                    .expect("fixture content length")
+            })
         })
         .unwrap_or(0);
     while request.len() < header_end + content_length {
-        let read = stream.read(&mut buffer).expect("request body should be readable");
+        let read = stream
+            .read(&mut buffer)
+            .expect("request body should be readable");
         assert!(read > 0, "gateway closed upstream body prematurely");
         request.extend_from_slice(&buffer[..read]);
     }
@@ -140,11 +148,7 @@ fn compiled_gateway_enforces_health_limits_forwarding_proxy_and_telemetry_paths(
     let fixture = thread::spawn(move || {
         for (expected_start, expected_body, response_body) in [
             ("GET /through-pingora HTTP/1.1\r\n", None, "pingora-path"),
-            (
-                "POST /small-body HTTP/1.1\r\n",
-                Some("ping"),
-                "small-ok",
-            ),
+            ("POST /small-body HTTP/1.1\r\n", Some("ping"), "small-ok"),
         ] {
             let (mut stream, _) = fixture_listener
                 .accept()
