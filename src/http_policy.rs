@@ -23,7 +23,7 @@ pub enum HeaderPolicyError {
     /// At least one explicit response header is required to activate a policy.
     #[error("HTTP response policy requires at least one header")]
     NoHeaders,
-    /// Header field names must satisfy the RFC token grammar.
+    /// Header field names must fit the conservative alphanumeric-plus-hyphen migration profile.
     #[error("invalid HTTP response header name: {header_name}")]
     InvalidHeaderName {
         /// Invalid field name supplied by configuration.
@@ -58,8 +58,10 @@ pub struct ResponseHeaderPolicy {
 impl ResponseHeaderPolicy {
     /// Validates an explicit response-header set before it can be attached to an edge route.
     ///
-    /// Field-name uniqueness is ASCII case-insensitive as required by HTTP semantics. Values reject
-    /// CR/LF so a migration contract cannot accidentally introduce response splitting.
+    /// Field-name uniqueness is ASCII case-insensitive as required by HTTP semantics. The current
+    /// migration profile deliberately accepts only alphanumerics and `-`, which covers the captured
+    /// consumer contracts while remaining a strict subset of legal HTTP field-name syntax. Values
+    /// reject CR/LF so a migration contract cannot accidentally introduce response splitting.
     pub fn try_new(headers: Vec<ResponseHeaderRule>) -> Result<Self, HeaderPolicyError> {
         if headers.is_empty() {
             return Err(HeaderPolicyError::NoHeaders);
@@ -67,7 +69,7 @@ impl ResponseHeaderPolicy {
 
         let mut names = HashSet::with_capacity(headers.len());
         for header in &headers {
-            if !is_http_token(&header.name) {
+            if !is_supported_header_name(&header.name) {
                 return Err(HeaderPolicyError::InvalidHeaderName {
                     header_name: header.name.clone(),
                 });
@@ -85,7 +87,7 @@ impl ResponseHeaderPolicy {
                     header_name: header.name.clone(),
                 });
             }
-            if header.value.contains(['\r', '\n']) {
+            if header.value.contains('\r') || header.value.contains('\n') {
                 return Err(HeaderPolicyError::InvalidHeaderValue {
                     header_name: header.name.clone(),
                 });
@@ -117,26 +119,9 @@ impl ResponseHeaderPolicy {
     }
 }
 
-fn is_http_token(value: &str) -> bool {
+fn is_supported_header_name(value: &str) -> bool {
     !value.is_empty()
-        && value.bytes().all(|byte| {
-            byte.is_ascii_alphanumeric()
-                || matches!(
-                    byte,
-                    b'!' | b'#'
-                        | b'$'
-                        | b'%'
-                        | b'&'
-                        | b'\''
-                        | b'*'
-                        | b'+'
-                        | b'-'
-                        | b'.'
-                        | b'^'
-                        | b'_'
-                        | b'`'
-                        | b'|'
-                        | b'~'
-                )
-        })
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
 }
