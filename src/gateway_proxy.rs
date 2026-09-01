@@ -8,7 +8,9 @@ use std::sync::LazyLock;
 use async_trait::async_trait;
 use bytes::Bytes;
 use log::info;
-use pingora::prelude::{Error, ErrorType, HttpPeer, ProxyHttp, RequestHeader, ResponseHeader, Session};
+use pingora::prelude::{
+    Error, ErrorType, HttpPeer, ProxyHttp, RequestHeader, ResponseHeader, Session,
+};
 use pingora_prometheus::prometheus::{register_int_counter, IntCounter};
 use thiserror::Error;
 
