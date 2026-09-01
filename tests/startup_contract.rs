@@ -45,10 +45,7 @@ fn command_rejects_unknown_or_ambiguous_arguments() {
         OsString::from("b.yaml"),
     ];
     let duplicate_error = GatewayCommand::parse(duplicate).unwrap_err();
-    assert_eq!(
-        duplicate_error,
-        GatewayCommandError::DuplicateConfigOption
-    );
+    assert_eq!(duplicate_error, GatewayCommandError::DuplicateConfigOption);
     assert_eq!(duplicate_error.path(), None);
 }
 
