@@ -21,18 +21,30 @@ impl Drop for GatewayProcess {
     }
 }
 
-fn reserve_loopback_address() -> SocketAddr {
-    let listener = TcpListener::bind("127.0.0.1:0").expect("loopback port should be available");
-    listener
-        .local_addr()
-        .expect("bound loopback listener has an address")
+fn reserve_distinct_loopback_addresses() -> (SocketAddr, SocketAddr) {
+    let traffic = TcpListener::bind("127.0.0.1:0").expect("traffic port should be available");
+    let metrics = TcpListener::bind("127.0.0.1:0").expect("metrics port should be available");
+    let addresses = (
+        traffic
+            .local_addr()
+            .expect("traffic reservation has an address"),
+        metrics
+            .local_addr()
+            .expect("metrics reservation has an address"),
+    );
+    assert_ne!(addresses.0, addresses.1);
+    addresses
 }
 
-fn write_gateway_config(listener: SocketAddr, upstream: SocketAddr) -> NamedTempFile {
+fn write_gateway_config(
+    listener: SocketAddr,
+    metrics_listener: SocketAddr,
+    upstream: SocketAddr,
+) -> NamedTempFile {
     let mut file = NamedTempFile::new().expect("temporary config should be writable");
     writeln!(
         file,
-        "version: 1\nlistener: {listener}\nmax_request_body_bytes: 8\nupstreams:\n  - name: fixture\n    address: {upstream}\n    tls: false\n    timeouts:\n      connection_ms: 1000\n      total_connection_ms: 2000\n      read_ms: 5000\n      write_ms: 5000\n      idle_ms: 10000"
+        "version: 1\nlistener: {listener}\nmetrics_listener: {metrics_listener}\nmax_request_body_bytes: 8\nupstreams:\n  - name: fixture\n    address: {upstream}\n    tls: false\n    timeouts:\n      connection_ms: 1000\n      total_connection_ms: 2000\n      read_ms: 5000\n      write_ms: 5000\n      idle_ms: 10000"
     )
     .expect("gateway config should be written");
     file
@@ -84,14 +96,14 @@ fn get(address: SocketAddr, path: &str) -> String {
 }
 
 #[test]
-fn compiled_gateway_enforces_health_limits_forwarding_and_proxy_path() {
+fn compiled_gateway_enforces_health_limits_forwarding_proxy_and_telemetry_paths() {
     let upstream_listener =
         TcpListener::bind("127.0.0.1:0").expect("fixture upstream should bind loopback");
     let upstream_address = upstream_listener
         .local_addr()
         .expect("fixture upstream should expose its address");
-    let gateway_address = reserve_loopback_address();
-    let config = write_gateway_config(gateway_address, upstream_address);
+    let (gateway_address, metrics_address) = reserve_distinct_loopback_addresses();
+    let config = write_gateway_config(gateway_address, metrics_address, upstream_address);
 
     let fixture = thread::spawn(move || {
         let (mut stream, _) = upstream_listener
@@ -125,6 +137,7 @@ fn compiled_gateway_enforces_health_limits_forwarding_and_proxy_path() {
 
     let mut child = Command::new(env!("CARGO_BIN_EXE_cwl-pingora-gateway"))
         .args(["--config", config.path().to_str().expect("UTF-8 temp path")])
+        .env("RUST_LOG", "info")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
@@ -132,6 +145,7 @@ fn compiled_gateway_enforces_health_limits_forwarding_and_proxy_path() {
         .expect("compiled gateway binary should start");
 
     wait_until_listening(gateway_address, &mut child);
+    wait_until_listening(metrics_address, &mut child);
     let mut process = GatewayProcess(child);
 
     for health_path in ["/livez", "/readyz"] {
@@ -156,7 +170,7 @@ fn compiled_gateway_enforces_health_limits_forwarding_and_proxy_path() {
 
     let response = raw_request(
         gateway_address,
-        b"GET /through-pingora HTTP/1.1\r\nHost: gateway.test\r\nForwarded: for=203.0.113.7;proto=https\r\nX-Forwarded-For: 203.0.113.7\r\nX-Real-IP: 203.0.113.7\r\nConnection: close\r\n\r\n",
+        b"GET /through-pingora HTTP/1.1\r\nHost: gateway.test\r\nAuthorization: Bearer super-secret-token\r\nCookie: session=super-secret-cookie\r\nForwarded: for=203.0.113.7;proto=https\r\nX-Forwarded-For: 203.0.113.7\r\nX-Real-IP: 203.0.113.7\r\nConnection: close\r\n\r\n",
     );
     assert!(
         response.starts_with("HTTP/1.1 200"),
@@ -165,8 +179,33 @@ fn compiled_gateway_enforces_health_limits_forwarding_and_proxy_path() {
     assert!(response.ends_with("\r\n\r\npingora-path"));
 
     fixture.join().expect("upstream fixture should complete");
+
+    let metrics = get(metrics_address, "/metrics");
+    assert!(metrics.starts_with("HTTP/1.1 200"));
+    assert!(metrics.contains("cwl_pingora_gateway_requests_total"));
+    assert!(metrics.contains("cwl_pingora_gateway_request_errors_total"));
+    assert!(metrics.contains("cwl_pingora_gateway_request_body_bytes_total"));
+    assert!(!metrics.contains("super-secret-token"));
+    assert!(!metrics.contains("super-secret-cookie"));
+
+    let mut stderr = process
+        .0
+        .stderr
+        .take()
+        .expect("gateway stderr should remain captured");
     process
         .0
         .kill()
         .expect("gateway process should still be running");
+    process
+        .0
+        .wait()
+        .expect("terminated gateway process should be reapable");
+    let mut logs = String::new();
+    stderr
+        .read_to_string(&mut logs)
+        .expect("gateway logs should be readable");
+    assert!(logs.contains("gateway_request"));
+    assert!(!logs.contains("super-secret-token"));
+    assert!(!logs.contains("super-secret-cookie"));
 }
