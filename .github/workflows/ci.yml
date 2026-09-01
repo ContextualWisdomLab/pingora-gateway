@@ -43,8 +43,19 @@ jobs:
         run: |
           rustup component add llvm-tools-preview --toolchain 1.98.0
           cargo install cargo-llvm-cov --version 0.9.0 --locked
+      - name: Run owned production coverage workload
+        run: cargo llvm-cov --all-targets --locked --no-report
+      - name: Export owned production coverage diagnostics
+        run: cargo llvm-cov report --json --output-path coverage.json
+      - name: Upload owned production coverage diagnostics
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: coverage-${{ env.EXPECTED_SHA }}
+          path: coverage.json
+          if-no-files-found: error
+          retention-days: 1
       - name: Enforce complete owned production coverage
-        run: cargo llvm-cov --all-targets --locked --show-missing-lines --fail-under-lines 100 --fail-under-regions 100
+        run: cargo llvm-cov report --show-missing-lines --fail-under-lines 100 --fail-under-regions 100
       - name: Verify resolved dependency lock
         run: |
           test -s Cargo.lock
