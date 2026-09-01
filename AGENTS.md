@@ -1,0 +1,3 @@
+# Agent contract
+
+Preserve the DDD boundary: `src/edge_routing` must never import Pingora. Pingora types belong in `src/delivery`. Runtime configuration may construct domain values but must not embed product-specific routing policy. Every behavior change needs a failing characterization/unit/integration test first, then the smallest causal change, then full verification. Never weaken TLS verification, request/resource limits, non-root execution, read-only-root compatibility or forwarded-header distrust to make a migration pass. Keep the docs named in README code-current. Do not claim a consumer migrated until its protected/default branch contains the Pingora path and production-path evidence.

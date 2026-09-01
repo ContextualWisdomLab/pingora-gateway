@@ -1,0 +1,36 @@
+[package]
+name = "pingora-gateway"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "CWL-managed reusable Pingora edge runtime"
+license = "Apache-2.0"
+publish = false
+
+[dependencies]
+async-trait = "0.1"
+bytes = "1"
+http = "1"
+pingora-core = { git = "https://github.com/cloudflare/pingora", rev = "09696b51bc59315353d96686355861604d0bb48c" }
+pingora-http = { git = "https://github.com/cloudflare/pingora", rev = "09696b51bc59315353d96686355861604d0bb48c" }
+pingora-proxy = { git = "https://github.com/cloudflare/pingora", rev = "09696b51bc59315353d96686355861604d0bb48c" }
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
+url = "2"
+
+[dev-dependencies]
+proptest = "1"
+tempfile = "3"
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[lints.clippy]
+all = "warn"
+pedantic = "warn"
+unwrap_used = "deny"
+expect_used = "deny"
