@@ -7,6 +7,7 @@
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::process::{Child, Command, Stdio};
+use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -36,18 +37,27 @@ fn reserve_distinct_loopback_addresses() -> (SocketAddr, SocketAddr) {
     addresses
 }
 
+fn write_gateway_config_with_limit(
+    listener: SocketAddr,
+    metrics_listener: SocketAddr,
+    upstream: SocketAddr,
+    max_in_flight_requests: usize,
+) -> NamedTempFile {
+    let mut file = NamedTempFile::new().expect("temporary config should be writable");
+    writeln!(
+        file,
+        "version: 1\nlistener: {listener}\nmetrics_listener: {metrics_listener}\nmax_request_body_bytes: 8\nmax_in_flight_requests: {max_in_flight_requests}\nupstream_keepalive_pool_size: 4\nupstreams:\n  - name: fixture\n    address: {upstream}\n    tls: false\n    timeouts:\n      connection_ms: 1000\n      total_connection_ms: 2000\n      read_ms: 5000\n      write_ms: 5000\n      idle_ms: 10000"
+    )
+    .expect("gateway config should be written");
+    file
+}
+
 fn write_gateway_config(
     listener: SocketAddr,
     metrics_listener: SocketAddr,
     upstream: SocketAddr,
 ) -> NamedTempFile {
-    let mut file = NamedTempFile::new().expect("temporary config should be writable");
-    writeln!(
-        file,
-        "version: 1\nlistener: {listener}\nmetrics_listener: {metrics_listener}\nmax_request_body_bytes: 8\nupstreams:\n  - name: fixture\n    address: {upstream}\n    tls: false\n    timeouts:\n      connection_ms: 1000\n      total_connection_ms: 2000\n      read_ms: 5000\n      write_ms: 5000\n      idle_ms: 10000"
-    )
-    .expect("gateway config should be written");
-    file
+    write_gateway_config_with_limit(listener, metrics_listener, upstream, 8)
 }
 
 fn wait_until_listening(address: SocketAddr, process: &mut Child) {
@@ -317,6 +327,99 @@ fn compiled_gateway_enforces_health_limits_forwarding_proxy_and_telemetry_paths(
     assert!(logs.contains("gateway_request"));
     assert!(!logs.contains("super-secret-token"));
     assert!(!logs.contains("super-secret-cookie"));
+}
+
+#[test]
+fn exhausted_in_flight_budget_rejects_with_503_and_recovers_without_poisoning_health() {
+    let upstream_listener =
+        TcpListener::bind("127.0.0.1:0").expect("fixture upstream should bind loopback");
+    let upstream_address = upstream_listener
+        .local_addr()
+        .expect("fixture upstream should expose its address");
+    let (gateway_address, metrics_address) = reserve_distinct_loopback_addresses();
+    let config = write_gateway_config_with_limit(
+        gateway_address,
+        metrics_address,
+        upstream_address,
+        1,
+    );
+
+    let (request_seen_tx, request_seen_rx) = mpsc::channel();
+    let (release_response_tx, release_response_rx) = mpsc::channel();
+    let fixture = thread::spawn(move || {
+        let (mut first, _) = upstream_listener
+            .accept()
+            .expect("first admitted request should connect upstream");
+        let first_request = read_fixture_request(&mut first);
+        assert!(String::from_utf8_lossy(&first_request).starts_with("GET /held-capacity HTTP/1.1\r\n"));
+        request_seen_tx
+            .send(())
+            .expect("test should observe the admitted in-flight request");
+        release_response_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("test should release the held response");
+        first
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nfirst")
+            .expect("first response should be writable");
+
+        let (mut recovered, _) = upstream_listener
+            .accept()
+            .expect("request after admission release should reconnect upstream");
+        let recovered_request = read_fixture_request(&mut recovered);
+        assert!(String::from_utf8_lossy(&recovered_request)
+            .starts_with("GET /after-capacity HTTP/1.1\r\n"));
+        recovered
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 9\r\nConnection: close\r\n\r\nrecovered")
+            .expect("recovery response should be writable");
+    });
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_cwl-pingora-gateway"))
+        .args(["--config", config.path().to_str().expect("UTF-8 temp path")])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("compiled gateway binary should start");
+    wait_until_listening(gateway_address, &mut child);
+    wait_until_listening(metrics_address, &mut child);
+    let mut process = GatewayProcess(child);
+
+    let held = thread::spawn(move || get(gateway_address, "/held-capacity"));
+    request_seen_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("first request should hold the sole admission lease");
+
+    let rejected = get(gateway_address, "/over-capacity");
+    assert!(
+        rejected.starts_with("HTTP/1.1 503"),
+        "a request above max_in_flight_requests must fail fast: {rejected:?}"
+    );
+
+    let readiness = get(gateway_address, "/readyz");
+    assert!(
+        readiness.starts_with("HTTP/1.1 200"),
+        "health probes must bypass the application backpressure budget: {readiness:?}"
+    );
+
+    let metrics = get(metrics_address, "/metrics");
+    assert!(metrics.contains("cwl_pingora_gateway_backpressure_rejections_total 1"));
+
+    release_response_tx
+        .send(())
+        .expect("held response should be released");
+    let first_response = held.join().expect("held downstream request should complete");
+    assert!(first_response.starts_with("HTTP/1.1 200"));
+    assert!(first_response.ends_with("\r\n\r\nfirst"));
+
+    let recovered = get(gateway_address, "/after-capacity");
+    assert!(
+        recovered.starts_with("HTTP/1.1 200"),
+        "admission capacity must be released after request completion: {recovered:?}"
+    );
+    assert!(recovered.ends_with("\r\n\r\nrecovered"));
+
+    fixture.join().expect("capacity fixture should complete");
+    terminate_gateway(&mut process.0);
 }
 
 #[test]
