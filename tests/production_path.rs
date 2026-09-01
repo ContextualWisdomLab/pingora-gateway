@@ -70,6 +70,34 @@ fn wait_until_listening(address: SocketAddr, process: &mut Child) {
     }
 }
 
+fn terminate_gateway(process: &mut Child) {
+    #[cfg(unix)]
+    {
+        let signal_status = Command::new("kill")
+            .args(["-TERM", &process.id().to_string()])
+            .status()
+            .expect("system kill command should send SIGTERM");
+        assert!(signal_status.success(), "SIGTERM delivery should succeed");
+        let exit_status = process
+            .wait()
+            .expect("gracefully terminated gateway should be reapable");
+        assert!(
+            exit_status.success(),
+            "SIGTERM graceful shutdown should exit successfully: {exit_status}"
+        );
+    }
+
+    #[cfg(not(unix))]
+    {
+        process
+            .kill()
+            .expect("gateway process should still be running");
+        process
+            .wait()
+            .expect("terminated gateway process should be reapable");
+    }
+}
+
 fn raw_request(address: SocketAddr, request: &[u8]) -> String {
     let mut downstream =
         TcpStream::connect(address).expect("gateway should accept downstream traffic");
@@ -281,14 +309,7 @@ fn compiled_gateway_enforces_health_limits_forwarding_proxy_and_telemetry_paths(
         .stderr
         .take()
         .expect("gateway stderr should remain captured");
-    process
-        .0
-        .kill()
-        .expect("gateway process should still be running");
-    process
-        .0
-        .wait()
-        .expect("terminated gateway process should be reapable");
+    terminate_gateway(&mut process.0);
     let mut logs = String::new();
     stderr
         .read_to_string(&mut logs)
