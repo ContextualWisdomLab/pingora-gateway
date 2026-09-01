@@ -18,7 +18,15 @@ use crate::edge_contract::{GatewayConfigError, UpstreamConfig};
 /// and every timeout comes from the versioned configuration rather than a hidden default.
 pub fn build_peer(upstream: &UpstreamConfig) -> Result<HttpPeer, GatewayConfigError> {
     upstream.validate()?;
+    Ok(build_peer_from_validated(upstream))
+}
 
+/// Constructs Pingora transport state after the enclosing gateway contract has already validated
+/// this upstream.
+///
+/// Keeping this helper crate-private avoids repeating a logically impossible validation failure on
+/// every proxied request while preserving [`build_peer`] as the fail-closed public entry point.
+pub(crate) fn build_peer_from_validated(upstream: &UpstreamConfig) -> HttpPeer {
     let mut peer = HttpPeer::new(
         upstream.address,
         upstream.tls,
@@ -36,5 +44,5 @@ pub fn build_peer(upstream: &UpstreamConfig) -> Result<HttpPeer, GatewayConfigEr
     peer.options.idle_timeout = Some(Duration::from_millis(upstream.timeouts.idle_ms));
     peer.options.http_upstream_request_policy = HttpUpstreamRequestPolicy::standard();
 
-    Ok(peer)
+    peer
 }
