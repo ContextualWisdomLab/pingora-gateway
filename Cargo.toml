@@ -22,7 +22,6 @@ env_logger = "0.11.8"
 log = "0.4.28"
 pingora = { git = "https://github.com/cloudflare/pingora.git", rev = "6463ad6407a1d3fe256f1951dd0ecb054477e3f6", features = ["proxy", "openssl"] }
 pingora-prometheus = { git = "https://github.com/cloudflare/pingora.git", rev = "6463ad6407a1d3fe256f1951dd0ecb054477e3f6" }
-prometheus = "0.14.0"
 serde = { version = "1.0.219", features = ["derive"] }
 serde_yaml = { package = "yaml_serde", version = "0.10.7" }
 thiserror = "2.0.16"
