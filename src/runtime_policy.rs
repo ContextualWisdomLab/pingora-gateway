@@ -27,6 +27,11 @@ pub const V1_GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS: u64 = 10;
 /// External hard-kill budget required from the process supervisor for a graceful SIGTERM exit.
 pub const V1_TERMINATION_BUDGET_SECONDS: u64 = 30;
 
+const _: () = assert!(
+    V1_GRACE_PERIOD_SECONDS + 2 * V1_GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS
+        < V1_TERMINATION_BUDGET_SECONDS
+);
+
 /// Builds the Pingora server configuration admitted by the version-1 runtime policy.
 ///
 /// Retry behavior is deliberately fixed to a single upstream attempt. Product-specific retry
@@ -34,11 +39,6 @@ pub const V1_TERMINATION_BUDGET_SECONDS: u64 = 30;
 /// a later version introduces an explicit, reviewed contract. Graceful shutdown is bounded rather
 /// than inheriting Pingora's framework fallback.
 pub fn build_server_conf() -> ServerConf {
-    debug_assert!(
-        V1_GRACE_PERIOD_SECONDS + 2 * V1_GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS
-            < V1_TERMINATION_BUDGET_SECONDS
-    );
-
     ServerConf {
         max_retries: V1_MAX_UPSTREAM_ATTEMPTS,
         grace_period_seconds: Some(V1_GRACE_PERIOD_SECONDS),
