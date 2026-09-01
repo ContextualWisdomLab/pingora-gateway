@@ -25,15 +25,21 @@ fn upstream(name: &str, port: u16) -> UpstreamConfig {
     }
 }
 
-#[test]
-fn version_one_proxy_builds_the_configured_peer_without_hidden_defaults() {
-    let config = GatewayConfig {
+fn gateway_config(upstream: UpstreamConfig) -> GatewayConfig {
+    GatewayConfig {
         version: 1,
         listener: SocketAddr::from(([127, 0, 0, 1], 6188)),
         metrics_listener: SocketAddr::from(([127, 0, 0, 1], 6192)),
         max_request_body_bytes: 1_048_576,
-        upstreams: vec![upstream("api", 8080)],
-    };
+        max_in_flight_requests: 128,
+        upstream_keepalive_pool_size: 32,
+        upstreams: vec![upstream],
+    }
+}
+
+#[test]
+fn version_one_proxy_builds_the_configured_peer_without_hidden_defaults() {
+    let config = gateway_config(upstream("api", 8080));
 
     let proxy = GatewayProxy::try_from_config(&config).expect("single upstream is unambiguous");
     let peer = proxy.build_upstream_peer();
@@ -48,13 +54,8 @@ fn version_one_proxy_builds_the_configured_peer_without_hidden_defaults() {
 
 #[test]
 fn proxy_activation_revalidates_programmatically_constructed_contracts() {
-    let config = GatewayConfig {
-        version: 1,
-        listener: SocketAddr::from(([127, 0, 0, 1], 6188)),
-        metrics_listener: SocketAddr::from(([127, 0, 0, 1], 6188)),
-        max_request_body_bytes: 1_048_576,
-        upstreams: vec![upstream("api", 8080)],
-    };
+    let mut config = gateway_config(upstream("api", 8080));
+    config.metrics_listener = config.listener;
 
     let error = GatewayProxy::try_from_config(&config).unwrap_err();
     assert_eq!(
@@ -69,13 +70,7 @@ fn proxy_activation_fails_before_listeners_when_trust_material_is_missing() {
     tls.tls = true;
     tls.sni = Some("api.internal.example".to_string());
     tls.trust_bundle_file = Some(PathBuf::from("/definitely/missing/cwl-local-ca.pem"));
-    let config = GatewayConfig {
-        version: 1,
-        listener: SocketAddr::from(([127, 0, 0, 1], 6188)),
-        metrics_listener: SocketAddr::from(([127, 0, 0, 1], 6192)),
-        max_request_body_bytes: 1_048_576,
-        upstreams: vec![tls],
-    };
+    let config = gateway_config(tls);
 
     assert!(matches!(
         GatewayProxy::try_from_config(&config).unwrap_err(),
