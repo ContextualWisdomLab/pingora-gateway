@@ -100,8 +100,7 @@ pub struct RequestAdmission {
 
 impl Drop for RequestAdmission {
     fn drop(&mut self) {
-        let previous = self.in_flight.fetch_sub(1, Ordering::AcqRel);
-        debug_assert!(previous > 0, "request admission counter must not underflow");
+        self.in_flight.fetch_sub(1, Ordering::AcqRel);
     }
 }
 
@@ -211,9 +210,7 @@ impl ProxyHttp for GatewayProxy {
                 Ok(true)
             }
             _ => {
-                if ctx.admission.is_none() {
-                    ctx.admission = Some(self.admission_budget.acquire_or_reject()?);
-                }
+                ctx.admission = Some(self.admission_budget.acquire_or_reject()?);
                 self.reject_oversize_declared_body(session)?;
                 Ok(false)
             }
