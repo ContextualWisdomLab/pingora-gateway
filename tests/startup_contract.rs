@@ -12,6 +12,14 @@ fn command_requires_an_explicit_config_path() {
 }
 
 #[test]
+fn command_treats_empty_argv_as_missing_config() {
+    let error = GatewayCommand::parse(std::iter::empty::<OsString>()).unwrap_err();
+
+    assert_eq!(error, GatewayCommandError::MissingConfigOption);
+    assert_eq!(error.path(), None);
+}
+
+#[test]
 fn command_rejects_config_without_a_value() {
     let args = [
         OsString::from("cwl-pingora-gateway"),
@@ -47,6 +55,23 @@ fn command_rejects_unknown_or_ambiguous_arguments() {
     let duplicate_error = GatewayCommand::parse(duplicate).unwrap_err();
     assert_eq!(duplicate_error, GatewayCommandError::DuplicateConfigOption);
     assert_eq!(duplicate_error.path(), None);
+}
+
+#[cfg(unix)]
+#[test]
+fn command_reports_non_utf8_unexpected_arguments_lossily() {
+    use std::os::unix::ffi::OsStringExt;
+
+    let invalid = OsString::from_vec(vec![b'-', b'-', b'x', 0xff]);
+    let args = [OsString::from("cwl-pingora-gateway"), invalid];
+
+    let error = GatewayCommand::parse(args).unwrap_err();
+
+    assert_eq!(
+        error,
+        GatewayCommandError::UnexpectedArgument("--x�".to_string())
+    );
+    assert_eq!(error.path(), None);
 }
 
 #[test]
@@ -136,5 +161,13 @@ fn command_does_not_hide_a_missing_config_file() {
     let command = GatewayCommand::parse(args).expect("argument shape is valid");
 
     let error = command.load_config().unwrap_err();
+    assert!(matches!(
+        error,
+        GatewayCommandError::ReadConfig {
+            kind: std::io::ErrorKind::NotFound,
+            ..
+        }
+    ));
     assert_eq!(error.path(), Some(path.as_path()));
+    assert!(error.to_string().contains("NotFound"));
 }
