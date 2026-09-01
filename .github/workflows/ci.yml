@@ -44,7 +44,7 @@ jobs:
           rustup component add llvm-tools-preview --toolchain 1.98.0
           cargo install cargo-llvm-cov --version 0.9.0 --locked
       - name: Enforce complete owned production coverage
-        run: cargo llvm-cov --all-targets --locked --fail-under-lines 100 --fail-under-regions 100
+        run: cargo llvm-cov --all-targets --locked --show-missing-lines --fail-under-lines 100 --fail-under-regions 100
       - name: Verify resolved dependency lock
         run: |
           test -s Cargo.lock
