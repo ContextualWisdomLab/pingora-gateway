@@ -28,7 +28,11 @@ fn stable_production_coverage_is_gated_at_one_hundred_percent() {
         );
     }
 
-    for forbidden in ["--ignore-filename-regex", "--skip-functions", "--skip-branches"] {
+    for forbidden in [
+        "--ignore-filename-regex",
+        "--skip-functions",
+        "--skip-branches",
+    ] {
         assert!(
             !workflow.contains(forbidden),
             "owned production coverage must not be weakened through exclusions: {forbidden}"
