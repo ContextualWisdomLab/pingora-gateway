@@ -88,12 +88,11 @@ fn load_trust_bundle(path: &Path) -> Result<Box<[X509]>, PeerBuildError> {
         path: path.to_path_buf(),
         kind: error.kind(),
     })?;
-    let certificates = X509::stack_from_pem(&source).map_err(|error| {
-        PeerBuildError::InvalidTrustBundle {
+    let certificates =
+        X509::stack_from_pem(&source).map_err(|error| PeerBuildError::InvalidTrustBundle {
             path: path.to_path_buf(),
             reason: error.to_string(),
-        }
-    })?;
+        })?;
     if certificates.is_empty() {
         return Err(PeerBuildError::InvalidTrustBundle {
             path: path.to_path_buf(),
