@@ -10,14 +10,16 @@ HTTPS upstreams use certificate and hostname verification with an explicit SNI. 
 
 Inbound forwarding identity is deleted before proxying. V1 emits only `Forwarded: proto=http`; it deliberately does not claim a client IP. A future trusted-proxy feature must define allowed proxy CIDRs/hops and RFC 7239 semantics as a versioned contract with spoofing tests.
 
-Request bodies and upstream connect/read/write/idle time are bounded. The Pingora HTTP parser has finite protocol/header limits, but a smaller configurable header budget remains a documented gap.
+Request bodies and upstream connect/read/write/idle time are bounded. The Pingora HTTP parser has finite protocol/header limits, but a smaller configurable header budget and an explicit concurrency/backpressure budget remain documented gaps.
 
 ## Logging and data minimization
 
-No implementation should log Authorization, Proxy-Authorization, Cookie, Set-Cookie, request/response bodies, access tokens, configuration credentials, or arbitrary high-cardinality header/route values. Low-cardinality operational metrics and redacted access logging are release requirements but are not implemented yet.
+The production path emits coarse status/outcome/request-body-byte access logs and label-free Prometheus request/error/body-byte counters. It does not log Authorization, Proxy-Authorization, Cookie, Set-Cookie, request/response bodies, access tokens, configuration credentials, arbitrary headers, route values, or other unbounded request-derived labels. Distributed tracing and richer bounded operability evidence remain release gaps.
 
 ## Supply chain
 
-Pingora is pinned to an exact upstream commit and must be revalidated against current releases/advisories immediately before release. The repository currently lacks a committed `Cargo.lock`; therefore dependency resolution is not yet reproducible and release is blocked. SBOM, provenance, container scanning, signing/attestation policy, and immutable image digest are also release gates.
+Pingora and `pingora-prometheus` are pinned to one exact upstream commit and must be revalidated against current releases/advisories immediately before release. `Cargo.lock` is committed. Repository CI tests and lints with `--locked`, rejects lockfile mutation, and the OCI builder copies the reviewed lock and builds with `--locked`; any dependency-resolution drift therefore fails closed rather than silently rewriting release inputs.
+
+A committed lock is necessary but not sufficient release evidence. The exact resolved graph still requires vulnerability/license policy evidence, SBOM and provenance generation bound to the protected source SHA and artifact digest, container scanning, signing/attestation policy, and an immutable published image digest before a consumer cutover may rely on this runtime.
 
 Report security issues privately through the organization security channel rather than publishing exploit details in a public issue.
