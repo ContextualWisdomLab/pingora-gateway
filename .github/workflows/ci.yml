@@ -37,3 +37,12 @@ jobs:
         run: cargo test --all-targets
       - name: Lint
         run: cargo clippy --all-targets -- -D warnings
+      - name: Verify resolved dependency lock
+        run: test -s Cargo.lock
+      - name: Upload resolved dependency lock evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: cargo-lock-${{ env.EXPECTED_SHA }}
+          path: Cargo.lock
+          if-no-files-found: error
+          retention-days: 1
