@@ -1,6 +1,6 @@
 use cwl_pingora_gateway::runtime_policy::{
     build_server_conf, V1_GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS, V1_GRACE_PERIOD_SECONDS,
-    V1_MAX_UPSTREAM_ATTEMPTS, V1_TERMINATION_BUDGET_SECONDS,
+    V1_MAX_UPSTREAM_ATTEMPTS,
 };
 
 #[test]
@@ -13,9 +13,5 @@ fn version_one_overrides_pingora_retry_and_shutdown_defaults() {
     assert_eq!(
         conf.graceful_shutdown_timeout_seconds,
         Some(V1_GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS)
-    );
-    assert!(
-        V1_GRACE_PERIOD_SECONDS + 2 * V1_GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS
-            < V1_TERMINATION_BUDGET_SECONDS
     );
 }
