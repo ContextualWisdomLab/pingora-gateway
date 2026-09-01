@@ -125,4 +125,17 @@ mod tests {
             }
         );
     }
+
+    #[test]
+    fn parsed_trust_bundle_preserves_nonempty_certificate_stack() {
+        let path = Path::new("/tmp/nonempty-trust-bundle.pem");
+        let certificate = X509::builder()
+            .expect("OpenSSL should allocate an X509 builder")
+            .build();
+
+        let certificates = require_certificates(path, vec![certificate])
+            .expect("a nonempty parsed certificate stack must be accepted");
+
+        assert_eq!(certificates.len(), 1);
+    }
 }
