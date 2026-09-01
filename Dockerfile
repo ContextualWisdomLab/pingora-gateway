@@ -2,7 +2,7 @@
 FROM rust:1.97.1-bookworm AS builder
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates libssl-dev pkg-config \
+    && apt-get install -y --no-install-recommends ca-certificates cmake libssl-dev pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
