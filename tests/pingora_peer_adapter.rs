@@ -67,7 +67,8 @@ fn tls_peer_verifies_identity_and_uses_explicit_io_budgets() {
 
 #[test]
 fn cleartext_peer_does_not_invent_a_tls_identity() {
-    let peer = build_peer(&upstream(false, None)).expect("validated HTTP upstream must build a peer");
+    let peer =
+        build_peer(&upstream(false, None)).expect("validated HTTP upstream must build a peer");
 
     assert!(!peer.is_tls());
     assert!(peer.sni.is_empty());
