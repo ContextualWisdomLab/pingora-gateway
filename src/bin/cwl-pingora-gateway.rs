@@ -12,6 +12,7 @@ use cwl_pingora_gateway::gateway_proxy::GatewayProxy;
 use cwl_pingora_gateway::runtime_policy::build_server_conf;
 use cwl_pingora_gateway::startup::GatewayCommand;
 use pingora::prelude::{http_proxy_service, Server};
+use pingora::server::RunArgs;
 
 fn main() {
     env_logger::init();
@@ -37,7 +38,10 @@ fn main() {
     metrics_service.add_tcp(&metrics_listener);
     server.add_service(metrics_service);
 
-    server.run_forever();
+    // `run_forever()` calls `process::exit(0)` after the same drain path, which skips
+    // process-exit destructors and coverage/profile flushing. Returning from `main` after
+    // `run()` preserves Pingora's graceful shutdown semantics while allowing normal cleanup.
+    server.run(RunArgs::default());
 }
 
 fn exit_with_error(error: impl Display) -> ! {
