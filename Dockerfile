@@ -11,12 +11,12 @@ COPY src ./src
 RUN cargo build --locked --release --bin cwl-pingora-gateway
 
 # Debian 12 distroless reaches the end of its supported image line in September 2026. The
-# Debian 13 base carries only the glibc/libssl/CA runtime needed by this dynamically linked Rust
-# binary, without the package manager and unrelated utilities that caused the previous candidate
-# image to fail the HIGH/CRITICAL vulnerability gate. The digest is intentionally immutable;
-# dependency-update automation must move it through review rather than silently changing runtime
-# bytes underneath a source revision.
-FROM gcr.io/distroless/base-debian13:nonroot@sha256:b78832f41c8128046807c24840ebee4f1c18ba7870eed423d8750c272c15e147 AS runtime
+# Debian 13 `cc` image is the narrow runtime intended for dynamically linked Rust/C-family
+# binaries: it adds libgcc and its dependencies to distroless/base without restoring a shell,
+# package manager, or unrelated userland. CI exercises this exact image read-only with all Linux
+# capabilities dropped; that caught the narrower `base` image's missing libgcc_s.so.1 before
+# release. The digest is immutable so dependency updates remain explicit reviewable changes.
+FROM gcr.io/distroless/cc-debian13:nonroot@sha256:d97bc0a941b8d4be647dc0ee75b264ddbb772f1ac5ba690a4309c00723b23775 AS runtime
 
 COPY --from=builder /src/target/release/cwl-pingora-gateway /usr/local/bin/cwl-pingora-gateway
 
