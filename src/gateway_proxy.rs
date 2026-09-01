@@ -3,7 +3,8 @@
 //! Version 1 activates one upstream per process because the transport-neutral edge contract owns
 //! that invariant. This Pingora adapter does not invent routing or load-balancing domain rules.
 
-use std::sync::LazyLock;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, LazyLock};
 
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -48,10 +49,67 @@ static REQUEST_BODY_BYTES_TOTAL: LazyLock<IntCounter> = LazyLock::new(|| {
     )
 });
 
+static BACKPRESSURE_REJECTIONS_TOTAL: LazyLock<IntCounter> = LazyLock::new(|| {
+    register_counter(
+        "cwl_pingora_gateway_backpressure_rejections_total",
+        "Downstream requests rejected because max_in_flight_requests was exhausted",
+    )
+});
+
+#[derive(Debug, Clone)]
+struct RequestAdmissionBudget {
+    in_flight: Arc<AtomicUsize>,
+    limit: usize,
+}
+
+impl RequestAdmissionBudget {
+    fn new(limit: usize) -> Self {
+        Self {
+            in_flight: Arc::new(AtomicUsize::new(0)),
+            limit,
+        }
+    }
+
+    fn acquire_or_reject(&self) -> pingora::Result<RequestAdmission> {
+        let admitted = self.in_flight.fetch_update(
+            Ordering::AcqRel,
+            Ordering::Acquire,
+            |current| (current < self.limit).then_some(current + 1),
+        );
+
+        match admitted {
+            Ok(_) => Ok(RequestAdmission {
+                in_flight: Arc::clone(&self.in_flight),
+            }),
+            Err(_) => {
+                BACKPRESSURE_REJECTIONS_TOTAL.inc();
+                Err(Error::explain(
+                    ErrorType::HTTPStatus(503),
+                    "gateway max_in_flight_requests budget exhausted",
+                ))
+            }
+        }
+    }
+}
+
+/// RAII admission lease held for the complete non-health request lifecycle.
+#[derive(Debug)]
+pub struct RequestAdmission {
+    in_flight: Arc<AtomicUsize>,
+}
+
+impl Drop for RequestAdmission {
+    fn drop(&mut self) {
+        let previous = self.in_flight.fetch_sub(1, Ordering::AcqRel);
+        debug_assert!(previous > 0, "request admission counter must not underflow");
+    }
+}
+
 /// Per-request delivery state. Product domain state does not belong here.
 #[derive(Debug, Default)]
 pub struct RequestContext {
     request_body_bytes: u64,
+    admission: Option<RequestAdmission>,
 }
 
 /// Activation failures that occur after the transport-neutral configuration is parsed.
@@ -70,6 +128,7 @@ pub enum GatewayProxyError {
 pub struct GatewayProxy {
     upstream_peer: HttpPeer,
     max_request_body_bytes: u64,
+    admission_budget: RequestAdmissionBudget,
 }
 
 impl GatewayProxy {
@@ -85,6 +144,7 @@ impl GatewayProxy {
         Ok(Self {
             upstream_peer: build_peer_from_validated(upstream)?,
             max_request_body_bytes: config.max_request_body_bytes,
+            admission_budget: RequestAdmissionBudget::new(config.max_in_flight_requests),
         })
     }
 
@@ -140,7 +200,7 @@ impl ProxyHttp for GatewayProxy {
     async fn request_filter(
         &self,
         session: &mut Session,
-        _ctx: &mut Self::CTX,
+        ctx: &mut Self::CTX,
     ) -> pingora::Result<bool>
     where
         Self::CTX: Send + Sync,
@@ -151,6 +211,9 @@ impl ProxyHttp for GatewayProxy {
                 Ok(true)
             }
             _ => {
+                if ctx.admission.is_none() {
+                    ctx.admission = Some(self.admission_budget.acquire_or_reject()?);
+                }
                 self.reject_oversize_declared_body(session)?;
                 Ok(false)
             }
@@ -234,7 +297,7 @@ impl ProxyHttp for GatewayProxy {
 mod tests {
     use std::panic;
 
-    use super::register_counter;
+    use super::{register_counter, RequestAdmissionBudget};
 
     #[test]
     fn duplicate_metric_registration_fails_closed() {
@@ -245,5 +308,16 @@ mod tests {
         let duplicate = panic::catch_unwind(|| register_counter(name, help));
 
         assert!(duplicate.is_err());
+    }
+
+    #[test]
+    fn admission_budget_rejects_at_capacity_and_recovers_after_release() {
+        let budget = RequestAdmissionBudget::new(1);
+        let first = budget.acquire_or_reject().expect("first request is admitted");
+        assert!(budget.acquire_or_reject().is_err());
+
+        drop(first);
+
+        assert!(budget.acquire_or_reject().is_ok());
     }
 }
