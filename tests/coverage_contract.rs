@@ -15,7 +15,7 @@ fn stable_production_coverage_is_gated_at_one_hundred_percent() {
     for required in [
         "cargo install cargo-llvm-cov --version 0.9.0 --locked",
         "rustup component add llvm-tools-preview --toolchain 1.98.0",
-        "cargo llvm-cov --all-targets --locked --fail-under-lines 100 --fail-under-regions 100",
+        "cargo llvm-cov --all-targets --locked --show-missing-lines --fail-under-lines 100 --fail-under-regions 100",
     ] {
         assert!(
             workflow.contains(required),
