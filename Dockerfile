@@ -10,14 +10,17 @@ COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 RUN cargo build --locked --release --bin cwl-pingora-gateway
 
-# Debian 12 distroless reaches the end of its supported image line in September 2026. The
-# Debian 13 `cc` image is the narrow runtime intended for dynamically linked Rust/C-family
-# binaries: it adds libgcc and its dependencies to distroless/base without restoring a shell,
-# package manager, or unrelated userland. CI exercises this exact image read-only with all Linux
-# capabilities dropped; that caught the narrower `base` image's missing libgcc_s.so.1 before
-# release. The digest is immutable so dependency updates remain explicit reviewable changes.
-FROM gcr.io/distroless/cc-debian13:nonroot@sha256:d97bc0a941b8d4be647dc0ee75b264ddbb772f1ac5ba690a4309c00723b23775 AS runtime
+# Pingora's pinned `pingora-openssl` dependency enables the OpenSSL crate's `vendored` feature, so
+# the gateway binary does not require Debian's libssl at runtime. Keep the runtime on distroless
+# `base-nossl` rather than carrying an unused libssl package and its unrelated QUIC-server attack
+# surface. The current Rust binary does require libgcc_s for unwinding; copy that single runtime
+# library from the already-pinned build environment instead of widening the final image to the
+# distroless `cc` package set. CI starts the exact image under read-only/rootless restrictions and
+# the supply-chain workflow scans the final image fail-closed for HIGH/CRITICAL vulnerabilities.
+# The base-nossl digest is the Debian 13 nonroot image also pinned by Envoy 1.39.1 (2026-08-27).
+FROM gcr.io/distroless/base-nossl-debian13:nonroot@sha256:5cab74e7f8a5e7c5f1c8a9e6268b1f352f053c36c656f493308340bcecbc636c AS runtime
 
+COPY --from=builder /usr/lib/x86_64-linux-gnu/libgcc_s.so.1 /usr/lib/x86_64-linux-gnu/libgcc_s.so.1
 COPY --from=builder /src/target/release/cwl-pingora-gateway /usr/local/bin/cwl-pingora-gateway
 
 # The process requires no writable application directory. Operators can run the image with a
