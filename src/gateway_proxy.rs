@@ -11,7 +11,7 @@ use log::info;
 use pingora::prelude::{
     Error, ErrorType, HttpPeer, ProxyHttp, RequestHeader, ResponseHeader, Session,
 };
-use prometheus::{register_int_counter, IntCounter};
+use pingora_prometheus::prometheus::{register_int_counter, IntCounter};
 use thiserror::Error;
 
 use crate::edge_contract::{GatewayConfig, GatewayConfigError, UpstreamConfig};
