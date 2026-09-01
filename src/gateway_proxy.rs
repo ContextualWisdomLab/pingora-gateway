@@ -8,14 +8,12 @@ use std::sync::LazyLock;
 use async_trait::async_trait;
 use bytes::Bytes;
 use log::info;
-use pingora::prelude::{
-    Error, ErrorType, HttpPeer, ProxyHttp, RequestHeader, ResponseHeader, Session,
-};
+use pingora::prelude::{Error, ErrorType, HttpPeer, ProxyHttp, RequestHeader, ResponseHeader, Session};
 use pingora_prometheus::prometheus::{register_int_counter, IntCounter};
 use thiserror::Error;
 
-use crate::edge_contract::{GatewayConfig, GatewayConfigError, UpstreamConfig};
-use crate::pingora_delivery::build_peer;
+use crate::edge_contract::{GatewayConfig, GatewayConfigError};
+use crate::pingora_delivery::build_peer_from_validated;
 
 /// Stable process-local liveness endpoint.
 pub const LIVENESS_PATH: &str = "/livez";
@@ -63,32 +61,29 @@ pub enum GatewayProxyError {
 /// Pingora HTTP application backed by one explicitly configured upstream.
 #[derive(Debug, Clone)]
 pub struct GatewayProxy {
-    upstream: UpstreamConfig,
+    upstream_peer: HttpPeer,
     max_request_body_bytes: u64,
 }
 
 impl GatewayProxy {
     /// Builds the version-1 delivery adapter from a validated edge configuration.
     ///
-    /// Contract validation owns upstream-count and network-authority rules. The adapter only
-    /// copies admitted values into Pingora-facing state.
+    /// Contract validation owns upstream-count and network-authority rules. The adapter constructs
+    /// immutable Pingora transport state once during activation rather than repeating validation on
+    /// every proxied request.
     pub fn try_from_config(config: &GatewayConfig) -> std::result::Result<Self, GatewayProxyError> {
         config.validate()?;
-        let upstream = config
-            .upstreams
-            .first()
-            .cloned()
-            .ok_or(GatewayConfigError::NoUpstreams)?;
+        let upstream = &config.upstreams[0];
 
         Ok(Self {
-            upstream,
+            upstream_peer: build_peer_from_validated(upstream),
             max_request_body_bytes: config.max_request_body_bytes,
         })
     }
 
-    /// Constructs a fresh Pingora peer using the versioned upstream network-authority contract.
-    pub fn build_upstream_peer(&self) -> std::result::Result<HttpPeer, GatewayConfigError> {
-        build_peer(&self.upstream)
+    /// Returns a fresh clone of the prevalidated Pingora peer for one upstream connection attempt.
+    pub fn build_upstream_peer(&self) -> HttpPeer {
+        self.upstream_peer.clone()
     }
 
     async fn respond_healthy(session: &mut Session) -> pingora::Result<()> {
@@ -180,13 +175,7 @@ impl ProxyHttp for GatewayProxy {
         _session: &mut Session,
         _ctx: &mut Self::CTX,
     ) -> pingora::Result<Box<HttpPeer>> {
-        self.build_upstream_peer().map(Box::new).map_err(|error| {
-            Error::because(
-                ErrorType::InternalError,
-                "validated edge contract could not construct upstream peer",
-                error,
-            )
-        })
+        Ok(Box::new(self.build_upstream_peer()))
     }
 
     async fn upstream_request_filter(
