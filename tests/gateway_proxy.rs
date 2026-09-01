@@ -27,6 +27,7 @@ fn version_one_proxy_builds_the_configured_peer_without_hidden_defaults() {
     let config = GatewayConfig {
         version: 1,
         listener: SocketAddr::from(([127, 0, 0, 1], 6188)),
+        metrics_listener: SocketAddr::from(([127, 0, 0, 1], 6192)),
         max_request_body_bytes: 1_048_576,
         upstreams: vec![upstream("api", 8080)],
     };
