@@ -211,12 +211,8 @@ impl ProxyHttp for GatewayProxy {
         Ok(())
     }
 
-    async fn logging(
-        &self,
-        session: &mut Session,
-        error: Option<&Error>,
-        ctx: &mut Self::CTX,
-    ) where
+    async fn logging(&self, session: &mut Session, error: Option<&Error>, ctx: &mut Self::CTX)
+    where
         Self::CTX: Send + Sync,
     {
         let status = session
