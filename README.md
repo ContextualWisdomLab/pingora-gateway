@@ -41,6 +41,12 @@ Consumers should not need to import or reason about Pingora-specific types merel
 
 Architecture, onboarding, release, and operational documents should be added here as implementation lands and reviewed evidence exists.
 
-## Release and licensing truth
+## Release truth
 
-There is currently no published GitHub release and no root source license file on protected `main`. Do not infer production readiness, redistribution terms, customer deployment, or support status from the repository name or scaffold alone. Those claims require explicit source, license, release, and deployment evidence.
+There is currently no published GitHub release or production deployment evidence. Do not infer production readiness, customer deployment, or support status from the repository name or scaffold alone; those claims require protected source, immutable release artifacts, deployment evidence, and live verification.
+
+## License
+
+Pingora Gateway original source and documentation are licensed under the [Apache License 2.0](LICENSE) on this branch. The repository history is an organization-owned initialization lineage with no imported runtime source, vendored code, package manifest, submodule, or third-party asset in protected `main` that imposes a conflicting outbound source license.
+
+Cloudflare Pingora is an upstream dependency/framework with its own Apache-2.0 license and remains separately attributed under its upstream terms. Future crates, copied code, assets, datasets, rules, or other inbound components must independently satisfy ContextualWisdomLab's commercial-use and attribution policy before incorporation; their licenses are not replaced by this repository's source grant.
