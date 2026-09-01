@@ -12,7 +12,9 @@ Run `cwl-pingora-gateway --config /path/to/gateway.yaml`. Configuration is read 
 
 Version 1 does not inherit Pingora's retry or drain defaults. `src/runtime_policy.rs` sets Pingora's `max_retries` field to `1`; in the pinned proxy loop that value means one total upstream attempt, so the generic edge performs no automatic retry. Retry policy requires request-idempotency knowledge and stays with a later explicit contract rather than being inferred by the gateway.
 
-SIGTERM uses Pingora graceful termination with an explicit 5-second grace period followed by a 30-second runtime-shutdown timeout. These values are bounded process policy, not Pingora framework defaults. The repository still lacks its own exact in-flight SIGTERM GREEN test, so graceful-drain behavior remains a release gap even though the configured timing is now deterministic.
+SIGTERM uses Pingora graceful termination with an explicit 5-second request-drain grace period and a 10-second runtime-shutdown timeout. The pinned Pingora server calls Tokio `Runtime::shutdown_timeout` with that timeout and then sleeps for the same timeout while service runtimes are shut down in parallel. The v1 policy therefore requires a 30-second supervisor hard-kill budget: its modeled worst-case Pingora process budget is 25 seconds plus scheduler/process-exit overhead. A Kubernetes-style deployment must set `terminationGracePeriodSeconds` to at least 30 or provide an equivalent supervisor budget; a shorter external kill deadline is not an admitted deployment contract.
+
+`tests/graceful_shutdown.rs` exercises the compiled binary with a held upstream response, sends SIGTERM only after the request is in flight, requires the response to finish during the 5-second grace period, and requires clean process exit before the 30-second supervisor budget. This test must be terminal-success on the exact release candidate; predecessor-head success never transfers.
 
 ## Container
 
