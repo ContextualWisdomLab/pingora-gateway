@@ -91,9 +91,16 @@ impl GatewayProxy {
     }
 
     async fn respond_healthy(session: &mut Session) -> pingora::Result<()> {
-        let mut response = ResponseHeader::build(200, None)?;
-        response.insert_header("Content-Length", "0")?;
-        response.insert_header("Cache-Control", "no-store")?;
+        // These literals are compile-time gateway invariants, not runtime inputs. Treat failure to
+        // construct them as a programmer defect while preserving the real downstream write result.
+        let mut response = ResponseHeader::build(200, None)
+            .expect("literal HTTP 200 response header must be valid");
+        response
+            .insert_header("Content-Length", "0")
+            .expect("literal Content-Length response header must be valid");
+        response
+            .insert_header("Cache-Control", "no-store")
+            .expect("literal Cache-Control response header must be valid");
         session
             .write_response_header(Box::new(response), true)
             .await
