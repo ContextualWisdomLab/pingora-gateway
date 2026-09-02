@@ -4,7 +4,7 @@
 
 Configuration files, downstream requests, forwarding headers, upstream certificates, and deployment inputs are untrusted. Operators must protect configuration write access. V1 has no secret-bearing configuration field; credentials must not be added casually to the YAML contract.
 
-The gateway contacts only the socket address admitted at startup. It is not a forward proxy and accepts no request-controlled upstream URI, preventing this runtime from becoming a generic SSRF primitive.
+The gateway contacts only the socket address admitted at startup. It is not a forward proxy and accepts no request-controlled upstream URI, preventing this runtime from becoming a generic SSRF primitive. Admitted upstream transport authority must also remain separate from the gateway's own traffic and metrics listeners. Effective overlap is checked with the same conservative wildcard/dual-stack semantics used for listener collision, so an operator cannot configure an origin that recursively points application traffic back into the gateway listener or exposes the internal Prometheus service by selecting the metrics socket as an upstream. Distinct concrete IP authorities on the same port remain valid; this invariant does not create product routing policy.
 
 HTTPS upstreams use certificate and hostname verification with an explicit SNI. An operator may additionally provide an absolute `trust_bundle_file`; the process reads and parses that PEM bundle before opening listeners and fails closed on missing, empty, or malformed material. This is trust-anchor consumption only. Certificate issuance, rotation, revocation workflow, downstream TLS termination, ACME, and key custody remain with their canonical owners and are not absorbed into the gateway.
 
