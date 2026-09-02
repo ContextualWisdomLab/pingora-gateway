@@ -12,6 +12,8 @@
 
 **Request-body budget** — the maximum number of downstream body bytes admitted for one request.
 
+**Protocol transition** — a connection-wide change from HTTP/1.1 to another protocol, signaled by HTTP `Upgrade` semantics. Generic v1 and the bounded pg-erd candidate do not admit protocol transitions; WebSocket or another upgraded protocol requires a separate versioned consumer-derived contract. HTTP/2 Extended CONNECT and HTTP/3 mechanisms are distinct contracts rather than aliases for HTTP/1 Upgrade.
+
 **Delivery adapter** — Pingora-specific code that realizes an admitted edge contract. It may not define product domain rules.
 
 **Liveness** — evidence that the serving process can answer through Pingora.
