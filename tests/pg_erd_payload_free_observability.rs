@@ -5,6 +5,7 @@
 //! vocabulary. This contract proves that boundary through the compiled migration process while
 //! sensitive request material is actually present on the proxied request path.
 
+use std::fs;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::process::{Child, Command, Stdio};
@@ -13,22 +14,53 @@ use std::time::{Duration, Instant};
 
 use tempfile::NamedTempFile;
 
-struct GatewayProcess(Option<Child>);
+struct GatewayProcess {
+    child: Option<Child>,
+    stderr: NamedTempFile,
+}
 
 impl GatewayProcess {
+    fn wait_until_stderr_contains(&mut self, needle: &str) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let captured = fs::read_to_string(self.stderr.path())
+                .expect("gateway stderr capture should remain readable");
+            if captured.contains(needle) {
+                return;
+            }
+            if let Some(status) = self
+                .child
+                .as_mut()
+                .expect("gateway child should still be owned")
+                .try_wait()
+                .expect("gateway process state should be readable")
+            {
+                panic!("gateway exited before expected log {needle:?}: {status}; stderr={captured:?}");
+            }
+            assert!(
+                Instant::now() < deadline,
+                "gateway did not emit expected log {needle:?} within 10s; stderr={captured:?}"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+
     fn capture_stderr(mut self) -> String {
-        let mut child = self.0.take().expect("gateway child should still be owned");
+        let mut child = self
+            .child
+            .take()
+            .expect("gateway child should still be owned");
         child.kill().expect("gateway should be terminable after traffic");
-        let output = child
-            .wait_with_output()
-            .expect("gateway output should be collectable after termination");
-        String::from_utf8(output.stderr).expect("gateway log output should be UTF-8")
+        child
+            .wait()
+            .expect("gateway should terminate after traffic capture");
+        fs::read_to_string(self.stderr.path()).expect("gateway log output should be UTF-8")
     }
 }
 
 impl Drop for GatewayProcess {
     fn drop(&mut self) {
-        if let Some(child) = self.0.as_mut() {
+        if let Some(child) = self.child.as_mut() {
             let _ = child.kill();
             let _ = child.wait();
         }
@@ -79,17 +111,24 @@ fn start_gateway(
     gateway_address: SocketAddr,
     metrics_address: SocketAddr,
 ) -> GatewayProcess {
+    let stderr = NamedTempFile::new().expect("gateway stderr capture should be writable");
+    let stderr_writer = stderr
+        .reopen()
+        .expect("gateway stderr capture should be reopenable for the child");
     let mut child = Command::new(env!("CARGO_BIN_EXE_cwl-pingora-pg-erd-migration"))
         .args(["--config", config.path().to_str().expect("UTF-8 temp path")])
         .env("RUST_LOG", "cwl_pingora_gateway::observability=info")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::from(stderr_writer))
         .spawn()
         .expect("compiled pg-erd migration binary should start");
     wait_until_listening(gateway_address, &mut child);
     wait_until_listening(metrics_address, &mut child);
-    GatewayProcess(Some(child))
+    GatewayProcess {
+        child: Some(child),
+        stderr,
+    }
 }
 
 fn raw_request(address: SocketAddr, request: &[u8]) -> String {
@@ -153,7 +192,7 @@ fn compiled_pg_erd_shared_access_log_excludes_request_sensitive_material() {
         backend_address,
         frontend_address,
     );
-    let process = start_gateway(&config, gateway_address, metrics_address);
+    let mut process = start_gateway(&config, gateway_address, metrics_address);
 
     let response = raw_request(
         gateway_address,
@@ -173,7 +212,10 @@ fn compiled_pg_erd_shared_access_log_excludes_request_sensitive_material() {
     );
     assert!(
         metrics.contains("cwl_pingora_gateway_requests_total 1"),
-        "metrics scrape should prove the proxied request reached shared completion recording before log capture: {metrics:?}"
+        "metrics scrape should prove the proxied request reached shared completion recording: {metrics:?}"
+    );
+    process.wait_until_stderr_contains(
+        "gateway_request status=200 outcome=ok request_body_bytes=0",
     );
 
     let stderr = process.capture_stderr();
