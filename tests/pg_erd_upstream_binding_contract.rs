@@ -1,8 +1,9 @@
-use pingora_gateway::edge_contract::{UpstreamConfig, UpstreamTimeouts};
+use pingora_gateway::edge_contract::{GatewayConfigError, UpstreamConfig, UpstreamTimeouts};
 use pingora_gateway::edge_routing::{RouteMatch, RouteRule};
 use pingora_gateway::http_policy::ResponseHeaderRule;
 use pingora_gateway::migration_delivery::{MigrationDeliveryError, MigrationDeliveryPlan};
 use pingora_gateway::migration_plan::EdgeMigrationPlan;
+use pingora_gateway::pingora_delivery::PeerBuildError;
 
 fn pg_erd_plan() -> EdgeMigrationPlan {
     EdgeMigrationPlan::try_new(
@@ -62,11 +63,12 @@ fn pg_erd_plan_binds_only_complete_explicit_transport_authority() {
     )
     .expect("both characterized upstreams have explicit transport authority");
 
+    assert_eq!(delivery.upstream_count(), 2);
     assert_eq!(delivery.select_upstream_name("/healthz"), Some("backend"));
     assert_eq!(delivery.select_upstream_name("/api/items"), Some("backend"));
     assert_eq!(delivery.select_upstream_name("/apiary"), Some("backend"));
     assert_eq!(delivery.select_upstream_name("/"), Some("frontend"));
-    assert!(delivery.build_upstream_peer("/api/items").unwrap().is_some());
+    assert!(delivery.build_upstream_peer("/api/items").is_some());
     assert_eq!(
         delivery.response_header_value("x-content-type-options"),
         Some("nosniff")
@@ -115,6 +117,30 @@ fn pg_erd_plan_rejects_duplicate_transport_authority() {
         error,
         MigrationDeliveryError::DuplicateConfiguredUpstream {
             upstream_name: "backend".to_string(),
+        }
+    );
+}
+
+#[test]
+fn pg_erd_plan_rejects_invalid_admitted_transport_before_activation() {
+    let mut invalid_backend = upstream("backend", 8000);
+    invalid_backend.tls = true;
+
+    let error = MigrationDeliveryPlan::try_new(
+        pg_erd_plan(),
+        vec![invalid_backend, upstream("frontend", 3000)],
+    )
+    .expect_err("admitted identity does not bypass TLS transport validation");
+
+    assert_eq!(
+        error,
+        MigrationDeliveryError::UpstreamActivation {
+            upstream_name: "backend".to_string(),
+            source: PeerBuildError::InvalidConfiguration(
+                GatewayConfigError::MissingTlsServerName {
+                    upstream_name: "backend".to_string(),
+                }
+            ),
         }
     );
 }
