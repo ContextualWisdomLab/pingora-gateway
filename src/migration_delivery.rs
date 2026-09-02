@@ -6,7 +6,7 @@
 //! peer must come from an explicit [`UpstreamConfig`] whose stable name is already authority in the
 //! transport-neutral migration plan.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use pingora::prelude::HttpPeer;
 use thiserror::Error;
@@ -80,10 +80,11 @@ impl MigrationDeliveryPlan {
             });
         }
 
+        let mut configured_names = HashSet::with_capacity(actual);
         let mut peers = HashMap::with_capacity(actual);
         for upstream in upstreams {
             let upstream_name = upstream.name.trim().to_string();
-            if peers.contains_key(&upstream_name) {
+            if !configured_names.insert(upstream_name.clone()) {
                 return Err(MigrationDeliveryError::DuplicateConfiguredUpstream {
                     upstream_name,
                 });
