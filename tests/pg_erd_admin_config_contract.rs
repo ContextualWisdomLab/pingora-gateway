@@ -76,7 +76,7 @@ fn pg_erd_admin_config_builds_only_the_characterized_migration_runtime() {
 }
 
 #[test]
-fn pg_erd_admin_config_rejects_listener_collision_and_zero_keepalive() {
+fn pg_erd_admin_config_rejects_listener_collision_and_zero_capacity_budgets() {
     let listener_collision = valid_yaml().replace(
         "metrics_listener: 127.0.0.1:9090",
         "metrics_listener: 127.0.0.1:8080",
@@ -94,6 +94,17 @@ fn pg_erd_admin_config_rejects_listener_collision_and_zero_keepalive() {
         PgErdMigrationConfig::from_yaml(&zero_keepalive),
         Err(PgErdMigrationConfigError::InvalidUpstreamKeepalivePoolSize)
     );
+
+    for (field, value) in [
+        ("max_request_body_bytes: 1048576", "max_request_body_bytes: 0"),
+        ("max_in_flight_requests: 128", "max_in_flight_requests: 0"),
+    ] {
+        let invalid = valid_yaml().replace(field, value);
+        assert!(matches!(
+            PgErdMigrationConfig::from_yaml(&invalid),
+            Err(PgErdMigrationConfigError::RuntimeIsolation(_))
+        ));
+    }
 }
 
 #[test]
@@ -144,6 +155,19 @@ fn pg_erd_admin_config_rejects_missing_extra_duplicate_or_renamed_transport_auth
             upstream_name: "api".to_string(),
         })
     );
+}
+
+#[test]
+fn pg_erd_admin_config_rejects_invalid_concrete_transport_contract() {
+    let invalid = valid_yaml().replacen(
+        "    tls: false\n",
+        "    tls: false\n    sni: attacker.example\n",
+        1,
+    );
+    assert!(matches!(
+        PgErdMigrationConfig::from_yaml(&invalid),
+        Err(PgErdMigrationConfigError::UpstreamConfiguration(_))
+    ));
 }
 
 #[test]
