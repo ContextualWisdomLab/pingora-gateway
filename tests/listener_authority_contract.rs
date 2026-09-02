@@ -23,26 +23,37 @@ upstreams:
 }
 
 #[test]
-fn generic_gateway_rejects_wildcard_listener_aliases_on_the_same_port() {
+fn generic_gateway_rejects_overlapping_listener_authority() {
     for (listener, metrics_listener) in [
+        ("127.0.0.1:6188", "127.0.0.1:6188"),
         ("0.0.0.0:6188", "127.0.0.1:6188"),
         ("127.0.0.1:6188", "0.0.0.0:6188"),
+        ("[::1]:6188", "[::1]:6188"),
         ("[::]:6188", "[::1]:6188"),
+        ("[::1]:6188", "[::]:6188"),
         ("[::]:6188", "127.0.0.1:6188"),
+        ("127.0.0.1:6188", "[::]:6188"),
     ] {
         assert_eq!(
             GatewayConfig::from_yaml(&generic_gateway_yaml(listener, metrics_listener)),
             Err(GatewayConfigError::ListenerCollision),
-            "wildcard listener authority must not overlap metrics authority: {listener} vs {metrics_listener}"
+            "overlapping listener authority must fail closed: {listener} vs {metrics_listener}"
         );
     }
+}
 
-    assert!(
-        GatewayConfig::from_yaml(&generic_gateway_yaml(
-            "127.0.0.1:6188",
-            "127.0.0.2:6188"
-        ))
-        .is_ok(),
-        "distinct concrete IP authorities on the same port must remain configurable"
-    );
+#[test]
+fn generic_gateway_preserves_distinct_listener_authority() {
+    for (listener, metrics_listener) in [
+        ("127.0.0.1:6188", "127.0.0.2:6188"),
+        ("[::1]:6188", "[::2]:6188"),
+        ("[::1]:6188", "127.0.0.1:6188"),
+        ("127.0.0.1:6188", "[::1]:6188"),
+        ("0.0.0.0:6188", "127.0.0.1:6192"),
+    ] {
+        assert!(
+            GatewayConfig::from_yaml(&generic_gateway_yaml(listener, metrics_listener)).is_ok(),
+            "distinct socket authorities must remain configurable: {listener} vs {metrics_listener}"
+        );
+    }
 }
