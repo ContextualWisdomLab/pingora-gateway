@@ -13,6 +13,7 @@ use std::io::{ErrorKind, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::os::fd::AsRawFd;
 use std::process::{Child, Command, Stdio};
+use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -123,9 +124,10 @@ fn raw_request(address: SocketAddr, request: &[u8]) -> String {
     response
 }
 
-fn raw_request_until_terminal(
+fn raw_request_until_committed_then_reset(
     address: SocketAddr,
     request: &[u8],
+    reset_release: mpsc::Sender<()>,
 ) -> (Vec<u8>, DownstreamTermination) {
     let mut downstream = TcpStream::connect(address).expect("gateway should accept traffic");
     downstream
@@ -137,10 +139,32 @@ fn raw_request_until_terminal(
 
     let mut response = Vec::new();
     let mut buffer = [0_u8; 1024];
+    let mut reset_released = false;
     loop {
         match downstream.read(&mut buffer) {
             Ok(0) => return (response, DownstreamTermination::Eof),
-            Ok(read) => response.extend_from_slice(&buffer[..read]),
+            Ok(read) => {
+                response.extend_from_slice(&buffer[..read]);
+                if !reset_released {
+                    if let Some(header_end) = response
+                        .windows(4)
+                        .position(|window| window == b"\r\n\r\n")
+                        .map(|position| position + 4)
+                    {
+                        if response.len() >= header_end + b"partial".len() {
+                            assert_eq!(
+                                &response[header_end..header_end + b"partial".len()],
+                                b"partial",
+                                "downstream must observe the committed body prefix before reset"
+                            );
+                            reset_release
+                                .send(())
+                                .expect("backend reset fixture should still await release");
+                            reset_released = true;
+                        }
+                    }
+                }
+            }
             Err(error) if error.kind() == ErrorKind::ConnectionReset => {
                 return (response, DownstreamTermination::ConnectionReset);
             }
@@ -198,6 +222,7 @@ fn reset_on_close(stream: &TcpStream) {
 fn compiled_pg_erd_post_commit_reset_preserves_committed_status_and_independent_routing() {
     let backend = TcpListener::bind("127.0.0.1:0").expect("backend fixture should bind");
     let backend_address = backend.local_addr().expect("backend address should exist");
+    let (reset_release, reset_wait) = mpsc::channel();
     let backend_origin = thread::spawn(move || {
         let (mut stream, _) = backend
             .accept()
@@ -211,10 +236,12 @@ fn compiled_pg_erd_post_commit_reset_preserves_committed_status_and_independent_
             )
             .expect("committed backend response should be writable");
 
-        // Give the loopback proxy enough time to observe and forward the committed header/body
-        // before making the origin close abortive. The test then distinguishes the reset from the
-        // orderly truncation fixture without relying on a gateway inactivity timeout.
-        thread::sleep(Duration::from_millis(150));
+        // The origin abort is released only after the downstream has observed the committed header
+        // and body prefix. This makes the transport phase causal instead of relying on a sleep that
+        // can race scheduler or socket-buffer timing on loaded CI runners.
+        reset_wait
+            .recv_timeout(Duration::from_secs(10))
+            .expect("downstream should observe the committed prefix before fixture timeout");
         reset_on_close(&stream);
         drop(stream);
     });
@@ -244,9 +271,10 @@ fn compiled_pg_erd_post_commit_reset_preserves_committed_status_and_independent_
     );
     let _process = start_gateway(&config, gateway_address, metrics_address);
 
-    let (partial, termination) = raw_request_until_terminal(
+    let (partial, termination) = raw_request_until_committed_then_reset(
         gateway_address,
         b"GET /api/post-commit-reset HTTP/1.1\r\nHost: app.example:8080\r\nConnection: close\r\n\r\n",
+        reset_release,
     );
     assert!(
         matches!(
