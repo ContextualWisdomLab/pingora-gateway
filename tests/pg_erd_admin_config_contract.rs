@@ -108,6 +108,37 @@ fn pg_erd_admin_config_rejects_listener_collision_and_zero_capacity_budgets() {
 }
 
 #[test]
+fn pg_erd_admin_config_rejects_wildcard_listener_aliases_on_the_same_port() {
+    for (listener, metrics_listener) in [
+        ("0.0.0.0:8080", "127.0.0.1:8080"),
+        ("127.0.0.1:8080", "0.0.0.0:8080"),
+        ("[::]:8080", "[::1]:8080"),
+        ("[::]:8080", "127.0.0.1:8080"),
+    ] {
+        let invalid = valid_yaml()
+            .replace("listener: 127.0.0.1:8080", &format!("listener: {listener}"))
+            .replace(
+                "metrics_listener: 127.0.0.1:9090",
+                &format!("metrics_listener: {metrics_listener}"),
+            );
+        assert_eq!(
+            PgErdMigrationConfig::from_yaml(&invalid),
+            Err(PgErdMigrationConfigError::ListenerCollision),
+            "wildcard listener authority must not overlap metrics authority: {listener} vs {metrics_listener}"
+        );
+    }
+
+    let distinct_specific_addresses = valid_yaml().replace(
+        "metrics_listener: 127.0.0.1:9090",
+        "metrics_listener: 127.0.0.2:8080",
+    );
+    assert!(
+        PgErdMigrationConfig::from_yaml(&distinct_specific_addresses).is_ok(),
+        "distinct concrete IP authorities on the same port must remain configurable"
+    );
+}
+
+#[test]
 fn pg_erd_admin_config_rejects_zero_port_network_authority() {
     let zero_listener = valid_yaml().replace(
         "listener: 127.0.0.1:8080",
