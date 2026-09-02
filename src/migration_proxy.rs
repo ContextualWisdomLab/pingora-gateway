@@ -97,7 +97,7 @@ impl MigrationGatewayProxy {
     /// Applies every characterized edge-owned response header using replacement semantics.
     pub fn apply_response_headers(&self, response: &mut ResponseHeader) -> pingora::Result<()> {
         for rule in self.delivery.response_header_rules() {
-            response.insert_header(rule.name.as_str(), rule.value.as_str())?;
+            response.insert_header(rule.name.clone(), rule.value.as_str())?;
         }
         Ok(())
     }
