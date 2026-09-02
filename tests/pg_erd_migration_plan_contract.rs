@@ -1,6 +1,6 @@
-use pingora_gateway::edge_routing::{RouteMatch, RoutePolicyError, RouteRule};
-use pingora_gateway::http_policy::{HeaderPolicyError, ResponseHeaderRule};
-use pingora_gateway::migration_plan::{EdgeMigrationPlan, MigrationPlanError};
+use cwl_pingora_gateway::edge_routing::{RouteMatch, RoutePolicyError, RouteRule};
+use cwl_pingora_gateway::http_policy::{HeaderPolicyError, ResponseHeaderRule};
+use cwl_pingora_gateway::migration_plan::{EdgeMigrationPlan, MigrationPlanError};
 
 fn pg_erd_routes() -> Vec<RouteRule> {
     vec![
