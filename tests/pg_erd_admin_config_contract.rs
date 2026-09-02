@@ -108,6 +108,38 @@ fn pg_erd_admin_config_rejects_listener_collision_and_zero_capacity_budgets() {
 }
 
 #[test]
+fn pg_erd_admin_config_rejects_zero_port_network_authority() {
+    let zero_listener = valid_yaml().replace(
+        "listener: 127.0.0.1:8080",
+        "listener: 127.0.0.1:0",
+    );
+    assert_eq!(
+        PgErdMigrationConfig::from_yaml(&zero_listener),
+        Err(PgErdMigrationConfigError::ZeroListenerPort)
+    );
+
+    let zero_metrics = valid_yaml().replace(
+        "metrics_listener: 127.0.0.1:9090",
+        "metrics_listener: 127.0.0.1:0",
+    );
+    assert_eq!(
+        PgErdMigrationConfig::from_yaml(&zero_metrics),
+        Err(PgErdMigrationConfigError::ZeroMetricsListenerPort)
+    );
+
+    let zero_backend = valid_yaml().replace(
+        "    address: 127.0.0.1:8000",
+        "    address: 127.0.0.1:0",
+    );
+    assert_eq!(
+        PgErdMigrationConfig::from_yaml(&zero_backend),
+        Err(PgErdMigrationConfigError::ZeroTransportAuthorityPort {
+            upstream_name: "backend".to_string(),
+        })
+    );
+}
+
+#[test]
 fn pg_erd_admin_config_rejects_missing_extra_duplicate_or_renamed_transport_authority() {
     let only_backend = config_yaml(&upstream_yaml("backend", 8000));
     assert_eq!(
