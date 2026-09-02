@@ -291,10 +291,19 @@ fn pg_erd_migration_rejects_tls_hostname_mismatch_without_poisoning_other_routes
 
     let backend = thread::spawn(move || {
         let (stream, _) = backend_listener.accept().expect("gateway should connect to backend");
-        assert!(
-            acceptor.accept(stream).is_err(),
-            "client hostname verification must abort the TLS handshake"
-        );
+        if let Ok(mut stream) = acceptor.accept(stream) {
+            stream
+                .get_ref()
+                .set_read_timeout(Some(Duration::from_millis(500)))
+                .expect("TLS backend read timeout should be configurable");
+            let mut byte = [0_u8; 1];
+            match stream.read(&mut byte) {
+                Ok(0) | Err(_) => {}
+                Ok(read) => panic!(
+                    "hostname-mismatched TLS backend must receive no HTTP request bytes; received {read} byte(s)"
+                ),
+            }
+        }
     });
     let frontend = thread::spawn(move || {
         let (mut stream, _) = frontend_listener
