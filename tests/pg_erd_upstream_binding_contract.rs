@@ -68,11 +68,14 @@ fn pg_erd_plan_binds_only_complete_explicit_transport_authority() {
     assert_eq!(delivery.select_upstream_name("/api/items"), Some("backend"));
     assert_eq!(delivery.select_upstream_name("/apiary"), Some("backend"));
     assert_eq!(delivery.select_upstream_name("/"), Some("frontend"));
+    assert_eq!(delivery.select_upstream_name("relative"), None);
     assert!(delivery.build_upstream_peer("/api/items").is_some());
+    assert!(delivery.build_upstream_peer("relative").is_none());
     assert_eq!(
         delivery.response_header_value("x-content-type-options"),
         Some("nosniff")
     );
+    assert_eq!(delivery.response_header_value("server"), None);
 }
 
 #[test]
