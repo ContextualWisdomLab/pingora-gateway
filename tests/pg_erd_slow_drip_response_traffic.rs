@@ -1,7 +1,7 @@
 //! Real-listener RED→GREEN contract for a pg-erd upstream that continuously drips response-body bytes.
 //!
 //! Pingora's peer `read_timeout` is an inactivity timeout that resets after each successful read.
-//! This fixture therefore keeps each origin write inside `read_ms` while extending the response
+//! This fixture therefore keeps each origin write well inside `read_ms` while extending the response
 //! beyond an explicit migration-owned response-body lifetime. The version-2 admin/runtime boundary
 //! must terminate that body without retrying or failing over after the response has been committed.
 
@@ -44,7 +44,7 @@ fn write_config(
     let mut file = NamedTempFile::new().expect("temporary config should be writable");
     writeln!(
         file,
-        "version: 2\nlistener: {listener}\nmetrics_listener: {metrics_listener}\nmax_request_body_bytes: 8\nmax_in_flight_requests: 8\nmax_upstream_response_body_ms: 300\nupstream_keepalive_pool_size: 4\nupstreams:\n  - name: backend\n    address: {backend}\n    tls: false\n    timeouts:\n      connection_ms: 200\n      total_connection_ms: 400\n      read_ms: 120\n      write_ms: 1000\n      idle_ms: 5000\n  - name: frontend\n    address: {frontend}\n    tls: false\n    timeouts:\n      connection_ms: 200\n      total_connection_ms: 400\n      read_ms: 1000\n      write_ms: 1000\n      idle_ms: 5000"
+        "version: 2\nlistener: {listener}\nmetrics_listener: {metrics_listener}\nmax_request_body_bytes: 8\nmax_in_flight_requests: 8\nmax_upstream_response_body_ms: 300\nupstream_keepalive_pool_size: 4\nupstreams:\n  - name: backend\n    address: {backend}\n    tls: false\n    timeouts:\n      connection_ms: 200\n      total_connection_ms: 400\n      read_ms: 500\n      write_ms: 1000\n      idle_ms: 5000\n  - name: frontend\n    address: {frontend}\n    tls: false\n    timeouts:\n      connection_ms: 200\n      total_connection_ms: 400\n      read_ms: 1000\n      write_ms: 1000\n      idle_ms: 5000"
     )
     .expect("migration config should be written");
     file
