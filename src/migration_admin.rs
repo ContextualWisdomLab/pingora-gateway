@@ -6,12 +6,12 @@
 //! widen arbitrary per-request network authority through configuration.
 
 use std::collections::HashSet;
-use std::net::{IpAddr, SocketAddr};
+use std::net::SocketAddr;
 
 use serde::Deserialize;
 use thiserror::Error;
 
-use crate::edge_contract::{GatewayConfigError, UpstreamConfig};
+use crate::edge_contract::{socket_authorities_overlap, GatewayConfigError, UpstreamConfig};
 use crate::edge_routing::{RouteMatch, RouteRule};
 use crate::http_policy::ResponseHeaderRule;
 use crate::migration_delivery::{MigrationDeliveryError, MigrationDeliveryPlan};
@@ -200,26 +200,6 @@ impl PgErdMigrationConfig {
     fn build_delivery(&self) -> Result<MigrationDeliveryPlan, PgErdMigrationConfigError> {
         MigrationDeliveryPlan::try_new(pg_erd_migration_plan(), self.upstreams.clone())
             .map_err(Into::into)
-    }
-}
-
-fn socket_authorities_overlap(listener: SocketAddr, metrics_listener: SocketAddr) -> bool {
-    if listener.port() != metrics_listener.port() {
-        return false;
-    }
-
-    match (listener.ip(), metrics_listener.ip()) {
-        (IpAddr::V4(listener_ip), IpAddr::V4(metrics_ip)) => {
-            listener_ip == metrics_ip || listener_ip.is_unspecified() || metrics_ip.is_unspecified()
-        }
-        (IpAddr::V6(listener_ip), IpAddr::V6(metrics_ip)) => {
-            listener_ip == metrics_ip || listener_ip.is_unspecified() || metrics_ip.is_unspecified()
-        }
-        (IpAddr::V6(ipv6), IpAddr::V4(_)) | (IpAddr::V4(_), IpAddr::V6(ipv6)) => {
-            // An IPv6 wildcard may also consume the IPv4 port on dual-stack platforms when
-            // IPV6_V6ONLY is disabled. Reject the platform-dependent authority before activation.
-            ipv6.is_unspecified()
-        }
     }
 }
 
