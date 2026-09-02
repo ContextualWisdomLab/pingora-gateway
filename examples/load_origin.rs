@@ -63,7 +63,7 @@ fn serve_connection(mut stream: TcpStream, response: &[u8]) -> io::Result<()> {
 
     loop {
         while let Some(header_end) = find_header_end(&buffered) {
-            buffered.drain(..header_end);
+            drop(buffered.drain(..header_end));
             stream.write_all(response)?;
             stream.flush()?;
         }
