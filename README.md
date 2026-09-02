@@ -1,5 +1,7 @@
 # Pingora Gateway
 
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/ContextualWisdomLab/pingora-gateway)
+
 **A shared Rust edge runtime for ContextualWisdomLab services that need a small, explicit reverse-proxy boundary.**
 
 Pingora Gateway centralizes edge concerns that should not be reimplemented independently by every product: upstream connection handling, bounded transport policy, request-size and in-flight limits, health/readiness, coarse telemetry, and container hardening. It is built on Cloudflare Pingora while exposing its own reviewed configuration contract to consumers instead of leaking Pingora types into product APIs.
@@ -114,6 +116,7 @@ Do not infer benchmark, production-traffic, certification, release, or migration
 
 ## Documentation map
 
+- [`docs/index.md`](docs/index.md) — compact public documentation landing source.
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — edge-runtime architecture and responsibility boundary.
 - [`CONTEXT_MAP.md`](CONTEXT_MAP.md) — DDD context ownership and external authorities.
 - [`UBIQUITOUS_LANGUAGE.md`](UBIQUITOUS_LANGUAGE.md) — domain terminology.
@@ -123,6 +126,8 @@ Do not infer benchmark, production-traffic, certification, release, or migration
 - [`OPERABILITY.md`](OPERABILITY.md) — runtime and operational guidance.
 - [`docs/product-technical-gap-baseline.md`](docs/product-technical-gap-baseline.md) — current gaps, evidence, and next acceptance boundaries.
 - [`docs/doctoring/TRACEABILITY.md`](docs/doctoring/TRACEABILITY.md) — primary-source traceability.
+
+`docs/index.md` is only a Pages source prerequisite. Its presence does not mean GitHub Pages is published; publication requires protected integration, repository-settings reconciliation, successful deployment, and live HTTPS verification.
 
 ## Contributing
 
