@@ -277,7 +277,7 @@ mod tests {
     use crate::runtime_isolation::{
         BodyLimitExceeded, RequestAdmissionBudget, RuntimeIsolationLimits,
     };
-    use pingora::prelude::ProxyHttp;
+    use pingora::prelude::{ErrorType, ProxyHttp};
 
     #[test]
     fn duplicate_metric_registration_fails_closed() {
@@ -316,7 +316,7 @@ mod tests {
             observed: 2,
             limit: 1,
         });
-        assert!(error.to_string().contains("413"));
+        assert_eq!(error.etype, ErrorType::HTTPStatus(413));
     }
 
     #[test]

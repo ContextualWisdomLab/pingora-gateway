@@ -222,6 +222,8 @@ impl ProxyHttp for MigrationGatewayProxy {
 
 #[cfg(test)]
 mod tests {
+    use pingora::prelude::ErrorType;
+
     use super::{
         body_rejection_to_pingora, unmatched_route_to_pingora, MigrationGatewayProxyError,
         MigrationRequestContext,
@@ -242,11 +244,11 @@ mod tests {
             observed: 2,
             limit: 1,
         });
-        assert!(body_error.to_string().contains("413"));
+        assert_eq!(body_error.etype, ErrorType::HTTPStatus(413));
 
         let route_error = unmatched_route_to_pingora(MigrationGatewayProxyError::UnmatchedRoute {
             request_path: "/missing".to_string(),
         });
-        assert!(route_error.to_string().contains("404"));
+        assert_eq!(route_error.etype, ErrorType::HTTPStatus(404));
     }
 }
