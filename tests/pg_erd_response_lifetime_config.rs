@@ -37,9 +37,7 @@ fn version_two_requires_and_preserves_an_explicit_positive_response_body_lifetim
             PG_ERD_RESPONSE_LIFETIME_CONFIG_VERSION,
             "",
         )),
-        Err(PgErdMigrationConfigError::UnsupportedVersion(
-            PG_ERD_RESPONSE_LIFETIME_CONFIG_VERSION,
-        ))
+        Err(PgErdMigrationConfigError::MissingUpstreamResponseBodyLifetime)
     );
 }
 
