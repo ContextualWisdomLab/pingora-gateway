@@ -18,6 +18,8 @@ The transport-neutral `http_policy` candidate characterizes edge-owned response 
 
 The production path emits coarse status/outcome/request-body-byte access logs and label-free Prometheus request/error/body-byte counters. It does not log Authorization, Proxy-Authorization, Cookie, Set-Cookie, request/response bodies, access tokens, configuration credentials, arbitrary headers, route values, trust-bundle contents, or other unbounded request-derived labels. Distributed tracing and richer bounded operability evidence remain release gaps.
 
+That guarantee applies to the whole gateway process, not only the CWL `observability` target. Operator-selected `RUST_LOG` verbosity is parsed normally, but records from Pingora-family dependency targets are passed through `logging_policy` before formatting: their message bodies are replaced with a static diagnostic marker while level and target remain observable. This prevents pinned-supplier debug/trace/error paths that format request URI, Host, headers, cookies, credentials, or other request-derived material from bypassing the gateway's data-minimization contract. Consumer/product loggers remain outside this process boundary and retain their own owners and policies.
+
 ## Supply chain
 
 Pingora and `pingora-prometheus` are pinned to one exact upstream commit and must be revalidated against current releases/advisories immediately before release. `Cargo.lock` is committed. Repository CI tests and lints with `--locked`, rejects lockfile mutation, and the OCI builder copies the reviewed lock and builds with `--locked`; any dependency-resolution drift therefore fails closed rather than silently rewriting release inputs.

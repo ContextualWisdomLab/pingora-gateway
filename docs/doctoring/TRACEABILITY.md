@@ -5,6 +5,7 @@ This file links material technical/security claims to primary standards or upstr
 | Claim | Source |
 | --- | --- |
 | Pingora server/proxy composition and graceful server lifecycle | Cloudflare Pingora source at pinned commit `09696b51bc59315353d96686355861604d0bb48c`, the protected upstream `main` head revalidated on 2026-09-03 |
+| Pinned Pingora diagnostics can contain request-derived data outside CWL's callback logging vocabulary: proxy TRACE formats the full downstream `RequestHeader`, the HTTP/1 client TRACE formats the serialized upstream request header, and Pingora request summaries contain method/path/Host | `pingora-proxy/src/lib.rs`, `pingora-core/src/protocols/http/v1/client.rs`, and `pingora-core/src/protocols/http/v1/server.rs` at pinned commit `09696b51bc59315353d96686355861604d0bb48c`; this is the source basis for process-wide Pingora diagnostic message redaction in `logging_policy` |
 | Pingora downstream sessions expose accepted client/server socket addresses; Pingora socket addresses expose IP socket values through `as_inet()` | `pingora-core/src/protocols/http/server.rs`, `pingora-proxy/tests/utils/server_utils.rs`, and `pingora-core/src/protocols/l4/socket.rs` at pinned commit `09696b51bc59315353d96686355861604d0bb48c`; these are the transport observations used by the pg-erd forwarding adapter |
 | Pingora's server default `max_retries` is 16, while the proxy loop copies that field and loops while its attempt counter is below the value | `pingora-core/src/server/configuration/mod.rs` and `pingora-proxy/src/lib.rs` at pinned commit `09696b51bc59315353d96686355861604d0bb48c`; CWL v1 therefore sets the field to `1` for one total attempt |
 | Graceful SIGTERM uses `grace_period_seconds` and `graceful_shutdown_timeout_seconds`, with framework fallbacks when unset | `pingora-core/src/server/mod.rs` and `pingora-core/src/server/configuration/mod.rs` at the pinned commit; CWL v1 sets 5 s grace and 10 s per-runtime graceful timeout explicitly inside a 30 s external termination budget |
@@ -49,6 +50,8 @@ Cloudflare. (n.d.). *Handling failures and failover* [Documentation, commit 0969
 Cloudflare. (n.d.). *Pingora HTTP/1 proxy implementation* [Source code, commit 09696b51bc59315353d96686355861604d0bb48c]. GitHub. https://github.com/cloudflare/pingora/blob/09696b51bc59315353d96686355861604d0bb48c/pingora-proxy/src/proxy_h1.rs
 
 Cloudflare. (n.d.). *Pingora HTTP/1 client session* [Source code, commit 09696b51bc59315353d96686355861604d0bb48c]. GitHub. https://github.com/cloudflare/pingora/blob/09696b51bc59315353d96686355861604d0bb48c/pingora-core/src/protocols/http/v1/client.rs
+
+Cloudflare. (n.d.). *Pingora HTTP/1 server session* [Source code, commit 09696b51bc59315353d96686355861604d0bb48c]. GitHub. https://github.com/cloudflare/pingora/blob/09696b51bc59315353d96686355861604d0bb48c/pingora-core/src/protocols/http/v1/server.rs
 
 Cloudflare. (n.d.). *Pingora HTTP/1 body framing* [Source code, commit 09696b51bc59315353d96686355861604d0bb48c]. GitHub. https://github.com/cloudflare/pingora/blob/09696b51bc59315353d96686355861604d0bb48c/pingora-core/src/protocols/http/v1/body.rs
 
