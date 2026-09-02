@@ -22,8 +22,11 @@ use crate::migration_plan::EdgeMigrationPlan;
 use crate::migration_proxy::MigrationGatewayProxy;
 use crate::runtime_isolation::{RuntimeIsolationConfigError, RuntimeIsolationLimits};
 
-/// Version of the bounded `pg-erd-cloud` migration admin configuration.
+/// Original bounded `pg-erd-cloud` migration configuration version without a body-lifetime budget.
 pub const PG_ERD_MIGRATION_CONFIG_VERSION: u32 = 1;
+
+/// Opt-in pg-erd configuration version that requires an explicit response-body lifetime budget.
+pub const PG_ERD_RESPONSE_LIFETIME_CONFIG_VERSION: u32 = 2;
 
 /// Fail-closed admin configuration for the characterized `pg-erd-cloud` migration runtime.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -34,6 +37,8 @@ pub struct PgErdMigrationConfig {
     metrics_listener: SocketAddr,
     max_request_body_bytes: u64,
     max_in_flight_requests: usize,
+    #[serde(default)]
+    max_upstream_response_body_ms: Option<u64>,
     upstream_keepalive_pool_size: usize,
     upstreams: Vec<UpstreamConfig>,
 }
@@ -47,6 +52,12 @@ pub enum PgErdMigrationConfigError {
     /// The configuration requests a migration-admin version this binary does not implement.
     #[error("unsupported pg-erd migration configuration version {0}")]
     UnsupportedVersion(u32),
+    /// Version 2 must state the response-body lifetime rather than inheriting a hidden default.
+    #[error("pg-erd migration config version 2 requires max_upstream_response_body_ms")]
+    MissingUpstreamResponseBodyLifetime,
+    /// Version 1 cannot silently acquire semantics introduced by the version-2 contract.
+    #[error("max_upstream_response_body_ms requires pg-erd migration config version 2")]
+    ResponseBodyLifetimeRequiresVersion2,
     /// A port-zero traffic listener would delegate the public authority to an ephemeral OS port.
     #[error("listener must use a non-zero port")]
     ZeroListenerPort,
@@ -121,6 +132,11 @@ impl PgErdMigrationConfig {
         self.metrics_listener
     }
 
+    /// Returns the explicit response-body lifetime when the version-2 contract is active.
+    pub fn max_upstream_response_body_ms(&self) -> Option<u64> {
+        self.max_upstream_response_body_ms
+    }
+
     /// Returns the validated Pingora upstream keepalive-pool budget.
     pub fn upstream_keepalive_pool_size(&self) -> usize {
         self.upstream_keepalive_pool_size
@@ -133,16 +149,23 @@ impl PgErdMigrationConfig {
     /// Any custom TLS trust bundle is read by Pingora delivery during this single materialization.
     pub fn build_proxy(&self) -> Result<MigrationGatewayProxy, PgErdMigrationConfigError> {
         let delivery = self.build_delivery()?;
-        let limits = RuntimeIsolationLimits::try_new(
-            self.max_request_body_bytes,
-            self.max_in_flight_requests,
-        )?;
+        let limits = self.runtime_isolation_limits()?;
         Ok(MigrationGatewayProxy::new(delivery, limits))
     }
 
     fn validate(&self) -> Result<(), PgErdMigrationConfigError> {
-        if self.version != PG_ERD_MIGRATION_CONFIG_VERSION {
-            return Err(PgErdMigrationConfigError::UnsupportedVersion(self.version));
+        match self.version {
+            PG_ERD_MIGRATION_CONFIG_VERSION => {
+                if self.max_upstream_response_body_ms.is_some() {
+                    return Err(PgErdMigrationConfigError::ResponseBodyLifetimeRequiresVersion2);
+                }
+            }
+            PG_ERD_RESPONSE_LIFETIME_CONFIG_VERSION => {
+                if self.max_upstream_response_body_ms.is_none() {
+                    return Err(PgErdMigrationConfigError::MissingUpstreamResponseBodyLifetime);
+                }
+            }
+            unsupported => return Err(PgErdMigrationConfigError::UnsupportedVersion(unsupported)),
         }
         if self.listener.port() == 0 {
             return Err(PgErdMigrationConfigError::ZeroListenerPort);
@@ -157,11 +180,27 @@ impl PgErdMigrationConfig {
             return Err(PgErdMigrationConfigError::InvalidUpstreamKeepalivePoolSize);
         }
 
-        RuntimeIsolationLimits::try_new(
-            self.max_request_body_bytes,
-            self.max_in_flight_requests,
-        )?;
+        self.runtime_isolation_limits()?;
         self.validate_transport_authority(&pg_erd_migration_plan())
+    }
+
+    fn runtime_isolation_limits(&self) -> Result<RuntimeIsolationLimits, PgErdMigrationConfigError> {
+        self.max_upstream_response_body_ms.map_or_else(
+            || {
+                RuntimeIsolationLimits::try_new(
+                    self.max_request_body_bytes,
+                    self.max_in_flight_requests,
+                )
+            },
+            |max_upstream_response_body_ms| {
+                RuntimeIsolationLimits::try_new_with_response_body_limit(
+                    self.max_request_body_bytes,
+                    self.max_in_flight_requests,
+                    max_upstream_response_body_ms,
+                )
+            },
+        )
+        .map_err(Into::into)
     }
 
     fn validate_transport_authority(

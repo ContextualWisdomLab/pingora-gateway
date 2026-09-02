@@ -1,10 +1,12 @@
 //! Transport-neutral runtime-isolation budgets shared by Pingora delivery adapters.
 //!
-//! This bounded context owns request-body and concurrent-request admission limits. It does not
-//! select routes, mutate HTTP policy, authenticate callers, or make product-domain decisions.
+//! This bounded context owns request-body, concurrent-request admission, and optional upstream
+//! response-body lifetime limits. It does not select routes, mutate HTTP policy, authenticate
+//! callers, or make product-domain decisions.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use thiserror::Error;
 
@@ -17,6 +19,9 @@ pub enum RuntimeIsolationConfigError {
     /// A zero in-flight limit would reject every proxied request.
     #[error("max_in_flight_requests must be greater than zero")]
     ZeroMaxInFlightRequests,
+    /// A zero response-body lifetime would reject every non-empty upstream response immediately.
+    #[error("max_upstream_response_body_ms must be greater than zero")]
+    ZeroMaxUpstreamResponseBodyMs,
 }
 
 /// Immutable request-isolation limits shared by gateway delivery adapters.
@@ -24,13 +29,38 @@ pub enum RuntimeIsolationConfigError {
 pub struct RuntimeIsolationLimits {
     max_request_body_bytes: u64,
     max_in_flight_requests: usize,
+    max_upstream_response_body_ms: Option<u64>,
 }
 
 impl RuntimeIsolationLimits {
     /// Validates explicit non-zero body and in-flight request budgets.
+    ///
+    /// The generic v1 contract has no response-body lifetime field, so this constructor preserves
+    /// that versioned behavior rather than inventing a hidden timeout.
     pub fn try_new(
         max_request_body_bytes: u64,
         max_in_flight_requests: usize,
+    ) -> Result<Self, RuntimeIsolationConfigError> {
+        Self::try_new_internal(max_request_body_bytes, max_in_flight_requests, None)
+    }
+
+    /// Validates request isolation plus an explicit upstream response-body lifetime budget.
+    pub(crate) fn try_new_with_response_body_limit(
+        max_request_body_bytes: u64,
+        max_in_flight_requests: usize,
+        max_upstream_response_body_ms: u64,
+    ) -> Result<Self, RuntimeIsolationConfigError> {
+        Self::try_new_internal(
+            max_request_body_bytes,
+            max_in_flight_requests,
+            Some(max_upstream_response_body_ms),
+        )
+    }
+
+    fn try_new_internal(
+        max_request_body_bytes: u64,
+        max_in_flight_requests: usize,
+        max_upstream_response_body_ms: Option<u64>,
     ) -> Result<Self, RuntimeIsolationConfigError> {
         if max_request_body_bytes == 0 {
             return Err(RuntimeIsolationConfigError::ZeroMaxRequestBodyBytes);
@@ -38,9 +68,13 @@ impl RuntimeIsolationLimits {
         if max_in_flight_requests == 0 {
             return Err(RuntimeIsolationConfigError::ZeroMaxInFlightRequests);
         }
+        if max_upstream_response_body_ms == Some(0) {
+            return Err(RuntimeIsolationConfigError::ZeroMaxUpstreamResponseBodyMs);
+        }
         Ok(Self {
             max_request_body_bytes,
             max_in_flight_requests,
+            max_upstream_response_body_ms,
         })
     }
 
@@ -51,6 +85,7 @@ impl RuntimeIsolationLimits {
         Self {
             max_request_body_bytes,
             max_in_flight_requests,
+            max_upstream_response_body_ms: None,
         }
     }
 
@@ -62,6 +97,11 @@ impl RuntimeIsolationLimits {
     /// Returns the maximum number of concurrently admitted non-health requests.
     pub fn max_in_flight_requests(self) -> usize {
         self.max_in_flight_requests
+    }
+
+    /// Returns the configured upstream response-body lifetime, when the active contract owns one.
+    pub fn max_upstream_response_body_ms(self) -> Option<u64> {
+        self.max_upstream_response_body_ms
     }
 }
 
@@ -148,11 +188,59 @@ impl RequestBodyBudget {
     }
 }
 
+/// Elapsed-time guard for the body phase of one admitted upstream response.
+#[derive(Debug)]
+pub(crate) struct ResponseBodyLifetimeBudget {
+    limit: Option<Duration>,
+    started_at: Option<Instant>,
+}
+
+/// Evidence that a response-body progress callback arrived after its configured lifetime.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ResponseBodyLifetimeExceeded {
+    pub(crate) elapsed: Duration,
+    pub(crate) limit: Duration,
+}
+
+impl ResponseBodyLifetimeBudget {
+    /// Creates a dormant response-body budget from the active runtime-isolation contract.
+    pub(crate) fn new(limits: RuntimeIsolationLimits) -> Self {
+        Self {
+            limit: limits.max_upstream_response_body_ms().map(Duration::from_millis),
+            started_at: None,
+        }
+    }
+
+    /// Starts the body lifetime once; repeated response-filter callbacks cannot reset the deadline.
+    pub(crate) fn start(&mut self, now: Instant) {
+        if self.limit.is_some() && self.started_at.is_none() {
+            self.started_at = Some(now);
+        }
+    }
+
+    /// Rejects the first observed body-progress boundary at or beyond the configured lifetime.
+    pub(crate) fn reject_if_expired(
+        &self,
+        now: Instant,
+    ) -> Result<(), ResponseBodyLifetimeExceeded> {
+        let (Some(limit), Some(started_at)) = (self.limit, self.started_at) else {
+            return Ok(());
+        };
+        let elapsed = now.saturating_duration_since(started_at);
+        if elapsed >= limit {
+            return Err(ResponseBodyLifetimeExceeded { elapsed, limit });
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::time::{Duration, Instant};
+
     use super::{
-        BodyLimitExceeded, RequestAdmissionBudget, RequestBodyBudget, RuntimeIsolationConfigError,
-        RuntimeIsolationLimits,
+        BodyLimitExceeded, RequestAdmissionBudget, RequestBodyBudget, ResponseBodyLifetimeBudget,
+        ResponseBodyLifetimeExceeded, RuntimeIsolationConfigError, RuntimeIsolationLimits,
     };
 
     #[test]
@@ -165,10 +253,21 @@ mod tests {
             RuntimeIsolationLimits::try_new(1, 0),
             Err(RuntimeIsolationConfigError::ZeroMaxInFlightRequests)
         );
+        assert_eq!(
+            RuntimeIsolationLimits::try_new_with_response_body_limit(1, 1, 0),
+            Err(RuntimeIsolationConfigError::ZeroMaxUpstreamResponseBodyMs)
+        );
 
         let limits = RuntimeIsolationLimits::try_new(1024, 2).expect("non-zero limits are valid");
         assert_eq!(limits.max_request_body_bytes(), 1024);
         assert_eq!(limits.max_in_flight_requests(), 2);
+        assert_eq!(limits.max_upstream_response_body_ms(), None);
+
+        let bounded = RuntimeIsolationLimits::try_new_with_response_body_limit(2048, 3, 750)
+            .expect("explicit positive response lifetime must be valid");
+        assert_eq!(bounded.max_request_body_bytes(), 2048);
+        assert_eq!(bounded.max_in_flight_requests(), 3);
+        assert_eq!(bounded.max_upstream_response_body_ms(), Some(750));
     }
 
     #[test]
@@ -204,6 +303,45 @@ mod tests {
             BodyLimitExceeded {
                 observed: 5,
                 limit: 4,
+            }
+        );
+    }
+
+    #[test]
+    fn response_body_lifetime_is_dormant_without_a_versioned_budget() {
+        let limits = RuntimeIsolationLimits::try_new(4, 1).expect("fixture limits are valid");
+        let mut budget = ResponseBodyLifetimeBudget::new(limits);
+        let now = Instant::now();
+
+        budget.start(now);
+        assert!(budget
+            .reject_if_expired(now + Duration::from_secs(60))
+            .is_ok());
+    }
+
+    #[test]
+    fn response_body_lifetime_starts_once_and_rejects_at_the_limit() {
+        let limits = RuntimeIsolationLimits::try_new_with_response_body_limit(4, 1, 300)
+            .expect("fixture limits are valid");
+        let mut budget = ResponseBodyLifetimeBudget::new(limits);
+        let started = Instant::now();
+        assert!(budget
+            .reject_if_expired(started + Duration::from_secs(1))
+            .is_ok());
+
+        budget.start(started);
+        budget.start(started + Duration::from_millis(250));
+
+        assert!(budget
+            .reject_if_expired(started + Duration::from_millis(299))
+            .is_ok());
+        assert_eq!(
+            budget
+                .reject_if_expired(started + Duration::from_millis(300))
+                .unwrap_err(),
+            ResponseBodyLifetimeExceeded {
+                elapsed: Duration::from_millis(300),
+                limit: Duration::from_millis(300),
             }
         );
     }
