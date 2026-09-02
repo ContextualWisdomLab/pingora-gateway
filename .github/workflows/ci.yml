@@ -85,8 +85,8 @@ jobs:
         run: |
           rustup toolchain install 1.98.0 --profile minimal
           rustup default 1.98.0
-      - name: Build exact gateway candidates
-        run: cargo build --release --locked --bin cwl-pingora-gateway --bin cwl-pingora-pg-erd-migration
+      - name: Build exact gateway candidates and Rust load origin
+        run: cargo build --release --locked --bin cwl-pingora-gateway --bin cwl-pingora-pg-erd-migration --example load_origin
       - name: Install checksum-pinned k6 2.2.0
         shell: bash
         run: |
@@ -103,7 +103,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 tests/load/upstream_fixture.py >/tmp/upstream-fixture.log 2>&1 &
+          target/release/examples/load_origin >/tmp/upstream-fixture.log 2>&1 &
           upstream_pid=$!
 
           cat >/tmp/gateway-load.yaml <<'EOF'
@@ -166,9 +166,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          UPSTREAM_PORT=18181 UPSTREAM_PAYLOAD=backend-ok python3 tests/load/upstream_fixture.py >/tmp/pg-erd-backend.log 2>&1 &
+          UPSTREAM_PORT=18181 UPSTREAM_PAYLOAD=backend-ok target/release/examples/load_origin >/tmp/pg-erd-backend.log 2>&1 &
           backend_pid=$!
-          UPSTREAM_PORT=18183 UPSTREAM_PAYLOAD=frontend-ok python3 tests/load/upstream_fixture.py >/tmp/pg-erd-frontend.log 2>&1 &
+          UPSTREAM_PORT=18183 UPSTREAM_PAYLOAD=frontend-ok target/release/examples/load_origin >/tmp/pg-erd-frontend.log 2>&1 &
           frontend_pid=$!
 
           cat >/tmp/pg-erd-load.yaml <<'EOF'
