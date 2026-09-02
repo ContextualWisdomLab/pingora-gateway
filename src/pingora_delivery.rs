@@ -10,16 +10,16 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use pingora::prelude::{Error, ErrorType, RequestHeader};
+use pingora::prelude::{Error as PingoraError, ErrorType, RequestHeader};
 use pingora::tls::x509::X509;
 use pingora::upstreams::peer::{HttpPeer, HttpUpstreamRequestPolicy, ALPN};
-use thiserror::Error as ThisError;
+use thiserror::Error;
 
 use crate::edge_contract::{GatewayConfigError, UpstreamConfig};
 use crate::protocol_transition_policy::requests_http1_protocol_transition;
 
 /// Failures while translating an admitted edge contract into Pingora transport authority.
-#[derive(Debug, ThisError, Clone, PartialEq, Eq)]
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum PeerBuildError {
     /// The transport-neutral upstream contract itself is invalid.
     #[error("invalid upstream configuration: {0}")]
@@ -97,7 +97,7 @@ pub(crate) fn reject_uncharacterized_http1_protocol_transition(
         request.headers.contains_key("upgrade"),
         connection_field_values,
     ) {
-        return Err(Error::explain(
+        return Err(PingoraError::explain(
             ErrorType::HTTPStatus(501),
             "HTTP/1 protocol transition is not admitted by the current gateway contract",
         ));
