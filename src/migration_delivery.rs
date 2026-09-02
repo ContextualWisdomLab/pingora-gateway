@@ -49,15 +49,6 @@ pub enum MigrationDeliveryError {
         #[source]
         source: PeerBuildError,
     },
-    /// A validated route selected an upstream that has no activated peer.
-    ///
-    /// Construction invariants make this unreachable for an unchanged plan, but returning an error
-    /// here keeps request delivery fail-closed if those invariants are widened in a later version.
-    #[error("route selected migration upstream without activated transport: {upstream_name}")]
-    MissingActivatedUpstream {
-        /// Stable upstream identity selected by the route table.
-        upstream_name: String,
-    },
 }
 
 /// Characterized migration plan with complete, immutable Pingora upstream transport bindings.
@@ -73,7 +64,9 @@ impl MigrationDeliveryPlan {
     /// The number of concrete bindings must equal the plan's admitted authority count. Each
     /// configuration is normalized by its stable name, must already be admitted by the plan, and is
     /// passed through the ordinary fail-closed [`build_peer`] adapter before it can become runtime
-    /// network authority. This creates no dynamic lookup or arbitrary per-request destination path.
+    /// network authority. Count equality plus uniqueness plus membership makes the resulting map a
+    /// complete bijection over the plan's admitted upstream set. This creates no dynamic lookup or
+    /// arbitrary per-request destination path.
     pub fn try_new(
         plan: EdgeMigrationPlan,
         upstreams: Vec<UpstreamConfig>,
@@ -118,23 +111,15 @@ impl MigrationDeliveryPlan {
         self.plan.select_upstream(request_path)
     }
 
-    /// Builds a request-local clone of the prevalidated Pingora peer selected by the route table.
+    /// Clones the prevalidated Pingora peer selected by the characterized request path.
     ///
-    /// A request that matches no characterized route returns `Ok(None)` rather than inventing a
-    /// fallback destination. A selected route without an activated peer fails closed.
-    pub fn build_upstream_peer(
-        &self,
-        request_path: &str,
-    ) -> Result<Option<HttpPeer>, MigrationDeliveryError> {
-        let Some(upstream_name) = self.plan.select_upstream(request_path) else {
-            return Ok(None);
-        };
-        let peer = self.peers.get(upstream_name).ok_or_else(|| {
-            MigrationDeliveryError::MissingActivatedUpstream {
-                upstream_name: upstream_name.to_string(),
-            }
-        })?;
-        Ok(Some(peer.clone()))
+    /// A request that matches no characterized route returns `None`; no fallback destination is
+    /// invented. Construction proves every admitted route target has a peer, so indexing by the
+    /// plan-selected stable identity preserves that invariant without a second impossible state.
+    pub fn build_upstream_peer(&self, request_path: &str) -> Option<HttpPeer> {
+        self.plan
+            .select_upstream(request_path)
+            .map(|upstream_name| self.peers[upstream_name].clone())
     }
 
     /// Returns the characterized edge-owned response value for one HTTP field name.
