@@ -176,13 +176,13 @@ impl PgErdMigrationConfig {
 
         let mut configured_names = HashSet::with_capacity(actual);
         for upstream in &self.upstreams {
-            upstream.validate()?;
             let upstream_name = upstream.name.trim().to_string();
             if upstream.address.port() == 0 {
                 return Err(PgErdMigrationConfigError::ZeroTransportAuthorityPort {
                     upstream_name,
                 });
             }
+            upstream.validate()?;
             if !configured_names.insert(upstream_name.clone()) {
                 return Err(PgErdMigrationConfigError::DuplicateTransportAuthority {
                     upstream_name,
