@@ -201,8 +201,8 @@ fn compiled_pg_erd_shared_access_log_excludes_request_sensitive_material() {
         "product-secret",
     ] {
         assert!(
-            !access_log.contains(forbidden),
-            "shared access logging leaked request-sensitive material {forbidden:?}: {access_log:?}"
+            !stderr.contains(forbidden),
+            "shared observability target leaked request-sensitive material {forbidden:?}: {stderr:?}"
         );
     }
 }
