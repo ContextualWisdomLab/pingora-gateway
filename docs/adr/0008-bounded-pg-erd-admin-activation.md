@@ -14,6 +14,8 @@ A second constraint is trust-material handling. `pingora_delivery::build_peer` l
 
 A third constraint emerged once the dedicated listener was tested as a process rather than as a callback object: migration routing has a fallback `/ -> frontend`, so without an explicit process-health boundary it also routes `/livez` and `/readyz` into the consumer. That conflates gateway process health with product health and makes saturation/rollout diagnosis unsafe.
 
+A fourth constraint emerged from effective socket authority rather than field equality. A traffic listener such as `0.0.0.0:8080` and a metrics listener such as `127.0.0.1:8080` are different `SocketAddr` values but can compete for one port authority at bind time. An IPv6 wildcard can also consume the IPv4 port on dual-stack platforms when `IPV6_V6ONLY` is disabled. Because listener bind semantics are part of Admin Config admission, wildcard overlap must fail before Pingora receives network authority instead of surfacing as platform-dependent startup failure.
+
 ## Alternatives
 
 1. **Widen `GatewayConfig` v1 to arbitrary multi-route configuration.** Rejected for this slice. It would combine a public contract version change with migration-specific routing semantics and create a second authority for product routing.
@@ -26,6 +28,8 @@ Introduce `PgErdMigrationConfig` version 1 and a separate `cwl-pingora-pg-erd-mi
 
 The profile accepts downstream and metrics socket addresses, non-zero request-body/in-flight/upstream-keepalive budgets, and exactly one concrete transport binding for each characterized stable upstream identity, `backend` and `frontend`. Each binding reuses the existing `UpstreamConfig` address, TLS/SNI/trust-bundle and timeout contract.
 
+Traffic and metrics addresses must not overlap one effective socket authority. The shared `edge_contract::socket_authorities_overlap` invariant rejects equal addresses, same-port same-family wildcard aliases, and same-port IPv6-wildcard/IPv4 combinations whose dual-stack bind behavior is platform-dependent. Distinct concrete IP addresses remain configurable on the same port. The generic `GatewayConfig` and the migration-specific Admin Config consume the same invariant so the shared edge runtime does not carry two definitions of listener authority.
+
 The profile does not accept route rules, response headers, product policy, identity/authentication configuration, service-discovery inputs, or arbitrary migration upstream names. Its fixed plan preserves the observed pg-erd Traefik behavior: exact `/healthz -> backend`, raw `PathPrefix(`/api`) -> backend` including `/apiary`, fallback `/ -> frontend`, and the four characterized response-security fields.
 
 Configuration parsing performs pure contract/authority validation. It checks the exact transport-authority bijection and `UpstreamConfig` invariants but does not load custom trust-bundle bytes. `build_proxy` materializes `MigrationDeliveryPlan` once immediately before the composition root creates listeners, so custom trust material is read once through the canonical Pingora delivery adapter. Any read/PEM failure remains fail-closed before listener activation without a duplicate preload.
@@ -34,7 +38,7 @@ Configuration parsing performs pure contract/authority validation. It checks the
 
 The fixed migration plan and an already validated `MigrationDeliveryPlan`/`RuntimeIsolationLimits` are internal invariants rather than operator-controlled failure surfaces. `MigrationGatewayProxy::new` therefore models callback construction as infallible after those boundaries have succeeded. `try_new` remains as a compatibility constructor for existing callers. The admin error type contains only failures that can actually be caused by parsed operator input or peer materialization; impossible fixed-profile error variants are not retained merely to satisfy a generic shape.
 
-The generic `cwl-pingora-gateway` binary and `GatewayConfig` v1 stay unchanged. Process identity makes the intended deployment contract explicit rather than silently changing the semantics of an existing executable.
+The generic `cwl-pingora-gateway` binary, `GatewayConfig` v1 public shape, and one-upstream semantics stay unchanged. Its listener validation is tightened to the shared effective-authority invariant because the same bind-time defect existed there independently of pg-erd routing. Process identity still makes the intended migration deployment contract explicit rather than silently changing generic routing semantics.
 
 ## RED -> GREEN evidence
 
@@ -44,11 +48,15 @@ A fresh source review found that `from_yaml` called `build_delivery`, causing cu
 
 Compiled-listener RED/traffic contract `c1cc2c8a08b06546020f6ccad2f168a90bf4328c` then exposed the process-health fallthrough defect. Commits `957e1f45e122135be7c68b4e645b66a1a9cfef8b`, `21f55240935e33a35daa0769d16e4a2d35cd1402`, `450a10d2a05eaf520009ab5250ef19fd411f36c9`, and `57a70ee5b9be247e954d8fb7180d35ce35a22377` introduced one shared process-health responder and applied it to both runtime adapters without changing consumer `/healthz` routing. Commit `674a5aa1f2b4eaabc564fb20a9bebf87c31c7a2a` made the dedicated binary target explicit in Cargo metadata. Commits `0619e2de168ebb5e9600660c81fbed64b327b5ab` and `50f5874c178c8494766b752905facb3be9a99ef5` add fail-closed compiled-startup and Admin Config negative coverage. Commits `39b353ffbcedf23b5d0b62916b506e9b84484e83` and `7cc38c27f5cb5ebb605707299a6e134c9dc508c3` remove structurally impossible callback/fixed-profile error branches rather than weakening the repository's 100% owned-production coverage gate.
 
+The listener-authority repair was also test-first. RED `937c73c7ba2146048bba6873123595573b428ff5` proved that pg-erd wildcard/specific aliases were accepted by the predecessor. GREEN `4430e34e1fbf1ff6fb5cb7f216bd8627cf9e12f5` initially closed the migration path. A second review found the same equality-only defect in generic `GatewayConfig`; RED `dfe897915f563659488d22a2284439df96e33534` exposed it, `31175105e44cd775f57e4960c3926622915a9d31` moved the effective-authority invariant into the shared edge contract, and `26c6eb0cc92d75376e3b7690e4821db4c789d203` removed the migration-local duplicate. Commit `777f6d0f960480fdc8c1b06d9cf651524fa167be` covers equal, wildcard-first, wildcard-second, IPv4, IPv6, mixed-family, distinct-address and distinct-port decision paths without weakening the 100% region gate.
+
 Hosted exact-head evidence must be reacquired after every later source/documentation movement; predecessor runs do not transfer. Source presence of the compiled traffic test is not a parity claim.
 
 ## Risks and consequences
 
 This slice can start a clear-text multi-route listener in source, so mistakes now have a larger blast radius than characterization-only code. It remains Draft and pre-traffic until exact-head formatting, compile/test, clippy, rustdoc, 100% owned-production line/region coverage, supply-chain/security, and the dedicated compiled-listener traffic contract are terminal GREEN.
+
+The cross-family IPv6 wildcard rule is intentionally conservative. A platform configured with IPv6-only wildcard sockets could technically bind an IPv4 listener on the same port, but admitting that configuration would make the contract depend on an OS socket option the current Admin Config does not control. If a future listener adapter explicitly owns `IPV6_V6ONLY`, that option needs its own versioned behavior and acceptance tests before this fail-closed rule can be narrowed.
 
 The fixed migration profile is consumer-specific. It must not become a pattern of accumulating unrelated product semantics in the shared gateway. A future reusable multi-route contract requires separately proven common semantics and a versioned public design, not copy/paste growth of this profile.
 
