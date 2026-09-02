@@ -16,11 +16,7 @@ use pingora::prelude::{http_proxy_service, Server};
 use pingora::server::RunArgs;
 
 fn main() -> ExitCode {
-    if let Err(error) = init_runtime_logging() {
-        return exit_with_error(&format!(
-            "unable to initialize payload-safe runtime logging: {error}"
-        ));
-    }
+    init_runtime_logging();
 
     let args: Vec<_> = env::args_os().collect();
     let command = match GatewayCommand::parse(&args) {
