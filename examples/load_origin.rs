@@ -17,11 +17,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for stream in listener.incoming() {
         let stream = stream?;
         let response = Arc::clone(&response);
-        thread::spawn(move || {
+        drop(thread::spawn(move || {
             if let Err(error) = serve_connection(stream, &response) {
                 eprintln!("load origin connection failed: {error}");
             }
-        });
+        }));
     }
 
     Ok(())
@@ -65,7 +65,6 @@ fn serve_connection(mut stream: TcpStream, response: &[u8]) -> io::Result<()> {
         while let Some(header_end) = find_header_end(&buffered) {
             drop(buffered.drain(..header_end));
             stream.write_all(response)?;
-            stream.flush()?;
         }
 
         let read = stream.read(&mut chunk)?;
