@@ -1,3 +1,4 @@
+use cwl_pingora_gateway::edge_contract::GatewayConfigError;
 use cwl_pingora_gateway::migration_admin::{
     PgErdMigrationConfig, PgErdMigrationConfigError, PG_ERD_MIGRATION_CONFIG_VERSION,
 };
@@ -167,6 +168,50 @@ fn pg_erd_admin_config_rejects_zero_port_network_authority() {
         Err(PgErdMigrationConfigError::ZeroTransportAuthorityPort {
             upstream_name: "backend".to_string(),
         })
+    );
+}
+
+#[test]
+fn pg_erd_admin_config_rejects_gateway_owned_socket_as_transport_authority() {
+    let traffic_self_loop = valid_yaml().replace(
+        "    address: 127.0.0.1:8000",
+        "    address: 127.0.0.1:8080",
+    );
+    assert_eq!(
+        PgErdMigrationConfig::from_yaml(&traffic_self_loop),
+        Err(PgErdMigrationConfigError::UpstreamConfiguration(
+            GatewayConfigError::UpstreamListenerCollision {
+                upstream_name: "backend".to_string(),
+            }
+        ))
+    );
+
+    let metrics_exposure = valid_yaml().replace(
+        "    address: 127.0.0.1:3000",
+        "    address: 127.0.0.1:9090",
+    );
+    assert_eq!(
+        PgErdMigrationConfig::from_yaml(&metrics_exposure),
+        Err(PgErdMigrationConfigError::UpstreamConfiguration(
+            GatewayConfigError::UpstreamMetricsListenerCollision {
+                upstream_name: "frontend".to_string(),
+            }
+        ))
+    );
+
+    let wildcard_self_loop = valid_yaml()
+        .replace("listener: 127.0.0.1:8080", "listener: 0.0.0.0:8080")
+        .replace(
+            "    address: 127.0.0.1:8000",
+            "    address: 127.0.0.1:8080",
+        );
+    assert_eq!(
+        PgErdMigrationConfig::from_yaml(&wildcard_self_loop),
+        Err(PgErdMigrationConfigError::UpstreamConfiguration(
+            GatewayConfigError::UpstreamListenerCollision {
+                upstream_name: "backend".to_string(),
+            }
+        ))
     );
 }
 
