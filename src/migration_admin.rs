@@ -11,7 +11,7 @@ use std::net::SocketAddr;
 use serde::Deserialize;
 use thiserror::Error;
 
-use crate::edge_contract::{GatewayConfigError, UpstreamConfig};
+use crate::edge_contract::{socket_authorities_overlap, GatewayConfigError, UpstreamConfig};
 use crate::edge_routing::{RouteMatch, RouteRule};
 use crate::http_policy::ResponseHeaderRule;
 use crate::migration_delivery::{MigrationDeliveryError, MigrationDeliveryPlan};
@@ -50,8 +50,8 @@ pub enum PgErdMigrationConfigError {
     /// A port-zero metrics listener would make the declared observability endpoint indeterminate.
     #[error("metrics_listener must use a non-zero port")]
     ZeroMetricsListenerPort,
-    /// Traffic and metrics endpoints must never compete for the same socket authority.
-    #[error("listener and metrics_listener must use distinct socket addresses")]
+    /// Traffic and metrics endpoints must never overlap the same effective socket authority.
+    #[error("listener and metrics_listener socket authorities must not overlap")]
     ListenerCollision,
     /// A characterized upstream must identify a concrete, connectable transport port.
     #[error("pg-erd migration transport authority {upstream_name} must use a non-zero port")]
@@ -147,7 +147,7 @@ impl PgErdMigrationConfig {
         if self.metrics_listener.port() == 0 {
             return Err(PgErdMigrationConfigError::ZeroMetricsListenerPort);
         }
-        if self.listener == self.metrics_listener {
+        if socket_authorities_overlap(self.listener, self.metrics_listener) {
             return Err(PgErdMigrationConfigError::ListenerCollision);
         }
         if self.upstream_keepalive_pool_size == 0 {
@@ -176,13 +176,13 @@ impl PgErdMigrationConfig {
 
         let mut configured_names = HashSet::with_capacity(actual);
         for upstream in &self.upstreams {
-            upstream.validate()?;
             let upstream_name = upstream.name.trim().to_string();
             if upstream.address.port() == 0 {
                 return Err(PgErdMigrationConfigError::ZeroTransportAuthorityPort {
                     upstream_name,
                 });
             }
+            upstream.validate()?;
             if !configured_names.insert(upstream_name.clone()) {
                 return Err(PgErdMigrationConfigError::DuplicateTransportAuthority {
                     upstream_name,

@@ -5,7 +5,7 @@
 //! consumer products never depend on Pingora internals.
 
 use std::collections::HashSet;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 
 use serde::Deserialize;
@@ -86,9 +86,21 @@ pub enum GatewayConfigError {
     /// The configuration requests a contract version this binary does not implement.
     #[error("unsupported gateway configuration version {0}")]
     UnsupportedVersion(u32),
-    /// Traffic and metrics endpoints must never compete for the same socket authority.
-    #[error("listener and metrics_listener must use distinct socket addresses")]
+    /// Port zero would delegate the traffic listener to an ephemeral OS-selected authority.
+    #[error("listener must use a non-zero port")]
+    ZeroListenerPort,
+    /// Port zero would make the declared metrics endpoint indeterminate.
+    #[error("metrics_listener must use a non-zero port")]
+    ZeroMetricsListenerPort,
+    /// Traffic and metrics endpoints must never overlap the same effective socket authority.
+    #[error("listener and metrics_listener socket authorities must not overlap")]
     ListenerCollision,
+    /// An approved upstream must identify a concrete, connectable transport port.
+    #[error("upstream {upstream_name} must use a non-zero port")]
+    ZeroUpstreamPort {
+        /// Stable upstream whose transport binding used port zero.
+        upstream_name: String,
+    },
     /// A zero request-body limit would reject every body and is almost certainly misconfiguration.
     #[error("max_request_body_bytes must be greater than zero")]
     InvalidRequestBodyLimit,
@@ -179,7 +191,13 @@ impl GatewayConfig {
         if self.version != CURRENT_GATEWAY_CONFIG_VERSION {
             return Err(GatewayConfigError::UnsupportedVersion(self.version));
         }
-        if self.listener == self.metrics_listener {
+        if self.listener.port() == 0 {
+            return Err(GatewayConfigError::ZeroListenerPort);
+        }
+        if self.metrics_listener.port() == 0 {
+            return Err(GatewayConfigError::ZeroMetricsListenerPort);
+        }
+        if socket_authorities_overlap(self.listener, self.metrics_listener) {
             return Err(GatewayConfigError::ListenerCollision);
         }
         if self.max_request_body_bytes == 0 {
@@ -216,12 +234,40 @@ impl GatewayConfig {
     }
 }
 
+pub(crate) fn socket_authorities_overlap(
+    listener: SocketAddr,
+    metrics_listener: SocketAddr,
+) -> bool {
+    if listener.port() != metrics_listener.port() {
+        return false;
+    }
+
+    match (listener.ip(), metrics_listener.ip()) {
+        (IpAddr::V4(listener_ip), IpAddr::V4(metrics_ip)) => {
+            listener_ip == metrics_ip || listener_ip.is_unspecified() || metrics_ip.is_unspecified()
+        }
+        (IpAddr::V6(listener_ip), IpAddr::V6(metrics_ip)) => {
+            listener_ip == metrics_ip || listener_ip.is_unspecified() || metrics_ip.is_unspecified()
+        }
+        (IpAddr::V6(ipv6), IpAddr::V4(_)) | (IpAddr::V4(_), IpAddr::V6(ipv6)) => {
+            // An IPv6 wildcard may also consume the IPv4 port on dual-stack platforms when
+            // IPV6_V6ONLY is disabled. Reject the platform-dependent authority before activation.
+            ipv6.is_unspecified()
+        }
+    }
+}
+
 impl UpstreamConfig {
     /// Validates the invariants required before this upstream can become network authority.
     pub fn validate(&self) -> Result<(), GatewayConfigError> {
         let normalized_name = self.name.trim();
         if normalized_name.is_empty() {
             return Err(GatewayConfigError::EmptyUpstreamName);
+        }
+        if self.address.port() == 0 {
+            return Err(GatewayConfigError::ZeroUpstreamPort {
+                upstream_name: normalized_name.to_string(),
+            });
         }
 
         match (self.tls, self.sni.as_deref()) {
