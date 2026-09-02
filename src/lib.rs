@@ -17,6 +17,7 @@ pub mod migration_proxy;
 pub mod observability;
 pub mod pingora_delivery;
 mod process_health;
+pub mod protocol_transition_policy;
 pub mod runtime_isolation;
 pub mod runtime_policy;
 pub mod startup;
