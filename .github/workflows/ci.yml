@@ -173,44 +173,74 @@ jobs:
           persist-credentials: false
       - name: Verify checkout identity
         run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
-      - name: Build candidate image
-        run: docker build --tag "cwl-pingora-gateway:${EXPECTED_SHA}" .
-      - name: Verify declared non-root identity
+      - name: Build generic and migration image targets
+        run: |
+          docker build --tag "cwl-pingora-gateway:${EXPECTED_SHA}" .
+          docker build --target pg-erd-migration --tag "cwl-pingora-pg-erd-migration:${EXPECTED_SHA}" .
+      - name: Verify declared runtime identities and entrypoints
         run: |
           test "$(docker image inspect "cwl-pingora-gateway:${EXPECTED_SHA}" --format '{{.Config.User}}')" = "65532:65532"
-      - name: Exercise read-only least-privilege runtime
+          test "$(docker image inspect "cwl-pingora-pg-erd-migration:${EXPECTED_SHA}" --format '{{.Config.User}}')" = "65532:65532"
+          test "$(docker image inspect "cwl-pingora-gateway:${EXPECTED_SHA}" --format '{{json .Config.Entrypoint}}')" = '["/usr/local/bin/cwl-pingora-gateway"]'
+          test "$(docker image inspect "cwl-pingora-pg-erd-migration:${EXPECTED_SHA}" --format '{{json .Config.Entrypoint}}')" = '["/usr/local/bin/cwl-pingora-pg-erd-migration"]'
+      - name: Exercise both read-only least-privilege runtimes
         shell: bash
         run: |
           set -euo pipefail
-          image="cwl-pingora-gateway:${EXPECTED_SHA}"
-          cid="$(docker run --detach \
+          generic_image="cwl-pingora-gateway:${EXPECTED_SHA}"
+          migration_image="cwl-pingora-pg-erd-migration:${EXPECTED_SHA}"
+          generic_cid="$(docker run --detach \
             --read-only \
             --user 65532:65532 \
             --cap-drop ALL \
             --security-opt no-new-privileges:true \
             --publish 127.0.0.1:6188:6188 \
             --mount "type=bind,src=${PWD}/examples/gateway.yaml,dst=/etc/cwl/gateway.yaml,readonly" \
-            "${image}" \
+            "${generic_image}" \
             --config /etc/cwl/gateway.yaml)"
+          migration_cid="$(docker run --detach \
+            --read-only \
+            --user 65532:65532 \
+            --cap-drop ALL \
+            --security-opt no-new-privileges:true \
+            --publish 127.0.0.1:6288:6288 \
+            --mount "type=bind,src=${PWD}/examples/pg-erd-migration.yaml,dst=/etc/cwl/pg-erd-migration.yaml,readonly" \
+            "${migration_image}" \
+            --config /etc/cwl/pg-erd-migration.yaml)"
           cleanup() {
-            docker logs "${cid}" || true
-            docker rm --force "${cid}" >/dev/null 2>&1 || true
+            status=$?
+            echo "--- generic gateway container log ---"
+            docker logs "${generic_cid}" || true
+            echo "--- pg-erd migration container log ---"
+            docker logs "${migration_cid}" || true
+            docker rm --force "${generic_cid}" "${migration_cid}" >/dev/null 2>&1 || true
+            return "$status"
           }
           trap cleanup EXIT
 
-          test "$(docker inspect "${cid}" --format '{{.HostConfig.ReadonlyRootfs}}')" = "true"
-          test "$(docker inspect "${cid}" --format '{{json .HostConfig.CapDrop}}')" = '["ALL"]'
-          docker inspect "${cid}" --format '{{json .HostConfig.SecurityOpt}}' | grep -Fq 'no-new-privileges'
+          for cid in "${generic_cid}" "${migration_cid}"; do
+            test "$(docker inspect "${cid}" --format '{{.HostConfig.ReadonlyRootfs}}')" = "true"
+            test "$(docker inspect "${cid}" --format '{{json .HostConfig.CapDrop}}')" = '["ALL"]'
+            docker inspect "${cid}" --format '{{json .HostConfig.SecurityOpt}}' | grep -Fq 'no-new-privileges'
+          done
 
-          for _ in $(seq 1 80); do
-            if curl --fail --silent --show-error --max-time 1 http://127.0.0.1:6188/livez >/dev/null; then
-              exit 0
-            fi
-            if ! docker inspect "${cid}" --format '{{.State.Running}}' | grep -qx true; then
-              echo "gateway container exited before becoming live" >&2
+          for spec in "${generic_cid}:6188" "${migration_cid}:6288"; do
+            cid="${spec%%:*}"
+            port="${spec##*:}"
+            ready=false
+            for _ in $(seq 1 80); do
+              if curl --fail --silent --show-error --max-time 1 "http://127.0.0.1:${port}/livez" >/dev/null; then
+                ready=true
+                break
+              fi
+              if ! docker inspect "${cid}" --format '{{.State.Running}}' | grep -qx true; then
+                echo "container ${cid} exited before becoming live" >&2
+                exit 1
+              fi
+              sleep 0.25
+            done
+            if [ "${ready}" != true ]; then
+              echo "container ${cid} did not become live under read-only least-privilege runtime" >&2
               exit 1
             fi
-            sleep 0.25
           done
-          echo "gateway container did not become live under read-only least-privilege runtime" >&2
-          exit 1
