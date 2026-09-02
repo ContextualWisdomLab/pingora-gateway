@@ -1,9 +1,9 @@
-use pingora_gateway::edge_contract::{GatewayConfigError, UpstreamConfig, UpstreamTimeouts};
-use pingora_gateway::edge_routing::{RouteMatch, RouteRule};
-use pingora_gateway::http_policy::ResponseHeaderRule;
-use pingora_gateway::migration_delivery::{MigrationDeliveryError, MigrationDeliveryPlan};
-use pingora_gateway::migration_plan::EdgeMigrationPlan;
-use pingora_gateway::pingora_delivery::PeerBuildError;
+use cwl_pingora_gateway::edge_contract::{GatewayConfigError, UpstreamConfig, UpstreamTimeouts};
+use cwl_pingora_gateway::edge_routing::{RouteMatch, RouteRule};
+use cwl_pingora_gateway::http_policy::ResponseHeaderRule;
+use cwl_pingora_gateway::migration_delivery::{MigrationDeliveryError, MigrationDeliveryPlan};
+use cwl_pingora_gateway::migration_plan::EdgeMigrationPlan;
+use cwl_pingora_gateway::pingora_delivery::PeerBuildError;
 
 fn pg_erd_plan() -> EdgeMigrationPlan {
     EdgeMigrationPlan::try_new(
