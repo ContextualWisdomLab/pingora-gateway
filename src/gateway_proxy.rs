@@ -3,18 +3,15 @@
 //! Version 1 activates one upstream per process because the transport-neutral edge contract owns
 //! that invariant. This Pingora adapter does not invent routing or load-balancing domain rules.
 
-use std::sync::LazyLock;
-
 use async_trait::async_trait;
 use bytes::Bytes;
-use log::info;
 use pingora::prelude::{
     Error, ErrorType, HttpPeer, ProxyHttp, RequestHeader, ResponseHeader, Session,
 };
-use pingora_prometheus::prometheus::{register_int_counter, IntCounter};
 use thiserror::Error;
 
 use crate::edge_contract::{GatewayConfig, GatewayConfigError};
+use crate::observability::{record_backpressure_rejection, record_request};
 use crate::pingora_delivery::{build_peer_from_validated, PeerBuildError};
 use crate::runtime_isolation::{
     BodyLimitExceeded, RequestAdmission, RequestAdmissionBudget, RequestBodyBudget,
@@ -25,39 +22,6 @@ use crate::runtime_isolation::{
 pub const LIVENESS_PATH: &str = "/livez";
 /// Stable readiness endpoint reached through the production Pingora serving path.
 pub const READINESS_PATH: &str = "/readyz";
-
-fn register_counter(name: &'static str, help: &'static str) -> IntCounter {
-    register_int_counter!(name, help)
-        .unwrap_or_else(|error| panic!("gateway metric {name} must register exactly once: {error}"))
-}
-
-static REQUESTS_TOTAL: LazyLock<IntCounter> = LazyLock::new(|| {
-    register_counter(
-        "cwl_pingora_gateway_requests_total",
-        "Completed downstream requests observed by the shared edge runtime",
-    )
-});
-
-static REQUEST_ERRORS_TOTAL: LazyLock<IntCounter> = LazyLock::new(|| {
-    register_counter(
-        "cwl_pingora_gateway_request_errors_total",
-        "Completed downstream requests whose Pingora lifecycle ended with an error",
-    )
-});
-
-static REQUEST_BODY_BYTES_TOTAL: LazyLock<IntCounter> = LazyLock::new(|| {
-    register_counter(
-        "cwl_pingora_gateway_request_body_bytes_total",
-        "Downstream request body bytes observed before completion or rejection",
-    )
-});
-
-static BACKPRESSURE_REJECTIONS_TOTAL: LazyLock<IntCounter> = LazyLock::new(|| {
-    register_counter(
-        "cwl_pingora_gateway_backpressure_rejections_total",
-        "Downstream requests rejected because max_in_flight_requests was exhausted",
-    )
-});
 
 /// Per-request delivery state. Product domain state does not belong here.
 #[derive(Debug)]
@@ -138,7 +102,7 @@ impl GatewayProxy {
             return Ok(());
         }
 
-        BACKPRESSURE_REJECTIONS_TOTAL.inc();
+        record_backpressure_rejection();
         Err(Error::explain(
             ErrorType::HTTPStatus(503),
             "gateway max_in_flight_requests budget exhausted",
@@ -251,44 +215,17 @@ impl ProxyHttp for GatewayProxy {
     where
         Self::CTX: Send + Sync,
     {
-        let status = session
-            .response_written()
-            .map_or(0, |response| response.status.as_u16());
-        let outcome = if error.is_some() { "error" } else { "ok" };
-
-        REQUESTS_TOTAL.inc();
-        REQUEST_BODY_BYTES_TOTAL.inc_by(ctx.request_body.observed());
-        if error.is_some() {
-            REQUEST_ERRORS_TOTAL.inc();
-        }
-
-        info!(
-            "gateway_request status={status} outcome={outcome} request_body_bytes={}",
-            ctx.request_body.observed()
-        );
+        record_request(session, error, ctx.request_body.observed());
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::panic;
-
-    use super::{body_rejection_to_pingora, register_counter, RequestContext};
+    use super::{body_rejection_to_pingora, RequestContext};
     use crate::runtime_isolation::{
         BodyLimitExceeded, RequestAdmissionBudget, RuntimeIsolationLimits,
     };
     use pingora::prelude::{ErrorType, ProxyHttp};
-
-    #[test]
-    fn duplicate_metric_registration_fails_closed() {
-        let name = "cwl_pingora_gateway_test_duplicate_registration_total";
-        let help = "Coverage-only counter proving duplicate registration fails closed";
-        let _first = register_counter(name, help);
-
-        let duplicate = panic::catch_unwind(|| register_counter(name, help));
-
-        assert!(duplicate.is_err());
-    }
 
     #[test]
     fn admission_budget_rejects_at_capacity_and_recovers_after_release() {
