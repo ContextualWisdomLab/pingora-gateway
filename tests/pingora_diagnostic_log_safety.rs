@@ -14,6 +14,9 @@ use std::time::{Duration, Instant};
 
 use tempfile::NamedTempFile;
 
+const REDACTED_PINGORA_DIAGNOSTIC: &str =
+    "Pingora diagnostic message redacted by gateway payload-minimization policy";
+
 struct GatewayProcess {
     child: Option<Child>,
     stderr: NamedTempFile,
@@ -176,6 +179,7 @@ fn broad_runtime_diagnostics_do_not_log_request_secrets() {
         .expect("origin diagnostic fixture should complete");
 
     process.wait_until_stderr_contains("gateway_request status=200 outcome=ok request_body_bytes=0");
+    process.wait_until_stderr_contains(REDACTED_PINGORA_DIAGNOSTIC);
     let captured = process.capture_stderr();
     for forbidden in [
         "/diagnostic-secret",
