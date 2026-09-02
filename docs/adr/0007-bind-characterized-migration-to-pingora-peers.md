@@ -16,7 +16,7 @@ Introduce `MigrationDeliveryPlan` as a delivery adapter between a validated `Edg
 
 Every upstream admitted by the migration plan must have exactly one explicit `UpstreamConfig`. A concrete configuration whose normalized stable name is duplicated or absent from the migration plan fails closed. Concrete peers are created only through the existing `pingora_delivery::build_peer` path, retaining its TLS identity, trust-bundle, protocol, and timeout validation.
 
-Request-path selection remains owned by `EdgeMigrationPlan`; this adapter only resolves the selected stable identity to a prevalidated peer clone. A path with no characterized route receives no invented fallback destination. A selected identity without an activated peer fails closed.
+Count equality, unique configured names, and membership in the migration authority set together prove a complete one-to-one binding. Request-path selection remains owned by `EdgeMigrationPlan`; this adapter only resolves the selected stable identity to the prevalidated peer. A path with no characterized route receives no invented fallback destination.
 
 For the current `pg-erd-cloud` characterization, transport authority is therefore limited to explicit `backend` and `frontend` configurations. No request header, URI authority, DNS response, service registry, product datum, or runtime payload may introduce another destination.
 
@@ -24,7 +24,7 @@ For the current `pg-erd-cloud` characterization, transport authority is therefor
 
 RED commit `0435cd837cebe29f71204009f5af0a925d947ff1` adds an executable consumer contract before `migration_delivery` exists. It requires complete explicit `backend` / `frontend` binding, preserves `/healthz`, raw `/api` prefix including `/apiary`, and `/` fallback selection, and rejects missing, duplicate, and undeclared transport authority.
 
-GREEN begins at `e52cdf30bc69ff59eb74dd05f456daaee8dae9ce`, which implements the fail-closed binding and reuses the existing Pingora peer-construction adapter. Commit `1f29dbcccc5871c0270e88859f38f665bec39623` exposes the delivery boundary through the public library surface.
+GREEN begins at `e52cdf30bc69ff59eb74dd05f456daaee8dae9ce`, which implements the fail-closed binding and reuses the existing Pingora peer-construction adapter. Commit `1f29dbcccc5871c0270e88859f38f665bec39623` exposes the delivery boundary through the public library surface. The later `a9d37e217d56a83aa4d69aedbc9b7e31e5972303` refactor removes an unconstructable partial-map state by making the bijection invariant explicit, and `c62404fb3b5fb90b6a8f0cb086616e9230f0e8e9` exercises the concrete transport-validation failure path as well as successful binding and authority rejection.
 
 ## Responsibility boundary
 
