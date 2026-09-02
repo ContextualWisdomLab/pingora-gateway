@@ -4,11 +4,17 @@ This file links material technical/security claims to primary standards or upstr
 
 | Claim | Source |
 | --- | --- |
-| Pingora server/proxy composition and graceful server lifecycle | Cloudflare Pingora source at pinned commit `09696b51bc59315353d96686355861604d0bb48c`, the protected upstream `main` head revalidated on 2026-09-02 |
+| Pingora server/proxy composition and graceful server lifecycle | Cloudflare Pingora source at pinned commit `09696b51bc59315353d96686355861604d0bb48c`, the protected upstream `main` head revalidated on 2026-09-03 |
 | Pingora downstream sessions expose accepted client/server socket addresses; Pingora socket addresses expose IP socket values through `as_inet()` | `pingora-core/src/protocols/http/server.rs`, `pingora-proxy/tests/utils/server_utils.rs`, and `pingora-core/src/protocols/l4/socket.rs` at pinned commit `09696b51bc59315353d96686355861604d0bb48c`; these are the transport observations used by the pg-erd forwarding adapter |
 | Pingora's server default `max_retries` is 16, while the proxy loop copies that field and loops while its attempt counter is below the value | `pingora-core/src/server/configuration/mod.rs` and `pingora-proxy/src/lib.rs` at pinned commit `09696b51bc59315353d96686355861604d0bb48c`; CWL v1 therefore sets the field to `1` for one total attempt |
 | Graceful SIGTERM uses `grace_period_seconds` and `graceful_shutdown_timeout_seconds`, with framework fallbacks when unset | `pingora-core/src/server/mod.rs` and `pingora-core/src/server/configuration/mod.rs` at the pinned commit; CWL v1 sets 5 s grace and 10 s per-runtime graceful timeout explicitly inside a 30 s external termination budget |
-| Standard upstream request policy supports hop-by-hop/connection-nominated stripping and normalized WebSocket-only HTTP/1 upgrade forwarding | Cloudflare Pingora `HttpUpstreamRequestPolicy` / peer implementation at pinned commit `09696b51bc59315353d96686355861604d0bb48c` |
+| Pingora standard upstream request policy contains HTTP/1 hop-by-hop/connection-nominated handling and supplier WebSocket-upgrade support, but supplier capability is not itself an admitted CWL protocol-transition contract | Cloudflare Pingora `HttpUpstreamRequestPolicy` / peer implementation at pinned commit `09696b51bc59315353d96686355861604d0bb48c`; generic v1 and the bounded pg-erd candidate now reject uncharacterized HTTP/1 Upgrade before origin contact |
+| Pingora 0.8.1 has an open scheduler-dependent HTTP/1 Upgrade/WebSocket tunnel teardown where an upstream `101` can be observed before the request's empty-body completion task; the reported 2-CPU Linux reproduction survived only 34/40 upgrades while idle 10-core macOS survived 40/40 | Cloudflare Pingora issue #946, opened 2026-07-30 and revalidated open on 2026-09-03 |
+| Proposed supplier repair for the HTTP/1 Upgrade tunnel race exists but is not merged | Cloudflare Pingora PR #947, head `1e8488b0627370831832744fc6e65614396c310d`, open/non-Draft and unmerged when revalidated 2026-09-03 |
+| HTTP/1.1 `Upgrade` is an optional connection-wide protocol transition; a server may decline it | RFC 9110 §7.8 |
+| WebSocket over HTTP/1.1 uses a GET opening handshake with `Upgrade: websocket` / `Connection: Upgrade` and requires a successful `101 Switching Protocols` before the connection enters the WebSocket protocol | RFC 6455 §§1.2, 4 |
+| WebSocket over HTTP/2 is a distinct Extended CONNECT mechanism rather than HTTP/1 connection-wide Upgrade | RFC 8441 §§3-5 |
+| Current IETF security guidance for optimistic HTTP/1.1 protocol transitions identifies request-smuggling/parser risks, confirms rejected upgrades are normal, and specifically notes that RFC 6455 forbids optimistic WebSocket data before the server response | RFC 9931, March 2026, especially §§3-8 |
 | Pingora `read_timeout` is a per-individual-read inactivity budget and resets after each successful upstream `read()`; it is not a total-response lifetime bound | Cloudflare Pingora `docs/user_guide/peer.md` and `pingora-proxy/src/proxy_h1.rs` at pinned commit `09696b51bc59315353d96686355861604d0bb48c`; the pg-erd read-stall acceptance therefore characterizes a connected origin that sends no response bytes and deliberately does not claim slow-drip/whole-response bounding |
 | A proxy failure after the upstream response header has already been sent downstream cannot be replaced with a new error response or failover; Pingora logs/surfaces the error and gives up that request | Cloudflare Pingora `docs/user_guide/failover.md` and `pingora-proxy/src/proxy_h1.rs` at pinned commit `09696b51bc59315353d96686355861604d0bb48c`; this phase boundary is the basis of the dedicated pg-erd partial-response traffic contract |
 | Pingora HTTP/1 body framing treats a body that ends before its declared `Content-Length` as `PREMATURE_BODY_END`, while upstream read failures are propagated as failed proxy tasks | `pingora-core/src/protocols/http/v1/body.rs`, `pingora-core/src/protocols/http/v1/client.rs`, and `pingora-proxy/src/proxy_h1.rs` at pinned commit `09696b51bc59315353d96686355861604d0bb48c`; RFC 9112 defines HTTP/1.1 message framing requirements |
@@ -24,7 +30,7 @@ This file links material technical/security claims to primary standards or upstr
 | Current TLS 1.3 protocol semantics and application identity-verification responsibility | RFC 9846, published July 2026, which obsoletes RFC 8446 and points applications to RFC 9525 for identity verification |
 | New protocols using TLS must require TLS 1.3 | RFC 9852, BCP 195, July 2026; this gateway is not claiming a new application protocol and still requires explicit migration-time protocol compatibility evidence |
 | March 2026 Pingora request-smuggling/cache-key advisories are patched in 0.8.0 | GitHub Security Advisories GHSA-xq2h-p299-vjwv, GHSA-hj7x-879w-vrp7, GHSA-f93w-pcj3-rggc |
-| Pingora 0.8.1 remains the latest GitHub release revalidated on 2026-09-02 and bounds default HTTP/2 server limits | Cloudflare Pingora GitHub Releases, 0.8.1, 2026-06-04 |
+| Pingora 0.8.1 remains the latest GitHub release revalidated on 2026-09-03 and bounds default HTTP/2 server limits | Cloudflare Pingora GitHub Releases, 0.8.1, 2026-06-04 |
 | The pinned upstream head is seven commits after the prior security-resolution pin `6463ad6407a1d3fe256f1951dd0ecb054477e3f6`; the relevant retry/grace configuration remains unchanged at the new head | GitHub compare `6463ad6...09696b5` plus the exact `ServerConf` source at `09696b5` |
 | Rust 1.98.0 is the latest stable toolchain observed on 2026-09-01 | Rust Release Team, Rust 1.98.0 announcement, 2026-08-20 |
 | OCI runtime-spec 1.3.0 is the latest released runtime specification observed on 2026-09-01 | Open Container Initiative runtime-spec v1.3.0 release notice, 2025-11-04; runtime hardening claims still require executable container evidence |
@@ -58,6 +64,10 @@ Cloudflare. (n.d.). *Pingora server lifecycle* [Source code, commit 09696b51bc59
 
 Cloudflare. (n.d.). *Pingora proxy implementation* [Source code, commit 09696b51bc59315353d96686355861604d0bb48c]. GitHub. https://github.com/cloudflare/pingora/blob/09696b51bc59315353d96686355861604d0bb48c/pingora-proxy/src/lib.rs
 
+dorianverlaine. (2026, July 30). *HTTP/1 upgrade torn down when the upstream's 101 is read before the request's empty body* [GitHub issue #946]. Cloudflare Pingora. https://github.com/cloudflare/pingora/issues/946
+
+dorianverlaine. (2026, August 4). *Keep an upgraded tunnel open when the request body ends after 101* [GitHub pull request #947]. Cloudflare Pingora. https://github.com/cloudflare/pingora/pull/947
+
 Cloudflare. (2026). *HTTP request smuggling via premature upgrade* (GHSA-xq2h-p299-vjwv). GitHub Security Advisories. https://github.com/cloudflare/pingora/security/advisories/GHSA-xq2h-p299-vjwv
 
 Cloudflare. (2026). *HTTP request smuggling via HTTP/1.0 and Transfer-Encoding misparsing* (GHSA-hj7x-879w-vrp7). GitHub Security Advisories. https://github.com/cloudflare/pingora/security/advisories/GHSA-hj7x-879w-vrp7
@@ -71,6 +81,12 @@ Traefik Labs. (n.d.). *Traefik EntryPoints: Forwarded headers*. https://doc.trae
 Fielding, R., Nottingham, M., & Reschke, J. (2022). *HTTP semantics* (RFC 9110). RFC Editor. https://www.rfc-editor.org/rfc/rfc9110
 
 Nottingham, M. (2022). *HTTP/1.1* (RFC 9112). RFC Editor. https://www.rfc-editor.org/rfc/rfc9112
+
+Fette, I., & Melnikov, A. (2011). *The WebSocket protocol* (RFC 6455). RFC Editor. https://www.rfc-editor.org/rfc/rfc6455
+
+McManus, P. (2018). *Bootstrapping WebSockets with HTTP/2* (RFC 8441). RFC Editor. https://www.rfc-editor.org/rfc/rfc8441
+
+Schwartz, B. M. (2026). *Security considerations for optimistic protocol transitions in HTTP/1.1* (RFC 9931). RFC Editor. https://www.rfc-editor.org/rfc/rfc9931
 
 Thomson, M., & Benfield, C. (2022). *HTTP/2* (RFC 9113). RFC Editor. https://www.rfc-editor.org/rfc/rfc9113
 
