@@ -5,6 +5,9 @@ import os
 import socket
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+PORT = int(os.environ.get("UPSTREAM_PORT", "18081"))
+PAYLOAD = os.environ.get("UPSTREAM_PAYLOAD", "upstream-ok").encode("ascii")
+
 
 class Handler(BaseHTTPRequestHandler):
     """Serve a tiny fixed response without logging per-request noise."""
@@ -18,12 +21,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         """Return the configured fixed payload used to prove proxy correctness under concurrency."""
-        payload = os.environ.get("UPSTREAM_PAYLOAD", "upstream-ok").encode("ascii")
         self.send_response(200)
         self.send_header("Content-Type", "text/plain")
-        self.send_header("Content-Length", str(len(payload)))
+        self.send_header("Content-Length", str(len(PAYLOAD)))
         self.end_headers()
-        self.wfile.write(payload)
+        self.wfile.write(PAYLOAD)
         self.wfile.flush()
 
     def log_message(self, format: str, *args: object) -> None:
@@ -31,7 +33,6 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    port = int(os.environ.get("UPSTREAM_PORT", "18081"))
-    server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     server.daemon_threads = True
     server.serve_forever()
