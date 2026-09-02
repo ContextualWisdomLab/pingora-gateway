@@ -1,7 +1,8 @@
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 use cwl_pingora_gateway::edge_contract::{UpstreamConfig, UpstreamTimeouts};
 use cwl_pingora_gateway::edge_routing::{RouteMatch, RouteRule};
+use cwl_pingora_gateway::forwarding_policy::{DownstreamScheme, ForwardingContext};
 use cwl_pingora_gateway::http_policy::ResponseHeaderRule;
 use cwl_pingora_gateway::migration_delivery::MigrationDeliveryPlan;
 use cwl_pingora_gateway::migration_plan::EdgeMigrationPlan;
@@ -189,43 +190,56 @@ fn migration_proxy_applies_the_complete_characterized_response_policy() {
 }
 
 #[test]
-fn migration_proxy_replaces_untrusted_forwarding_identity() {
+fn migration_proxy_replaces_untrusted_forwarding_identity_from_transport_context() {
     let proxy = proxy();
     let mut request =
         RequestHeader::build("GET", b"/api", None).expect("fixture request must be valid");
+    request
+        .insert_header("Host", "app.example:8080")
+        .expect("fixture host must be valid");
     for (name, value) in [
         ("Forwarded", "for=203.0.113.7;proto=https"),
         ("X-Forwarded-For", "203.0.113.7"),
         ("X-Forwarded-Host", "attacker.example"),
+        ("X-Forwarded-Port", "443"),
         ("X-Forwarded-Proto", "https"),
+        ("X-Forwarded-Server", "attacker-proxy"),
         ("X-Real-IP", "203.0.113.7"),
     ] {
         request
             .insert_header(name, value)
             .expect("fixture forwarding field must be valid");
     }
+    let forwarding = ForwardingContext::new(
+        IpAddr::V4(Ipv4Addr::new(198, 51, 100, 19)),
+        "app.example:8080".to_string(),
+        8080,
+        DownstreamScheme::Http,
+    );
 
     proxy
-        .apply_upstream_request_policy(&mut request)
-        .expect("static trusted forwarding policy must be valid");
+        .apply_upstream_request_policy(&mut request, &forwarding)
+        .expect("transport-derived forwarding policy must be valid");
 
+    assert!(request.headers.get("forwarded").is_none());
     assert_eq!(
-        request
-            .headers
-            .get("forwarded")
-            .expect("trusted Forwarded field must be present")
-            .to_str()
-            .expect("Forwarded field must be text"),
-        "proto=http"
+        request.headers["x-forwarded-for"].to_str().unwrap(),
+        "198.51.100.19"
     );
-    for removed in [
-        "x-forwarded-for",
-        "x-forwarded-host",
-        "x-forwarded-proto",
-        "x-real-ip",
-    ] {
-        assert!(request.headers.get(removed).is_none());
-    }
+    assert_eq!(
+        request.headers["x-real-ip"].to_str().unwrap(),
+        "198.51.100.19"
+    );
+    assert_eq!(
+        request.headers["x-forwarded-host"].to_str().unwrap(),
+        "app.example:8080"
+    );
+    assert_eq!(request.headers["x-forwarded-port"].to_str().unwrap(), "8080");
+    assert_eq!(
+        request.headers["x-forwarded-proto"].to_str().unwrap(),
+        "http"
+    );
+    assert!(request.headers.get("x-forwarded-server").is_none());
 }
 
 #[test]
