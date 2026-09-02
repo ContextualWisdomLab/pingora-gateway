@@ -57,3 +57,24 @@ fn generic_gateway_preserves_distinct_listener_authority() {
         );
     }
 }
+
+#[test]
+fn generic_gateway_rejects_ephemeral_listener_and_unusable_upstream_ports() {
+    assert_eq!(
+        GatewayConfig::from_yaml(&generic_gateway_yaml("127.0.0.1:0", "127.0.0.1:6192")),
+        Err(GatewayConfigError::ZeroListenerPort)
+    );
+    assert_eq!(
+        GatewayConfig::from_yaml(&generic_gateway_yaml("127.0.0.1:6188", "127.0.0.1:0")),
+        Err(GatewayConfigError::ZeroMetricsListenerPort)
+    );
+
+    let zero_upstream = generic_gateway_yaml("127.0.0.1:6188", "127.0.0.1:6192")
+        .replace("address: 127.0.0.1:8080", "address: 127.0.0.1:0");
+    assert_eq!(
+        GatewayConfig::from_yaml(&zero_upstream),
+        Err(GatewayConfigError::ZeroUpstreamPort {
+            upstream_name: "application".to_string(),
+        })
+    );
+}
