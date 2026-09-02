@@ -11,6 +11,8 @@ pub mod gateway_proxy;
 pub mod http_policy;
 pub mod migration_delivery;
 pub mod migration_plan;
+pub mod migration_proxy;
 pub mod pingora_delivery;
+pub mod runtime_isolation;
 pub mod runtime_policy;
 pub mod startup;
