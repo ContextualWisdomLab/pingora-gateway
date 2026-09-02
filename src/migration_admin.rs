@@ -22,10 +22,11 @@ use crate::migration_plan::EdgeMigrationPlan;
 use crate::migration_proxy::MigrationGatewayProxy;
 use crate::runtime_isolation::{RuntimeIsolationConfigError, RuntimeIsolationLimits};
 
-const PG_ERD_LEGACY_MIGRATION_CONFIG_VERSION: u32 = 1;
+/// Original bounded `pg-erd-cloud` migration configuration version without a body-lifetime budget.
+pub const PG_ERD_MIGRATION_CONFIG_VERSION: u32 = 1;
 
-/// Current version of the bounded `pg-erd-cloud` migration admin configuration.
-pub const PG_ERD_MIGRATION_CONFIG_VERSION: u32 = 2;
+/// Opt-in pg-erd configuration version that requires an explicit response-body lifetime budget.
+pub const PG_ERD_RESPONSE_LIFETIME_CONFIG_VERSION: u32 = 2;
 
 /// Fail-closed admin configuration for the characterized `pg-erd-cloud` migration runtime.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -51,10 +52,7 @@ pub enum PgErdMigrationConfigError {
     /// The configuration requests a migration-admin version this binary does not implement.
     #[error("unsupported pg-erd migration configuration version {0}")]
     UnsupportedVersion(u32),
-    /// Current version 2 requires an explicit response-body lifetime instead of a hidden default.
-    #[error("pg-erd migration config version 2 requires max_upstream_response_body_ms")]
-    MissingUpstreamResponseBodyLifetime,
-    /// Legacy version 1 cannot silently acquire semantics introduced by version 2.
+    /// Version 1 cannot silently acquire semantics introduced by the version-2 contract.
     #[error("max_upstream_response_body_ms requires pg-erd migration config version 2")]
     ResponseBodyLifetimeRequiresVersion2,
     /// A port-zero traffic listener would delegate the public authority to an ephemeral OS port.
@@ -131,7 +129,7 @@ impl PgErdMigrationConfig {
         self.metrics_listener
     }
 
-    /// Returns the current response-body lifetime budget, or `None` for legacy version 1.
+    /// Returns the explicit response-body lifetime when the version-2 contract is active.
     pub fn max_upstream_response_body_ms(&self) -> Option<u64> {
         self.max_upstream_response_body_ms
     }
@@ -154,14 +152,16 @@ impl PgErdMigrationConfig {
 
     fn validate(&self) -> Result<(), PgErdMigrationConfigError> {
         match self.version {
-            PG_ERD_LEGACY_MIGRATION_CONFIG_VERSION => {
+            PG_ERD_MIGRATION_CONFIG_VERSION => {
                 if self.max_upstream_response_body_ms.is_some() {
                     return Err(PgErdMigrationConfigError::ResponseBodyLifetimeRequiresVersion2);
                 }
             }
-            PG_ERD_MIGRATION_CONFIG_VERSION => {
+            PG_ERD_RESPONSE_LIFETIME_CONFIG_VERSION => {
                 if self.max_upstream_response_body_ms.is_none() {
-                    return Err(PgErdMigrationConfigError::MissingUpstreamResponseBodyLifetime);
+                    return Err(PgErdMigrationConfigError::UnsupportedVersion(
+                        PG_ERD_RESPONSE_LIFETIME_CONFIG_VERSION,
+                    ));
                 }
             }
             unsupported => return Err(PgErdMigrationConfigError::UnsupportedVersion(unsupported)),
