@@ -435,3 +435,128 @@ upstreams:
         })
     );
 }
+
+#[test]
+fn rejects_upstream_overlap_with_gateway_owned_listeners() {
+    let traffic_collision = with_runtime_limits(
+        r#"
+version: 1
+listener: 127.0.0.1:6188
+upstreams:
+  - name: api
+    address: 127.0.0.1:6188
+    tls: false
+    timeouts:
+      connection_ms: 1250
+      total_connection_ms: 2500
+      read_ms: 7500
+      write_ms: 6500
+      idle_ms: 15000
+"#,
+    );
+    assert_eq!(
+        GatewayConfig::from_yaml(&traffic_collision),
+        Err(GatewayConfigError::UpstreamListenerCollision {
+            upstream_name: "api".to_string(),
+        })
+    );
+
+    let metrics_collision = with_runtime_limits(
+        r#"
+version: 1
+listener: 127.0.0.1:6188
+upstreams:
+  - name: api
+    address: 127.0.0.1:6192
+    tls: false
+    timeouts:
+      connection_ms: 1250
+      total_connection_ms: 2500
+      read_ms: 7500
+      write_ms: 6500
+      idle_ms: 15000
+"#,
+    );
+    assert_eq!(
+        GatewayConfig::from_yaml(&metrics_collision),
+        Err(GatewayConfigError::UpstreamMetricsListenerCollision {
+            upstream_name: "api".to_string(),
+        })
+    );
+}
+
+#[test]
+fn rejects_wildcard_upstream_aliases_but_preserves_distinct_concrete_authority() {
+    let wildcard_traffic = r#"
+version: 1
+listener: 0.0.0.0:6188
+metrics_listener: 127.0.0.1:6192
+max_request_body_bytes: 1048576
+max_in_flight_requests: 128
+upstream_keepalive_pool_size: 32
+upstreams:
+  - name: api
+    address: 127.0.0.1:6188
+    tls: false
+    timeouts:
+      connection_ms: 1250
+      total_connection_ms: 2500
+      read_ms: 7500
+      write_ms: 6500
+      idle_ms: 15000
+"#;
+    assert_eq!(
+        GatewayConfig::from_yaml(wildcard_traffic),
+        Err(GatewayConfigError::UpstreamListenerCollision {
+            upstream_name: "api".to_string(),
+        })
+    );
+
+    let dual_stack_metrics = r#"
+version: 1
+listener: 127.0.0.1:6188
+metrics_listener: [::]:6192
+max_request_body_bytes: 1048576
+max_in_flight_requests: 128
+upstream_keepalive_pool_size: 32
+upstreams:
+  - name: api
+    address: 127.0.0.1:6192
+    tls: false
+    timeouts:
+      connection_ms: 1250
+      total_connection_ms: 2500
+      read_ms: 7500
+      write_ms: 6500
+      idle_ms: 15000
+"#;
+    assert_eq!(
+        GatewayConfig::from_yaml(dual_stack_metrics),
+        Err(GatewayConfigError::UpstreamMetricsListenerCollision {
+            upstream_name: "api".to_string(),
+        })
+    );
+
+    let distinct_specific = r#"
+version: 1
+listener: 127.0.0.1:6188
+metrics_listener: 127.0.0.1:6192
+max_request_body_bytes: 1048576
+max_in_flight_requests: 128
+upstream_keepalive_pool_size: 32
+upstreams:
+  - name: api
+    address: 127.0.0.2:6188
+    tls: false
+    timeouts:
+      connection_ms: 1250
+      total_connection_ms: 2500
+      read_ms: 7500
+      write_ms: 6500
+      idle_ms: 15000
+"#;
+    assert!(
+        GatewayConfig::from_yaml(distinct_specific).is_ok(),
+        "same-port distinct concrete IP authorities must remain configurable"
+    );
+}
