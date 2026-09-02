@@ -127,6 +127,7 @@ fn broad_runtime_diagnostics_do_not_log_request_secrets() {
         let request = read_request_headers(&mut stream);
         let lower = request.to_ascii_lowercase();
         assert!(lower.starts_with("get /diagnostic-secret?token=query-secret http/1.1\r\n"));
+        assert!(lower.contains("host: host-secret.example\r\n"));
         assert!(lower.contains("authorization: bearer authorization-secret\r\n"));
         assert!(lower.contains("cookie: session=cookie-secret\r\n"));
         stream
@@ -162,7 +163,7 @@ fn broad_runtime_diagnostics_do_not_log_request_secrets() {
         .expect("downstream timeout should be configurable");
     downstream
         .write_all(
-            b"GET /diagnostic-secret?token=query-secret HTTP/1.1\r\nHost: app.example\r\nAuthorization: Bearer authorization-secret\r\nCookie: session=cookie-secret\r\nConnection: close\r\n\r\n",
+            b"GET /diagnostic-secret?token=query-secret HTTP/1.1\r\nHost: host-secret.example\r\nAuthorization: Bearer authorization-secret\r\nCookie: session=cookie-secret\r\nConnection: close\r\n\r\n",
         )
         .expect("request should be writable");
     let mut response = String::new();
@@ -179,6 +180,7 @@ fn broad_runtime_diagnostics_do_not_log_request_secrets() {
     for forbidden in [
         "/diagnostic-secret",
         "query-secret",
+        "host-secret.example",
         "authorization-secret",
         "cookie-secret",
     ] {
