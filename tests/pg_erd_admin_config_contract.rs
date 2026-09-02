@@ -97,12 +97,15 @@ fn pg_erd_admin_config_rejects_listener_collision_and_zero_keepalive() {
 }
 
 #[test]
-fn pg_erd_admin_config_rejects_missing_extra_or_renamed_transport_authority() {
+fn pg_erd_admin_config_rejects_missing_extra_duplicate_or_renamed_transport_authority() {
     let only_backend = config_yaml(&upstream_yaml("backend", 8000));
-    assert!(matches!(
+    assert_eq!(
         PgErdMigrationConfig::from_yaml(&only_backend),
-        Err(PgErdMigrationConfigError::Delivery(_))
-    ));
+        Err(PgErdMigrationConfigError::TransportAuthorityCountMismatch {
+            expected: 2,
+            actual: 1,
+        })
+    );
 
     let extra = config_yaml(&format!(
         "{}{}{}",
@@ -110,20 +113,37 @@ fn pg_erd_admin_config_rejects_missing_extra_or_renamed_transport_authority() {
         upstream_yaml("frontend", 3000),
         upstream_yaml("shadow", 4000)
     ));
-    assert!(matches!(
+    assert_eq!(
         PgErdMigrationConfig::from_yaml(&extra),
-        Err(PgErdMigrationConfigError::Delivery(_))
+        Err(PgErdMigrationConfigError::TransportAuthorityCountMismatch {
+            expected: 2,
+            actual: 3,
+        })
+    );
+
+    let duplicate = config_yaml(&format!(
+        "{}{}",
+        upstream_yaml("backend", 8000),
+        upstream_yaml("backend", 8001)
     ));
+    assert_eq!(
+        PgErdMigrationConfig::from_yaml(&duplicate),
+        Err(PgErdMigrationConfigError::DuplicateTransportAuthority {
+            upstream_name: "backend".to_string(),
+        })
+    );
 
     let renamed = config_yaml(&format!(
         "{}{}",
         upstream_yaml("api", 8000),
         upstream_yaml("frontend", 3000)
     ));
-    assert!(matches!(
+    assert_eq!(
         PgErdMigrationConfig::from_yaml(&renamed),
-        Err(PgErdMigrationConfigError::Delivery(_))
-    ));
+        Err(PgErdMigrationConfigError::UnknownTransportAuthority {
+            upstream_name: "api".to_string(),
+        })
+    );
 }
 
 #[test]
