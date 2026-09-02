@@ -5,12 +5,13 @@
 //! budgets, but cannot add routes, rename migration authorities, inject product authentication or
 //! widen arbitrary per-request network authority through configuration.
 
+use std::collections::HashSet;
 use std::net::SocketAddr;
 
 use serde::Deserialize;
 use thiserror::Error;
 
-use crate::edge_contract::UpstreamConfig;
+use crate::edge_contract::{GatewayConfigError, UpstreamConfig};
 use crate::edge_routing::{RouteMatch, RouteRule};
 use crate::http_policy::ResponseHeaderRule;
 use crate::migration_delivery::{MigrationDeliveryError, MigrationDeliveryPlan};
@@ -49,10 +50,35 @@ pub enum PgErdMigrationConfigError {
     /// A zero keepalive pool would silently change upstream connection-capacity behavior.
     #[error("upstream_keepalive_pool_size must be greater than zero")]
     InvalidUpstreamKeepalivePoolSize,
+    /// The concrete authority set must be a complete bijection over the characterized plan.
+    #[error(
+        "pg-erd migration transport authority count mismatch: expected {expected}, received {actual}"
+    )]
+    TransportAuthorityCountMismatch {
+        /// Number of upstream identities admitted by the characterized migration plan.
+        expected: usize,
+        /// Number of concrete transport bindings supplied by the operator.
+        actual: usize,
+    },
+    /// One characterized stable upstream identity cannot be configured twice.
+    #[error("duplicate pg-erd migration transport authority: {upstream_name}")]
+    DuplicateTransportAuthority {
+        /// Duplicate normalized upstream identity.
+        upstream_name: String,
+    },
+    /// Operator configuration may bind only identities admitted by the characterized plan.
+    #[error("unknown pg-erd migration transport authority: {upstream_name}")]
+    UnknownTransportAuthority {
+        /// Concrete upstream identity outside the characterized migration plan.
+        upstream_name: String,
+    },
+    /// One supplied upstream violates the transport-neutral upstream contract.
+    #[error(transparent)]
+    UpstreamConfiguration(#[from] GatewayConfigError),
     /// The fixed route/header migration plan itself failed validation.
     #[error(transparent)]
     Plan(#[from] MigrationPlanError),
-    /// Concrete transport authorities do not exactly bind the characterized migration plan.
+    /// Concrete transport authorities could not be materialized into Pingora peers.
     #[error(transparent)]
     Delivery(#[from] MigrationDeliveryError),
     /// Runtime-isolation budgets are invalid.
@@ -64,7 +90,11 @@ pub enum PgErdMigrationConfigError {
 }
 
 impl PgErdMigrationConfig {
-    /// Parses and fully validates the bounded migration configuration before any listener starts.
+    /// Parses and validates authority and runtime invariants without activating network I/O.
+    ///
+    /// Trust-bundle files are intentionally not loaded here. They are materialized exactly once by
+    /// [`Self::build_proxy`] immediately before the composition root creates listeners, avoiding a
+    /// validate-then-reload time-of-check/time-of-use window for operator-supplied trust material.
     pub fn from_yaml(input: &str) -> Result<Self, PgErdMigrationConfigError> {
         let config: Self = serde_yaml::from_str(input)
             .map_err(|error| PgErdMigrationConfigError::Parse(error.to_string()))?;
@@ -91,6 +121,7 @@ impl PgErdMigrationConfig {
     ///
     /// The route table and response-header policy are compiled into this bounded migration profile;
     /// configuration can bind only the concrete `backend` and `frontend` transport authorities.
+    /// Any custom TLS trust bundle is read by Pingora delivery during this single materialization.
     pub fn build_proxy(&self) -> Result<MigrationGatewayProxy, PgErdMigrationConfigError> {
         let delivery = self.build_delivery()?;
         let limits = RuntimeIsolationLimits::try_new(
@@ -115,7 +146,38 @@ impl PgErdMigrationConfig {
             self.max_request_body_bytes,
             self.max_in_flight_requests,
         )?;
-        self.build_delivery()?;
+        let plan = pg_erd_migration_plan()?;
+        self.validate_transport_authority(&plan)
+    }
+
+    fn validate_transport_authority(
+        &self,
+        plan: &EdgeMigrationPlan,
+    ) -> Result<(), PgErdMigrationConfigError> {
+        let expected = plan.upstream_count();
+        let actual = self.upstreams.len();
+        if actual != expected {
+            return Err(PgErdMigrationConfigError::TransportAuthorityCountMismatch {
+                expected,
+                actual,
+            });
+        }
+
+        let mut configured_names = HashSet::with_capacity(actual);
+        for upstream in &self.upstreams {
+            upstream.validate()?;
+            let upstream_name = upstream.name.trim().to_string();
+            if !configured_names.insert(upstream_name.clone()) {
+                return Err(PgErdMigrationConfigError::DuplicateTransportAuthority {
+                    upstream_name,
+                });
+            }
+            if !plan.contains_upstream(&upstream_name) {
+                return Err(PgErdMigrationConfigError::UnknownTransportAuthority {
+                    upstream_name,
+                });
+            }
+        }
         Ok(())
     }
 
