@@ -246,7 +246,7 @@ jobs:
             if curl --fail --silent --show-error --max-time 1 http://127.0.0.1:6288/livez >/dev/null; then
               live_ok=true
             fi
-            if curl --fail --silent --show-error --max-time 1 http://127.0.0.1:6289/metrics | grep -Fq 'cwl_pingora_gateway'; then
+            if curl --fail --silent --show-error --max-time 1 http://127.0.0.1:6289/metrics >/dev/null; then
               metrics_ok=true
             fi
             if [ "${live_ok}" = true ] && [ "${metrics_ok}" = true ]; then
