@@ -14,6 +14,7 @@ use thiserror::Error;
 use crate::forwarding_policy::{DownstreamScheme, ForwardingContext};
 use crate::migration_delivery::MigrationDeliveryPlan;
 use crate::observability::{record_backpressure_rejection, record_request};
+use crate::process_health::{respond_healthy, LIVENESS_PATH, READINESS_PATH};
 use crate::runtime_isolation::{
     BodyLimitExceeded, RequestAdmission, RequestAdmissionBudget, RequestBodyBudget,
     RuntimeIsolationLimits,
@@ -206,9 +207,17 @@ impl ProxyHttp for MigrationGatewayProxy {
     where
         Self::CTX: Send + Sync,
     {
-        self.admit_request(ctx)?;
-        Self::reject_oversize_declared_body(session, ctx)?;
-        Ok(false)
+        match session.req_header().uri.path() {
+            LIVENESS_PATH | READINESS_PATH => {
+                respond_healthy(session).await?;
+                Ok(true)
+            }
+            _ => {
+                self.admit_request(ctx)?;
+                Self::reject_oversize_declared_body(session, ctx)?;
+                Ok(false)
+            }
+        }
     }
 
     async fn request_body_filter(
