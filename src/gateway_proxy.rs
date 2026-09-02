@@ -119,6 +119,22 @@ fn body_rejection_to_pingora(rejection: BodyLimitExceeded) -> Box<Error> {
     )
 }
 
+fn sanitize_forwarding_headers(upstream_request: &mut RequestHeader) -> pingora::Result<()> {
+    for header in [
+        "Forwarded",
+        "X-Forwarded-For",
+        "X-Forwarded-Host",
+        "X-Forwarded-Port",
+        "X-Forwarded-Proto",
+        "X-Forwarded-Server",
+        "X-Real-IP",
+    ] {
+        upstream_request.remove_header(header);
+    }
+    upstream_request.insert_header("Forwarded", "proto=http")?;
+    Ok(())
+}
+
 #[async_trait]
 impl ProxyHttp for GatewayProxy {
     type CTX = RequestContext;
@@ -181,17 +197,7 @@ impl ProxyHttp for GatewayProxy {
     where
         Self::CTX: Send + Sync,
     {
-        for header in [
-            "Forwarded",
-            "X-Forwarded-For",
-            "X-Forwarded-Host",
-            "X-Forwarded-Proto",
-            "X-Real-IP",
-        ] {
-            upstream_request.remove_header(header);
-        }
-        upstream_request.insert_header("Forwarded", "proto=http")?;
-        Ok(())
+        sanitize_forwarding_headers(upstream_request)
     }
 
     async fn logging(&self, session: &mut Session, error: Option<&Error>, ctx: &mut Self::CTX)
@@ -231,7 +237,7 @@ mod tests {
         sanitize_forwarding_headers(&mut request)
             .expect("gateway-owned forwarding metadata must remain valid");
 
-        assert_eq!(request.headers["forwarded"], "proto=http");
+        assert_eq!(request.headers["forwarded"].to_str().unwrap(), "proto=http");
         for name in [
             "x-forwarded-for",
             "x-forwarded-host",
