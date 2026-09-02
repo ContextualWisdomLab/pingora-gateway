@@ -86,9 +86,21 @@ pub enum GatewayConfigError {
     /// The configuration requests a contract version this binary does not implement.
     #[error("unsupported gateway configuration version {0}")]
     UnsupportedVersion(u32),
+    /// Port zero would delegate the traffic listener to an ephemeral OS-selected authority.
+    #[error("listener must use a non-zero port")]
+    ZeroListenerPort,
+    /// Port zero would make the declared metrics endpoint indeterminate.
+    #[error("metrics_listener must use a non-zero port")]
+    ZeroMetricsListenerPort,
     /// Traffic and metrics endpoints must never overlap the same effective socket authority.
     #[error("listener and metrics_listener socket authorities must not overlap")]
     ListenerCollision,
+    /// An approved upstream must identify a concrete, connectable transport port.
+    #[error("upstream {upstream_name} must use a non-zero port")]
+    ZeroUpstreamPort {
+        /// Stable upstream whose transport binding used port zero.
+        upstream_name: String,
+    },
     /// A zero request-body limit would reject every body and is almost certainly misconfiguration.
     #[error("max_request_body_bytes must be greater than zero")]
     InvalidRequestBodyLimit,
@@ -179,6 +191,12 @@ impl GatewayConfig {
         if self.version != CURRENT_GATEWAY_CONFIG_VERSION {
             return Err(GatewayConfigError::UnsupportedVersion(self.version));
         }
+        if self.listener.port() == 0 {
+            return Err(GatewayConfigError::ZeroListenerPort);
+        }
+        if self.metrics_listener.port() == 0 {
+            return Err(GatewayConfigError::ZeroMetricsListenerPort);
+        }
         if socket_authorities_overlap(self.listener, self.metrics_listener) {
             return Err(GatewayConfigError::ListenerCollision);
         }
@@ -245,6 +263,11 @@ impl UpstreamConfig {
         let normalized_name = self.name.trim();
         if normalized_name.is_empty() {
             return Err(GatewayConfigError::EmptyUpstreamName);
+        }
+        if self.address.port() == 0 {
+            return Err(GatewayConfigError::ZeroUpstreamPort {
+                upstream_name: normalized_name.to_string(),
+            });
         }
 
         match (self.tls, self.sni.as_deref()) {
