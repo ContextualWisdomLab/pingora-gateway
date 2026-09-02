@@ -167,6 +167,15 @@ fn compiled_pg_erd_shared_access_log_excludes_request_sensitive_material() {
         .join()
         .expect("backend sensitive-material fixture should complete");
 
+    let metrics = raw_request(
+        metrics_address,
+        b"GET /metrics HTTP/1.1\r\nHost: metrics\r\nConnection: close\r\n\r\n",
+    );
+    assert!(
+        metrics.contains("cwl_pingora_gateway_requests_total 1"),
+        "metrics scrape should prove the proxied request reached shared completion recording before log capture: {metrics:?}"
+    );
+
     let stderr = process.capture_stderr();
     let request_logs: Vec<_> = stderr
         .lines()
