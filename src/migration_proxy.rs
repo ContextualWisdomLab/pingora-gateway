@@ -1,7 +1,8 @@
 //! Pingora callback adapter for one characterized multi-route edge migration.
 //!
-//! The adapter composes transport-neutral routing, HTTP policy, transport binding, and runtime
-//! isolation. It does not introduce product authorization, service discovery, or business logic.
+//! The adapter composes transport-neutral routing, HTTP policy, transport binding, runtime
+//! isolation, and shared transport observability. It does not introduce product authorization,
+//! service discovery, or business logic.
 
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -11,6 +12,7 @@ use pingora::prelude::{
 use thiserror::Error;
 
 use crate::migration_delivery::MigrationDeliveryPlan;
+use crate::observability::{record_backpressure_rejection, record_request};
 use crate::runtime_isolation::{
     BodyLimitExceeded, RequestAdmission, RequestAdmissionBudget, RequestBodyBudget,
     RuntimeIsolationLimits,
@@ -108,6 +110,7 @@ impl MigrationGatewayProxy {
             return Ok(());
         }
 
+        record_backpressure_rejection();
         Err(Error::explain(
             ErrorType::HTTPStatus(503),
             "migration gateway max_in_flight_requests budget exhausted",
@@ -217,6 +220,13 @@ impl ProxyHttp for MigrationGatewayProxy {
         Self::CTX: Send + Sync,
     {
         self.apply_response_headers(upstream_response)
+    }
+
+    async fn logging(&self, session: &mut Session, error: Option<&Error>, ctx: &mut Self::CTX)
+    where
+        Self::CTX: Send + Sync,
+    {
+        record_request(session, error, ctx.request_body.observed());
     }
 }
 
