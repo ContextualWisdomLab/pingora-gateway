@@ -6,6 +6,7 @@ use cwl_pingora_gateway::http_policy::ResponseHeaderRule;
 use cwl_pingora_gateway::migration_delivery::MigrationDeliveryPlan;
 use cwl_pingora_gateway::migration_plan::EdgeMigrationPlan;
 use cwl_pingora_gateway::migration_proxy::{MigrationGatewayProxy, MigrationGatewayProxyError};
+use cwl_pingora_gateway::observability::{RequestObservation, RequestOutcome};
 use cwl_pingora_gateway::runtime_isolation::RuntimeIsolationLimits;
 use pingora::prelude::{ProxyHttp, RequestHeader, ResponseHeader};
 use pingora::upstreams::peer::Peer;
@@ -225,4 +226,17 @@ fn migration_proxy_replaces_untrusted_forwarding_identity() {
     ] {
         assert!(request.headers.get(removed).is_none());
     }
+}
+
+#[test]
+fn migration_runtime_observation_is_low_cardinality_and_payload_free() {
+    let ok = RequestObservation::from_parts(200, false, 4096);
+    assert_eq!(ok.status(), 200);
+    assert_eq!(ok.outcome(), RequestOutcome::Ok);
+    assert_eq!(ok.request_body_bytes(), 4096);
+
+    let failed = RequestObservation::from_parts(502, true, 17);
+    assert_eq!(failed.status(), 502);
+    assert_eq!(failed.outcome(), RequestOutcome::Error);
+    assert_eq!(failed.request_body_bytes(), 17);
 }
