@@ -1,8 +1,8 @@
 //! Pingora callback adapter for one characterized multi-route edge migration.
 //!
 //! The adapter composes transport-neutral routing, HTTP policy, transport binding, runtime
-//! isolation, and shared transport observability. It does not introduce product authorization,
-//! service discovery, or business logic.
+//! isolation, trusted forwarding metadata, and shared transport observability. It does not
+//! introduce product authorization, service discovery, or business logic.
 
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -11,6 +11,7 @@ use pingora::prelude::{
 };
 use thiserror::Error;
 
+use crate::forwarding_policy::{DownstreamScheme, ForwardingContext};
 use crate::migration_delivery::MigrationDeliveryPlan;
 use crate::observability::{record_backpressure_rejection, record_request};
 use crate::runtime_isolation::{
@@ -78,22 +79,13 @@ impl MigrationGatewayProxy {
             })
     }
 
-    /// Replaces untrusted forwarding identity with the gateway-owned transport assertion.
+    /// Replaces request-controlled forwarding identity with transport-derived metadata.
     pub fn apply_upstream_request_policy(
         &self,
         upstream_request: &mut RequestHeader,
+        forwarding: &ForwardingContext,
     ) -> pingora::Result<()> {
-        for header in [
-            "Forwarded",
-            "X-Forwarded-For",
-            "X-Forwarded-Host",
-            "X-Forwarded-Proto",
-            "X-Real-IP",
-        ] {
-            upstream_request.remove_header(header);
-        }
-        upstream_request.insert_header("Forwarded", "proto=http")?;
-        Ok(())
+        forwarding.apply(upstream_request)
     }
 
     /// Applies every characterized edge-owned response header using replacement semantics.
@@ -134,6 +126,53 @@ impl MigrationGatewayProxy {
         }
         Ok(())
     }
+}
+
+fn pg_erd_forwarding_context(
+    session: &Session,
+    upstream_request: &RequestHeader,
+) -> pingora::Result<ForwardingContext> {
+    let client_ip = session
+        .client_addr()
+        .and_then(|address| address.as_inet())
+        .map(|address| address.ip())
+        .ok_or_else(|| {
+            Error::explain(
+                ErrorType::HTTPStatus(500),
+                "pg-erd migration requires an IP downstream client address",
+            )
+        })?;
+    let downstream_port = session
+        .server_addr()
+        .and_then(|address| address.as_inet())
+        .map(|address| address.port())
+        .ok_or_else(|| {
+            Error::explain(
+                ErrorType::HTTPStatus(500),
+                "pg-erd migration requires an IP downstream listener address",
+            )
+        })?;
+    let original_host = upstream_request
+        .headers
+        .get("host")
+        .or_else(|| session.req_header().headers.get("host"))
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned)
+        .ok_or_else(|| {
+            Error::explain(
+                ErrorType::HTTPStatus(400),
+                "pg-erd migration requires a valid downstream Host authority",
+            )
+        })?;
+
+    // The characterized pg-erd Traefik configuration exposes only the clear-text `web`
+    // entryPoint. Downstream TLS is a separate migration contract and must not be invented here.
+    Ok(ForwardingContext::new(
+        client_ip,
+        original_host,
+        downstream_port,
+        DownstreamScheme::Http,
+    ))
 }
 
 fn body_rejection_to_pingora(rejection: BodyLimitExceeded) -> Box<Error> {
@@ -200,14 +239,15 @@ impl ProxyHttp for MigrationGatewayProxy {
 
     async fn upstream_request_filter(
         &self,
-        _session: &mut Session,
+        session: &mut Session,
         upstream_request: &mut RequestHeader,
         _ctx: &mut Self::CTX,
     ) -> pingora::Result<()>
     where
         Self::CTX: Send + Sync,
     {
-        self.apply_upstream_request_policy(upstream_request)
+        let forwarding = pg_erd_forwarding_context(session, upstream_request)?;
+        self.apply_upstream_request_policy(upstream_request, &forwarding)
     }
 
     async fn response_filter(
