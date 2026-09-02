@@ -119,6 +119,22 @@ fn body_rejection_to_pingora(rejection: BodyLimitExceeded) -> Box<Error> {
     )
 }
 
+fn sanitize_forwarding_headers(upstream_request: &mut RequestHeader) -> pingora::Result<()> {
+    for header in [
+        "Forwarded",
+        "X-Forwarded-For",
+        "X-Forwarded-Host",
+        "X-Forwarded-Port",
+        "X-Forwarded-Proto",
+        "X-Forwarded-Server",
+        "X-Real-IP",
+    ] {
+        upstream_request.remove_header(header);
+    }
+    upstream_request.insert_header("Forwarded", "proto=http")?;
+    Ok(())
+}
+
 #[async_trait]
 impl ProxyHttp for GatewayProxy {
     type CTX = RequestContext;
@@ -181,17 +197,7 @@ impl ProxyHttp for GatewayProxy {
     where
         Self::CTX: Send + Sync,
     {
-        for header in [
-            "Forwarded",
-            "X-Forwarded-For",
-            "X-Forwarded-Host",
-            "X-Forwarded-Proto",
-            "X-Real-IP",
-        ] {
-            upstream_request.remove_header(header);
-        }
-        upstream_request.insert_header("Forwarded", "proto=http")?;
-        Ok(())
+        sanitize_forwarding_headers(upstream_request)
     }
 
     async fn logging(&self, session: &mut Session, error: Option<&Error>, ctx: &mut Self::CTX)
@@ -204,11 +210,48 @@ impl ProxyHttp for GatewayProxy {
 
 #[cfg(test)]
 mod tests {
-    use super::{body_rejection_to_pingora, RequestContext};
+    use super::{body_rejection_to_pingora, sanitize_forwarding_headers, RequestContext};
     use crate::runtime_isolation::{
         BodyLimitExceeded, RequestAdmissionBudget, RuntimeIsolationLimits,
     };
-    use pingora::prelude::{ErrorType, ProxyHttp};
+    use pingora::prelude::{ErrorType, ProxyHttp, RequestHeader};
+
+    #[test]
+    fn generic_forwarding_sanitization_removes_all_client_controlled_proxy_identity() {
+        let mut request =
+            RequestHeader::build("GET", b"/", None).expect("fixture request must be valid");
+        for (name, value) in [
+            ("Forwarded", "for=attacker"),
+            ("X-Forwarded-For", "203.0.113.77"),
+            ("X-Forwarded-Host", "attacker.example"),
+            ("X-Forwarded-Port", "4444"),
+            ("X-Forwarded-Proto", "https"),
+            ("X-Forwarded-Server", "attacker-proxy"),
+            ("X-Real-IP", "203.0.113.77"),
+        ] {
+            request
+                .insert_header(name, value)
+                .expect("fixture forwarding header must be valid");
+        }
+
+        sanitize_forwarding_headers(&mut request)
+            .expect("gateway-owned forwarding metadata must remain valid");
+
+        assert_eq!(request.headers["forwarded"].to_str().unwrap(), "proto=http");
+        for name in [
+            "x-forwarded-for",
+            "x-forwarded-host",
+            "x-forwarded-port",
+            "x-forwarded-proto",
+            "x-forwarded-server",
+            "x-real-ip",
+        ] {
+            assert!(
+                !request.headers.contains_key(name),
+                "{name} must not retain client-controlled identity"
+            );
+        }
+    }
 
     #[test]
     fn admission_budget_rejects_at_capacity_and_recovers_after_release() {
