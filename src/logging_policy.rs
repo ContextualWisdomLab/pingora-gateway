@@ -6,7 +6,7 @@
 //! static diagnostic marker before the process logger formats them. CWL-owned log targets retain
 //! their normal bounded message content.
 
-use log::{Log, Metadata, Record, SetLoggerError};
+use log::{Log, Metadata, Record};
 
 const REDACTED_PINGORA_DIAGNOSTIC: &str =
     "Pingora diagnostic message redacted by gateway payload-minimization policy";
@@ -33,10 +33,6 @@ impl Log for PayloadSafeLogger {
     }
 
     fn log(&self, record: &Record<'_>) {
-        if !self.enabled(record.metadata()) {
-            return;
-        }
-
         if is_pingora_dependency_target(record.target()) {
             self.inner.log(
                 &Record::builder()
@@ -66,17 +62,25 @@ fn is_pingora_dependency_target(target: &str) -> bool {
 /// gateway adds one non-bypassable security rule: message bodies emitted by Pingora-family targets
 /// are replaced with a static marker before formatting, so broad dependency diagnostics cannot
 /// disclose request-derived URI, header, cookie, credential, or payload material.
-pub fn init_runtime_logging() -> Result<(), SetLoggerError> {
+///
+/// # Panics
+///
+/// Panics if another global logger was installed before this production composition root. Logging
+/// is initialized before configuration or listener activation, so continuing after competing
+/// process-global logger ownership would violate the payload-minimization boundary.
+pub fn init_runtime_logging() {
     let logger = PayloadSafeLogger::from_default_env();
     let max_level = logger.max_level();
-    log::set_boxed_logger(Box::new(logger))?;
+    log::set_boxed_logger(Box::new(logger))
+        .expect("payload-safe runtime logger must be the sole global logger");
     log::set_max_level(max_level);
-    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::is_pingora_dependency_target;
+    use log::Log;
+
+    use super::{is_pingora_dependency_target, PayloadSafeLogger};
 
     #[test]
     fn pingora_family_targets_are_classified_without_absorbing_application_targets() {
@@ -105,5 +109,10 @@ mod tests {
                 "non-Pingora target must retain its own logging contract: {target}"
             );
         }
+    }
+
+    #[test]
+    fn payload_safe_logger_flush_delegates_without_side_effects() {
+        PayloadSafeLogger::from_default_env().flush();
     }
 }
