@@ -57,6 +57,8 @@ jobs:
           upload-release-assets: false
 
       - name: Scan exact generic candidate image
+        id: scan_gateway_image
+        continue-on-error: true
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
           scan-type: image
@@ -71,6 +73,8 @@ jobs:
           exit-code: '1'
 
       - name: Scan exact pg-erd migration candidate image
+        id: scan_pg_erd_migration_image
+        continue-on-error: true
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
           scan-type: image
@@ -100,6 +104,8 @@ jobs:
             printf 'source_sha=%s\n' "$EXPECTED_SHA"
             printf 'gateway_local_image_id=%s\n' "$gateway_image_id"
             printf 'pg_erd_migration_local_image_id=%s\n' "$migration_image_id"
+            printf 'gateway_scan_outcome=%s\n' '${{ steps.scan_gateway_image.outcome }}'
+            printf 'pg_erd_migration_scan_outcome=%s\n' '${{ steps.scan_pg_erd_migration_image.outcome }}'
             sha256sum Cargo.lock deny.toml candidate.spdx.json trivy-gateway-image.json trivy-pg-erd-migration-image.json
           } > candidate-evidence.txt
 
@@ -117,3 +123,9 @@ jobs:
             candidate-evidence.txt
           if-no-files-found: error
           retention-days: 7
+
+      - name: Enforce both image vulnerability gates
+        if: ${{ always() }}
+        run: |
+          test '${{ steps.scan_gateway_image.outcome }}' = success
+          test '${{ steps.scan_pg_erd_migration_image.outcome }}' = success
