@@ -52,6 +52,9 @@ pub enum PgErdMigrationConfigError {
     /// The configuration requests a migration-admin version this binary does not implement.
     #[error("unsupported pg-erd migration configuration version {0}")]
     UnsupportedVersion(u32),
+    /// Version 2 must state the response-body lifetime rather than inheriting a hidden default.
+    #[error("pg-erd migration config version 2 requires max_upstream_response_body_ms")]
+    MissingUpstreamResponseBodyLifetime,
     /// Version 1 cannot silently acquire semantics introduced by the version-2 contract.
     #[error("max_upstream_response_body_ms requires pg-erd migration config version 2")]
     ResponseBodyLifetimeRequiresVersion2,
@@ -159,9 +162,7 @@ impl PgErdMigrationConfig {
             }
             PG_ERD_RESPONSE_LIFETIME_CONFIG_VERSION => {
                 if self.max_upstream_response_body_ms.is_none() {
-                    return Err(PgErdMigrationConfigError::UnsupportedVersion(
-                        PG_ERD_RESPONSE_LIFETIME_CONFIG_VERSION,
-                    ));
+                    return Err(PgErdMigrationConfigError::MissingUpstreamResponseBodyLifetime);
                 }
             }
             unsupported => return Err(PgErdMigrationConfigError::UnsupportedVersion(unsupported)),
