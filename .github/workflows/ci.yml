@@ -214,3 +214,49 @@ jobs:
           done
           echo "gateway container did not become live under read-only least-privilege runtime" >&2
           exit 1
+      - name: Exercise pg-erd migration read-only least-privilege runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="cwl-pingora-gateway:${EXPECTED_SHA}"
+          cid="$(docker run --detach \
+            --read-only \
+            --user 65532:65532 \
+            --cap-drop ALL \
+            --security-opt no-new-privileges:true \
+            --entrypoint /usr/local/bin/cwl-pingora-pg-erd-migration \
+            --publish 127.0.0.1:6288:6288 \
+            --publish 127.0.0.1:6289:6289 \
+            --mount "type=bind,src=${PWD}/examples/pg-erd-migration.yaml,dst=/etc/cwl/pg-erd-migration.yaml,readonly" \
+            "${image}" \
+            --config /etc/cwl/pg-erd-migration.yaml)"
+          cleanup() {
+            docker logs "${cid}" || true
+            docker rm --force "${cid}" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          test "$(docker inspect "${cid}" --format '{{.HostConfig.ReadonlyRootfs}}')" = "true"
+          test "$(docker inspect "${cid}" --format '{{json .HostConfig.CapDrop}}')" = '["ALL"]'
+          docker inspect "${cid}" --format '{{json .HostConfig.SecurityOpt}}' | grep -Fq 'no-new-privileges'
+
+          for _ in $(seq 1 80); do
+            live_ok=false
+            metrics_ok=false
+            if curl --fail --silent --show-error --max-time 1 http://127.0.0.1:6288/livez >/dev/null; then
+              live_ok=true
+            fi
+            if curl --fail --silent --show-error --max-time 1 http://127.0.0.1:6289/metrics >/dev/null; then
+              metrics_ok=true
+            fi
+            if [ "${live_ok}" = true ] && [ "${metrics_ok}" = true ]; then
+              exit 0
+            fi
+            if ! docker inspect "${cid}" --format '{{.State.Running}}' | grep -qx true; then
+              echo "pg-erd migration container exited before becoming live" >&2
+              exit 1
+            fi
+            sleep 0.25
+          done
+          echo "pg-erd migration container did not become live under read-only least-privilege runtime" >&2
+          exit 1
