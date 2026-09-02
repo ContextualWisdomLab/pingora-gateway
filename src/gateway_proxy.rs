@@ -10,7 +10,9 @@ use thiserror::Error;
 
 use crate::edge_contract::{GatewayConfig, GatewayConfigError};
 use crate::observability::{record_backpressure_rejection, record_request};
-use crate::pingora_delivery::{build_peer_from_validated, PeerBuildError};
+use crate::pingora_delivery::{
+    build_peer_from_validated, reject_uncharacterized_http1_protocol_transition, PeerBuildError,
+};
 use crate::process_health::respond_healthy;
 pub use crate::process_health::{LIVENESS_PATH, READINESS_PATH};
 use crate::runtime_isolation::{
@@ -157,6 +159,7 @@ impl ProxyHttp for GatewayProxy {
                 Ok(true)
             }
             _ => {
+                reject_uncharacterized_http1_protocol_transition(session.req_header())?;
                 self.admit_request(ctx)?;
                 Self::reject_oversize_declared_body(session, ctx)?;
                 Ok(false)

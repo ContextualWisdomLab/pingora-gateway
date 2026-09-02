@@ -14,6 +14,7 @@ use thiserror::Error;
 use crate::forwarding_policy::{DownstreamScheme, ForwardingContext};
 use crate::migration_delivery::MigrationDeliveryPlan;
 use crate::observability::{record_backpressure_rejection, record_request};
+use crate::pingora_delivery::reject_uncharacterized_http1_protocol_transition;
 use crate::process_health::{respond_healthy, LIVENESS_PATH, READINESS_PATH};
 use crate::runtime_isolation::{
     BodyLimitExceeded, RequestAdmission, RequestAdmissionBudget, RequestBodyBudget,
@@ -224,6 +225,7 @@ impl ProxyHttp for MigrationGatewayProxy {
                 Ok(true)
             }
             _ => {
+                reject_uncharacterized_http1_protocol_transition(session.req_header())?;
                 self.admit_request(ctx)?;
                 Self::reject_oversize_declared_body(session, ctx)?;
                 Ok(false)

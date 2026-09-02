@@ -10,11 +10,13 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+use pingora::prelude::{Error as PingoraError, ErrorType, RequestHeader};
 use pingora::tls::x509::X509;
 use pingora::upstreams::peer::{HttpPeer, HttpUpstreamRequestPolicy, ALPN};
 use thiserror::Error;
 
 use crate::edge_contract::{GatewayConfigError, UpstreamConfig};
+use crate::protocol_transition_policy::requests_http1_protocol_transition;
 
 /// Failures while translating an admitted edge contract into Pingora transport authority.
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
@@ -83,6 +85,26 @@ pub(crate) fn build_peer_from_validated(
     Ok(peer)
 }
 
+pub(crate) fn reject_uncharacterized_http1_protocol_transition(
+    request: &RequestHeader,
+) -> pingora::Result<()> {
+    let connection_field_values = request
+        .headers
+        .get_all("connection")
+        .iter()
+        .map(|value| value.as_bytes());
+    if requests_http1_protocol_transition(
+        request.headers.contains_key("upgrade"),
+        connection_field_values,
+    ) {
+        return Err(PingoraError::explain(
+            ErrorType::HTTPStatus(501),
+            "HTTP/1 protocol transition is not admitted by the current gateway contract",
+        ));
+    }
+    Ok(())
+}
+
 fn load_trust_bundle(path: &Path) -> Result<Box<[X509]>, PeerBuildError> {
     let source = fs::read(path).map_err(|error| PeerBuildError::ReadTrustBundle {
         path: path.to_path_buf(),
@@ -139,6 +161,21 @@ mod tests {
             .expect("valid cleartext upstream should build a peer");
 
         assert!(peer.options.ca.is_none());
+    }
+
+    #[test]
+    fn uncharacterized_protocol_transition_fails_closed_before_proxying() {
+        let normal = RequestHeader::build("GET", b"/", None).expect("request must build");
+        assert!(reject_uncharacterized_http1_protocol_transition(&normal).is_ok());
+
+        let mut upgrade =
+            RequestHeader::build("GET", b"/socket", None).expect("request must build");
+        upgrade
+            .insert_header("Upgrade", "websocket")
+            .expect("Upgrade header must be valid");
+        let error = reject_uncharacterized_http1_protocol_transition(&upgrade)
+            .expect_err("uncharacterized Upgrade must fail closed");
+        assert_eq!(error.etype, ErrorType::HTTPStatus(501));
     }
 
     #[test]
