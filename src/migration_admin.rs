@@ -15,8 +15,8 @@ use crate::edge_contract::{GatewayConfigError, UpstreamConfig};
 use crate::edge_routing::{RouteMatch, RouteRule};
 use crate::http_policy::ResponseHeaderRule;
 use crate::migration_delivery::{MigrationDeliveryError, MigrationDeliveryPlan};
-use crate::migration_plan::{EdgeMigrationPlan, MigrationPlanError};
-use crate::migration_proxy::{MigrationGatewayProxy, MigrationGatewayProxyError};
+use crate::migration_plan::EdgeMigrationPlan;
+use crate::migration_proxy::MigrationGatewayProxy;
 use crate::runtime_isolation::{RuntimeIsolationConfigError, RuntimeIsolationLimits};
 
 /// Version of the bounded `pg-erd-cloud` migration admin configuration.
@@ -35,7 +35,7 @@ pub struct PgErdMigrationConfig {
     upstreams: Vec<UpstreamConfig>,
 }
 
-/// Reasons the bounded migration admin configuration cannot obtain listener authority.
+/// Reasons operator-controlled migration configuration cannot obtain listener authority.
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum PgErdMigrationConfigError {
     /// YAML could not be decoded into the strict migration-admin contract.
@@ -75,18 +75,12 @@ pub enum PgErdMigrationConfigError {
     /// One supplied upstream violates the transport-neutral upstream contract.
     #[error(transparent)]
     UpstreamConfiguration(#[from] GatewayConfigError),
-    /// The fixed route/header migration plan itself failed validation.
-    #[error(transparent)]
-    Plan(#[from] MigrationPlanError),
     /// Concrete transport authorities could not be materialized into Pingora peers.
     #[error(transparent)]
     Delivery(#[from] MigrationDeliveryError),
     /// Runtime-isolation budgets are invalid.
     #[error(transparent)]
     RuntimeIsolation(#[from] RuntimeIsolationConfigError),
-    /// The validated delivery plan could not be composed into Pingora callbacks.
-    #[error(transparent)]
-    Proxy(#[from] MigrationGatewayProxyError),
 }
 
 impl PgErdMigrationConfig {
@@ -128,7 +122,7 @@ impl PgErdMigrationConfig {
             self.max_request_body_bytes,
             self.max_in_flight_requests,
         )?;
-        MigrationGatewayProxy::try_new(delivery, limits).map_err(Into::into)
+        Ok(MigrationGatewayProxy::new(delivery, limits))
     }
 
     fn validate(&self) -> Result<(), PgErdMigrationConfigError> {
@@ -146,8 +140,7 @@ impl PgErdMigrationConfig {
             self.max_request_body_bytes,
             self.max_in_flight_requests,
         )?;
-        let plan = pg_erd_migration_plan()?;
-        self.validate_transport_authority(&plan)
+        self.validate_transport_authority(&pg_erd_migration_plan())
     }
 
     fn validate_transport_authority(
@@ -182,12 +175,12 @@ impl PgErdMigrationConfig {
     }
 
     fn build_delivery(&self) -> Result<MigrationDeliveryPlan, PgErdMigrationConfigError> {
-        let plan = pg_erd_migration_plan()?;
-        MigrationDeliveryPlan::try_new(plan, self.upstreams.clone()).map_err(Into::into)
+        MigrationDeliveryPlan::try_new(pg_erd_migration_plan(), self.upstreams.clone())
+            .map_err(Into::into)
     }
 }
 
-fn pg_erd_migration_plan() -> Result<EdgeMigrationPlan, MigrationPlanError> {
+fn pg_erd_migration_plan() -> EdgeMigrationPlan {
     EdgeMigrationPlan::try_new(
         vec!["backend".to_string(), "frontend".to_string()],
         vec![
@@ -229,4 +222,5 @@ fn pg_erd_migration_plan() -> Result<EdgeMigrationPlan, MigrationPlanError> {
             },
         ],
     )
+    .expect("compiled pg-erd migration profile must remain internally valid")
 }
