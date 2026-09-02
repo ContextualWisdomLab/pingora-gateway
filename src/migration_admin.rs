@@ -11,7 +11,10 @@ use std::net::SocketAddr;
 use serde::Deserialize;
 use thiserror::Error;
 
-use crate::edge_contract::{socket_authorities_overlap, GatewayConfigError, UpstreamConfig};
+use crate::edge_contract::{
+    socket_authorities_overlap, validate_upstream_authority_separation, GatewayConfigError,
+    UpstreamConfig,
+};
 use crate::edge_routing::{RouteMatch, RouteRule};
 use crate::http_policy::ResponseHeaderRule;
 use crate::migration_delivery::{MigrationDeliveryError, MigrationDeliveryPlan};
@@ -193,6 +196,11 @@ impl PgErdMigrationConfig {
                     upstream_name,
                 });
             }
+            validate_upstream_authority_separation(
+                self.listener,
+                self.metrics_listener,
+                upstream,
+            )?;
         }
         Ok(())
     }

@@ -95,6 +95,18 @@ pub enum GatewayConfigError {
     /// Traffic and metrics endpoints must never overlap the same effective socket authority.
     #[error("listener and metrics_listener socket authorities must not overlap")]
     ListenerCollision,
+    /// An upstream must not resolve back to the gateway's downstream traffic listener.
+    #[error("upstream {upstream_name} socket authority must not overlap listener")]
+    UpstreamListenerCollision {
+        /// Stable upstream whose transport authority overlaps the traffic listener.
+        upstream_name: String,
+    },
+    /// Application traffic must not resolve to the gateway's internal metrics listener.
+    #[error("upstream {upstream_name} socket authority must not overlap metrics_listener")]
+    UpstreamMetricsListenerCollision {
+        /// Stable upstream whose transport authority overlaps the metrics listener.
+        upstream_name: String,
+    },
     /// An approved upstream must identify a concrete, connectable transport port.
     #[error("upstream {upstream_name} must use a non-zero port")]
     ZeroUpstreamPort {
@@ -216,6 +228,11 @@ impl GatewayConfig {
         let mut names = HashSet::with_capacity(self.upstreams.len());
         for upstream in &self.upstreams {
             upstream.validate()?;
+            validate_upstream_authority_separation(
+                self.listener,
+                self.metrics_listener,
+                upstream,
+            )?;
             let normalized_name = upstream.name.trim();
             if !names.insert(normalized_name) {
                 return Err(GatewayConfigError::DuplicateUpstreamName {
@@ -255,6 +272,21 @@ pub(crate) fn socket_authorities_overlap(
             ipv6.is_unspecified()
         }
     }
+}
+
+pub(crate) fn validate_upstream_authority_separation(
+    listener: SocketAddr,
+    metrics_listener: SocketAddr,
+    upstream: &UpstreamConfig,
+) -> Result<(), GatewayConfigError> {
+    let upstream_name = upstream.name.trim().to_string();
+    if socket_authorities_overlap(listener, upstream.address) {
+        return Err(GatewayConfigError::UpstreamListenerCollision { upstream_name });
+    }
+    if socket_authorities_overlap(metrics_listener, upstream.address) {
+        return Err(GatewayConfigError::UpstreamMetricsListenerCollision { upstream_name });
+    }
+    Ok(())
 }
 
 impl UpstreamConfig {
