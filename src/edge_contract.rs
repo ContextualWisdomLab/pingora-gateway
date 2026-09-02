@@ -5,7 +5,7 @@
 //! consumer products never depend on Pingora internals.
 
 use std::collections::HashSet;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 
 use serde::Deserialize;
@@ -86,8 +86,8 @@ pub enum GatewayConfigError {
     /// The configuration requests a contract version this binary does not implement.
     #[error("unsupported gateway configuration version {0}")]
     UnsupportedVersion(u32),
-    /// Traffic and metrics endpoints must never compete for the same socket authority.
-    #[error("listener and metrics_listener must use distinct socket addresses")]
+    /// Traffic and metrics endpoints must never overlap the same effective socket authority.
+    #[error("listener and metrics_listener socket authorities must not overlap")]
     ListenerCollision,
     /// A zero request-body limit would reject every body and is almost certainly misconfiguration.
     #[error("max_request_body_bytes must be greater than zero")]
@@ -179,7 +179,7 @@ impl GatewayConfig {
         if self.version != CURRENT_GATEWAY_CONFIG_VERSION {
             return Err(GatewayConfigError::UnsupportedVersion(self.version));
         }
-        if self.listener == self.metrics_listener {
+        if socket_authorities_overlap(self.listener, self.metrics_listener) {
             return Err(GatewayConfigError::ListenerCollision);
         }
         if self.max_request_body_bytes == 0 {
@@ -213,6 +213,29 @@ impl GatewayConfig {
         }
 
         Ok(())
+    }
+}
+
+pub(crate) fn socket_authorities_overlap(
+    listener: SocketAddr,
+    metrics_listener: SocketAddr,
+) -> bool {
+    if listener.port() != metrics_listener.port() {
+        return false;
+    }
+
+    match (listener.ip(), metrics_listener.ip()) {
+        (IpAddr::V4(listener_ip), IpAddr::V4(metrics_ip)) => {
+            listener_ip == metrics_ip || listener_ip.is_unspecified() || metrics_ip.is_unspecified()
+        }
+        (IpAddr::V6(listener_ip), IpAddr::V6(metrics_ip)) => {
+            listener_ip == metrics_ip || listener_ip.is_unspecified() || metrics_ip.is_unspecified()
+        }
+        (IpAddr::V6(ipv6), IpAddr::V4(_)) | (IpAddr::V4(_), IpAddr::V6(ipv6)) => {
+            // An IPv6 wildcard may also consume the IPv4 port on dual-stack platforms when
+            // IPV6_V6ONLY is disabled. Reject the platform-dependent authority before activation.
+            ipv6.is_unspecified()
+        }
     }
 }
 
