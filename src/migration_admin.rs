@@ -44,9 +44,21 @@ pub enum PgErdMigrationConfigError {
     /// The configuration requests a migration-admin version this binary does not implement.
     #[error("unsupported pg-erd migration configuration version {0}")]
     UnsupportedVersion(u32),
+    /// A port-zero traffic listener would delegate the public authority to an ephemeral OS port.
+    #[error("listener must use a non-zero port")]
+    ZeroListenerPort,
+    /// A port-zero metrics listener would make the declared observability endpoint indeterminate.
+    #[error("metrics_listener must use a non-zero port")]
+    ZeroMetricsListenerPort,
     /// Traffic and metrics endpoints must never compete for the same socket authority.
     #[error("listener and metrics_listener must use distinct socket addresses")]
     ListenerCollision,
+    /// A characterized upstream must identify a concrete, connectable transport port.
+    #[error("pg-erd migration transport authority {upstream_name} must use a non-zero port")]
+    ZeroTransportAuthorityPort {
+        /// Stable characterized upstream whose operator binding used port zero.
+        upstream_name: String,
+    },
     /// A zero keepalive pool would silently change upstream connection-capacity behavior.
     #[error("upstream_keepalive_pool_size must be greater than zero")]
     InvalidUpstreamKeepalivePoolSize,
@@ -129,6 +141,12 @@ impl PgErdMigrationConfig {
         if self.version != PG_ERD_MIGRATION_CONFIG_VERSION {
             return Err(PgErdMigrationConfigError::UnsupportedVersion(self.version));
         }
+        if self.listener.port() == 0 {
+            return Err(PgErdMigrationConfigError::ZeroListenerPort);
+        }
+        if self.metrics_listener.port() == 0 {
+            return Err(PgErdMigrationConfigError::ZeroMetricsListenerPort);
+        }
         if self.listener == self.metrics_listener {
             return Err(PgErdMigrationConfigError::ListenerCollision);
         }
@@ -160,6 +178,11 @@ impl PgErdMigrationConfig {
         for upstream in &self.upstreams {
             upstream.validate()?;
             let upstream_name = upstream.name.trim().to_string();
+            if upstream.address.port() == 0 {
+                return Err(PgErdMigrationConfigError::ZeroTransportAuthorityPort {
+                    upstream_name,
+                });
+            }
             if !configured_names.insert(upstream_name.clone()) {
                 return Err(PgErdMigrationConfigError::DuplicateTransportAuthority {
                     upstream_name,
