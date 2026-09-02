@@ -15,6 +15,10 @@ path = "src/lib.rs"
 name = "cwl-pingora-gateway"
 path = "src/bin/cwl-pingora-gateway.rs"
 
+[[bin]]
+name = "cwl-pingora-pg-erd-migration"
+path = "src/bin/cwl-pingora-pg-erd-migration.rs"
+
 [dependencies]
 async-trait = "0.1.89"
 bytes = "1.10.1"

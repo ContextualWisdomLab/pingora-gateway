@@ -14,6 +14,7 @@ use thiserror::Error;
 use crate::forwarding_policy::{DownstreamScheme, ForwardingContext};
 use crate::migration_delivery::MigrationDeliveryPlan;
 use crate::observability::{record_backpressure_rejection, record_request};
+use crate::process_health::{respond_healthy, LIVENESS_PATH, READINESS_PATH};
 use crate::runtime_isolation::{
     BodyLimitExceeded, RequestAdmission, RequestAdmissionBudget, RequestBodyBudget,
     RuntimeIsolationLimits,
@@ -55,16 +56,27 @@ pub struct MigrationGatewayProxy {
 }
 
 impl MigrationGatewayProxy {
-    /// Activates callbacks over an already validated delivery plan and runtime-isolation contract.
+    /// Creates callbacks over an already validated delivery plan and runtime-isolation contract.
+    ///
+    /// Construction has no remaining fallible work: peer materialization already happened in
+    /// `MigrationDeliveryPlan`, and `RuntimeIsolationLimits` can exist only after validation.
+    pub fn new(delivery: MigrationDeliveryPlan, limits: RuntimeIsolationLimits) -> Self {
+        Self {
+            delivery,
+            limits,
+            admission_budget: RequestAdmissionBudget::new(limits),
+        }
+    }
+
+    /// Backward-compatible constructor for callers that still consume the earlier result shape.
+    ///
+    /// No runtime error can be produced at this boundary; later fail-closed errors are request
+    /// routing, body, forwarding, transport, or upstream failures handled by Pingora callbacks.
     pub fn try_new(
         delivery: MigrationDeliveryPlan,
         limits: RuntimeIsolationLimits,
     ) -> Result<Self, MigrationGatewayProxyError> {
-        Ok(Self {
-            delivery,
-            limits,
-            admission_budget: RequestAdmissionBudget::new(limits),
-        })
+        Ok(Self::new(delivery, limits))
     }
 
     /// Selects and clones the concrete peer admitted for one characterized request path.
@@ -206,9 +218,17 @@ impl ProxyHttp for MigrationGatewayProxy {
     where
         Self::CTX: Send + Sync,
     {
-        self.admit_request(ctx)?;
-        Self::reject_oversize_declared_body(session, ctx)?;
-        Ok(false)
+        match session.req_header().uri.path() {
+            LIVENESS_PATH | READINESS_PATH => {
+                respond_healthy(session).await?;
+                Ok(true)
+            }
+            _ => {
+                self.admit_request(ctx)?;
+                Self::reject_oversize_declared_body(session, ctx)?;
+                Ok(false)
+            }
+        }
     }
 
     async fn request_body_filter(

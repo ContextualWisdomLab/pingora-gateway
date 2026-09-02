@@ -5,23 +5,18 @@
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use pingora::prelude::{
-    Error, ErrorType, HttpPeer, ProxyHttp, RequestHeader, ResponseHeader, Session,
-};
+use pingora::prelude::{Error, ErrorType, HttpPeer, ProxyHttp, RequestHeader, Session};
 use thiserror::Error;
 
 use crate::edge_contract::{GatewayConfig, GatewayConfigError};
 use crate::observability::{record_backpressure_rejection, record_request};
 use crate::pingora_delivery::{build_peer_from_validated, PeerBuildError};
+use crate::process_health::respond_healthy;
+pub use crate::process_health::{LIVENESS_PATH, READINESS_PATH};
 use crate::runtime_isolation::{
     BodyLimitExceeded, RequestAdmission, RequestAdmissionBudget, RequestBodyBudget,
     RuntimeIsolationLimits,
 };
-
-/// Stable process-local liveness endpoint.
-pub const LIVENESS_PATH: &str = "/livez";
-/// Stable readiness endpoint reached through the production Pingora serving path.
-pub const READINESS_PATH: &str = "/readyz";
 
 /// Per-request delivery state. Product domain state does not belong here.
 #[derive(Debug)]
@@ -84,18 +79,6 @@ impl GatewayProxy {
         self.upstream_peer.clone()
     }
 
-    async fn respond_healthy(session: &mut Session) -> pingora::Result<()> {
-        let mut response =
-            ResponseHeader::build(200, None).expect("literal HTTP 200 response header must be valid");
-        response
-            .insert_header("Content-Length", "0")
-            .expect("literal Content-Length response header must be valid");
-        response
-            .insert_header("Cache-Control", "no-store")
-            .expect("literal Cache-Control response header must be valid");
-        session.write_response_header(Box::new(response), true).await
-    }
-
     fn admit_request(&self, ctx: &mut RequestContext) -> pingora::Result<()> {
         if let Some(admission) = self.admission_budget.acquire() {
             ctx.admission = Some(admission);
@@ -154,7 +137,7 @@ impl ProxyHttp for GatewayProxy {
     {
         match session.req_header().uri.path() {
             LIVENESS_PATH | READINESS_PATH => {
-                Self::respond_healthy(session).await?;
+                respond_healthy(session).await?;
                 Ok(true)
             }
             _ => {
