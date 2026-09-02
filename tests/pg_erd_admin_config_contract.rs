@@ -1,6 +1,7 @@
 use cwl_pingora_gateway::edge_contract::GatewayConfigError;
 use cwl_pingora_gateway::migration_admin::{
     PgErdMigrationConfig, PgErdMigrationConfigError, PG_ERD_MIGRATION_CONFIG_VERSION,
+    PG_ERD_RESPONSE_LIFETIME_CONFIG_VERSION,
 };
 
 fn config_yaml(upstreams: &str) -> String {
@@ -279,7 +280,7 @@ fn pg_erd_admin_config_rejects_invalid_concrete_transport_contract() {
 }
 
 #[test]
-fn pg_erd_admin_config_rejects_unknown_fields_and_future_versions() {
+fn pg_erd_admin_config_rejects_unknown_incomplete_and_future_versions() {
     let unknown = valid_yaml().replace(
         "max_request_body_bytes: 1048576",
         "max_request_body_bytes: 1048576\nproduct_auth_mode: embedded",
@@ -289,12 +290,21 @@ fn pg_erd_admin_config_rejects_unknown_fields_and_future_versions() {
         Err(PgErdMigrationConfigError::Parse(_))
     ));
 
+    let incomplete_v2 = valid_yaml().replace(
+        &format!("version: {PG_ERD_MIGRATION_CONFIG_VERSION}"),
+        &format!("version: {PG_ERD_RESPONSE_LIFETIME_CONFIG_VERSION}"),
+    );
+    assert_eq!(
+        PgErdMigrationConfig::from_yaml(&incomplete_v2),
+        Err(PgErdMigrationConfigError::MissingUpstreamResponseBodyLifetime)
+    );
+
     let future = valid_yaml().replace(
         &format!("version: {PG_ERD_MIGRATION_CONFIG_VERSION}"),
-        "version: 2",
+        "version: 3",
     );
     assert_eq!(
         PgErdMigrationConfig::from_yaml(&future),
-        Err(PgErdMigrationConfigError::UnsupportedVersion(2))
+        Err(PgErdMigrationConfigError::UnsupportedVersion(3))
     );
 }
