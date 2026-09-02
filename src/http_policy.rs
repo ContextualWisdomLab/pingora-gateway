@@ -105,6 +105,11 @@ impl ResponseHeaderPolicy {
             .map(|header| header.value.as_str())
     }
 
+    /// Returns every validated response-header mutation in declaration order.
+    pub fn rules(&self) -> &[ResponseHeaderRule] {
+        &self.headers
+    }
+
     /// Returns the number of explicit response-header mutations in this policy.
     pub fn len(&self) -> usize {
         self.headers.len()

@@ -12,6 +12,7 @@ use pingora::prelude::HttpPeer;
 use thiserror::Error;
 
 use crate::edge_contract::UpstreamConfig;
+use crate::http_policy::ResponseHeaderRule;
 use crate::migration_plan::EdgeMigrationPlan;
 use crate::pingora_delivery::{build_peer, PeerBuildError};
 
@@ -126,6 +127,11 @@ impl MigrationDeliveryPlan {
     /// Returns the characterized edge-owned response value for one HTTP field name.
     pub fn response_header_value(&self, name: &str) -> Option<&str> {
         self.plan.response_header_value(name)
+    }
+
+    /// Returns every characterized edge-owned response-header mutation in declaration order.
+    pub fn response_header_rules(&self) -> &[ResponseHeaderRule] {
+        self.plan.response_header_rules()
     }
 
     /// Returns the number of concrete upstream transport authorities activated for this plan.

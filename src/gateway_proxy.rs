@@ -3,112 +3,40 @@
 //! Version 1 activates one upstream per process because the transport-neutral edge contract owns
 //! that invariant. This Pingora adapter does not invent routing or load-balancing domain rules.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, LazyLock};
-
 use async_trait::async_trait;
 use bytes::Bytes;
-use log::info;
 use pingora::prelude::{
     Error, ErrorType, HttpPeer, ProxyHttp, RequestHeader, ResponseHeader, Session,
 };
-use pingora_prometheus::prometheus::{register_int_counter, IntCounter};
 use thiserror::Error;
 
 use crate::edge_contract::{GatewayConfig, GatewayConfigError};
+use crate::observability::{record_backpressure_rejection, record_request};
 use crate::pingora_delivery::{build_peer_from_validated, PeerBuildError};
+use crate::runtime_isolation::{
+    BodyLimitExceeded, RequestAdmission, RequestAdmissionBudget, RequestBodyBudget,
+    RuntimeIsolationLimits,
+};
 
 /// Stable process-local liveness endpoint.
 pub const LIVENESS_PATH: &str = "/livez";
 /// Stable readiness endpoint reached through the production Pingora serving path.
 pub const READINESS_PATH: &str = "/readyz";
 
-fn register_counter(name: &'static str, help: &'static str) -> IntCounter {
-    register_int_counter!(name, help)
-        .unwrap_or_else(|error| panic!("gateway metric {name} must register exactly once: {error}"))
-}
-
-static REQUESTS_TOTAL: LazyLock<IntCounter> = LazyLock::new(|| {
-    register_counter(
-        "cwl_pingora_gateway_requests_total",
-        "Completed downstream requests observed by the shared edge runtime",
-    )
-});
-
-static REQUEST_ERRORS_TOTAL: LazyLock<IntCounter> = LazyLock::new(|| {
-    register_counter(
-        "cwl_pingora_gateway_request_errors_total",
-        "Completed downstream requests whose Pingora lifecycle ended with an error",
-    )
-});
-
-static REQUEST_BODY_BYTES_TOTAL: LazyLock<IntCounter> = LazyLock::new(|| {
-    register_counter(
-        "cwl_pingora_gateway_request_body_bytes_total",
-        "Downstream request body bytes observed before completion or rejection",
-    )
-});
-
-static BACKPRESSURE_REJECTIONS_TOTAL: LazyLock<IntCounter> = LazyLock::new(|| {
-    register_counter(
-        "cwl_pingora_gateway_backpressure_rejections_total",
-        "Downstream requests rejected because max_in_flight_requests was exhausted",
-    )
-});
-
-#[derive(Debug, Clone)]
-struct RequestAdmissionBudget {
-    in_flight: Arc<AtomicUsize>,
-    limit: usize,
-}
-
-impl RequestAdmissionBudget {
-    fn new(limit: usize) -> Self {
-        Self {
-            in_flight: Arc::new(AtomicUsize::new(0)),
-            limit,
-        }
-    }
-
-    fn acquire_or_reject(&self) -> pingora::Result<RequestAdmission> {
-        let admitted =
-            self.in_flight
-                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
-                    (current < self.limit).then_some(current + 1)
-                });
-
-        match admitted {
-            Ok(_) => Ok(RequestAdmission {
-                in_flight: Arc::clone(&self.in_flight),
-            }),
-            Err(_) => {
-                BACKPRESSURE_REJECTIONS_TOTAL.inc();
-                Err(Error::explain(
-                    ErrorType::HTTPStatus(503),
-                    "gateway max_in_flight_requests budget exhausted",
-                ))
-            }
-        }
-    }
-}
-
-/// RAII admission lease held for the complete non-health request lifecycle.
-#[derive(Debug)]
-pub struct RequestAdmission {
-    in_flight: Arc<AtomicUsize>,
-}
-
-impl Drop for RequestAdmission {
-    fn drop(&mut self) {
-        self.in_flight.fetch_sub(1, Ordering::AcqRel);
-    }
-}
-
 /// Per-request delivery state. Product domain state does not belong here.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct RequestContext {
-    request_body_bytes: u64,
+    request_body: RequestBodyBudget,
     admission: Option<RequestAdmission>,
+}
+
+impl RequestContext {
+    fn new(limits: RuntimeIsolationLimits) -> Self {
+        Self {
+            request_body: RequestBodyBudget::new(limits),
+            admission: None,
+        }
+    }
 }
 
 /// Activation failures that occur after the transport-neutral configuration is parsed.
@@ -126,7 +54,7 @@ pub enum GatewayProxyError {
 #[derive(Debug, Clone)]
 pub struct GatewayProxy {
     upstream_peer: HttpPeer,
-    max_request_body_bytes: u64,
+    limits: RuntimeIsolationLimits,
     admission_budget: RequestAdmissionBudget,
 }
 
@@ -139,11 +67,15 @@ impl GatewayProxy {
     pub fn try_from_config(config: &GatewayConfig) -> std::result::Result<Self, GatewayProxyError> {
         config.validate()?;
         let upstream = &config.upstreams[0];
+        let limits = RuntimeIsolationLimits::from_validated(
+            config.max_request_body_bytes,
+            config.max_in_flight_requests,
+        );
 
         Ok(Self {
             upstream_peer: build_peer_from_validated(upstream)?,
-            max_request_body_bytes: config.max_request_body_bytes,
-            admission_budget: RequestAdmissionBudget::new(config.max_in_flight_requests),
+            limits,
+            admission_budget: RequestAdmissionBudget::new(limits),
         })
     }
 
@@ -153,39 +85,55 @@ impl GatewayProxy {
     }
 
     async fn respond_healthy(session: &mut Session) -> pingora::Result<()> {
-        // These literals are compile-time gateway invariants, not runtime inputs. Treat failure to
-        // construct them as a programmer defect while preserving the real downstream write result.
-        let mut response = ResponseHeader::build(200, None)
-            .expect("literal HTTP 200 response header must be valid");
+        let mut response =
+            ResponseHeader::build(200, None).expect("literal HTTP 200 response header must be valid");
         response
             .insert_header("Content-Length", "0")
             .expect("literal Content-Length response header must be valid");
         response
             .insert_header("Cache-Control", "no-store")
             .expect("literal Cache-Control response header must be valid");
-        session
-            .write_response_header(Box::new(response), true)
-            .await
+        session.write_response_header(Box::new(response), true).await
     }
 
-    fn reject_oversize_declared_body(&self, session: &Session) -> pingora::Result<()> {
-        // Pingora's HTTP admission reconciles Content-Length framing and rejects invalid values
-        // before ProxyHttp filters run. Keep this layer focused on the gateway's size policy while
-        // the streamed-body filter remains the fail-closed backstop for absent framing.
+    fn admit_request(&self, ctx: &mut RequestContext) -> pingora::Result<()> {
+        if let Some(admission) = self.admission_budget.acquire() {
+            ctx.admission = Some(admission);
+            return Ok(());
+        }
+
+        record_backpressure_rejection();
+        Err(Error::explain(
+            ErrorType::HTTPStatus(503),
+            "gateway max_in_flight_requests budget exhausted",
+        ))
+    }
+
+    fn reject_oversize_declared_body(
+        session: &Session,
+        ctx: &RequestContext,
+    ) -> pingora::Result<()> {
         let declared = session
             .req_header()
             .headers
             .get("content-length")
             .and_then(|value| value.to_str().ok())
             .and_then(|raw| raw.parse::<u64>().ok());
-        if declared.is_some_and(|length| length > self.max_request_body_bytes) {
-            return Err(Error::explain(
-                ErrorType::HTTPStatus(413),
-                "request body exceeds configured max_request_body_bytes",
-            ));
+        if let Some(length) = declared {
+            ctx.request_body
+                .reject_declared_length(length)
+                .map_err(body_rejection_to_pingora)?;
         }
         Ok(())
     }
+}
+
+fn body_rejection_to_pingora(rejection: BodyLimitExceeded) -> Box<Error> {
+    let _ = (rejection.observed, rejection.limit);
+    Error::explain(
+        ErrorType::HTTPStatus(413),
+        "request body exceeds configured max_request_body_bytes",
+    )
 }
 
 #[async_trait]
@@ -193,7 +141,7 @@ impl ProxyHttp for GatewayProxy {
     type CTX = RequestContext;
 
     fn new_ctx(&self) -> Self::CTX {
-        RequestContext::default()
+        RequestContext::new(self.limits)
     }
 
     async fn request_filter(
@@ -210,8 +158,8 @@ impl ProxyHttp for GatewayProxy {
                 Ok(true)
             }
             _ => {
-                ctx.admission = Some(self.admission_budget.acquire_or_reject()?);
-                self.reject_oversize_declared_body(session)?;
+                self.admit_request(ctx)?;
+                Self::reject_oversize_declared_body(session, ctx)?;
                 Ok(false)
             }
         }
@@ -228,14 +176,9 @@ impl ProxyHttp for GatewayProxy {
         Self::CTX: Send + Sync,
     {
         let chunk_bytes = body.as_ref().map_or(0_u64, |chunk| chunk.len() as u64);
-        ctx.request_body_bytes = ctx.request_body_bytes.saturating_add(chunk_bytes);
-        if ctx.request_body_bytes > self.max_request_body_bytes {
-            return Err(Error::explain(
-                ErrorType::HTTPStatus(413),
-                "streamed request body exceeds configured max_request_body_bytes",
-            ));
-        }
-        Ok(())
+        ctx.request_body
+            .observe_chunk(chunk_bytes)
+            .map_err(body_rejection_to_pingora)
     }
 
     async fn upstream_peer(
@@ -272,51 +215,72 @@ impl ProxyHttp for GatewayProxy {
     where
         Self::CTX: Send + Sync,
     {
-        let status = session
-            .response_written()
-            .map_or(0, |response| response.status.as_u16());
-        let outcome = if error.is_some() { "error" } else { "ok" };
-
-        REQUESTS_TOTAL.inc();
-        REQUEST_BODY_BYTES_TOTAL.inc_by(ctx.request_body_bytes);
-        if error.is_some() {
-            REQUEST_ERRORS_TOTAL.inc();
-        }
-
-        info!(
-            "gateway_request status={status} outcome={outcome} request_body_bytes={}",
-            ctx.request_body_bytes
-        );
+        record_request(session, error, ctx.request_body.observed());
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::panic;
-
-    use super::{register_counter, RequestAdmissionBudget};
-
-    #[test]
-    fn duplicate_metric_registration_fails_closed() {
-        let name = "cwl_pingora_gateway_test_duplicate_registration_total";
-        let help = "Coverage-only counter proving duplicate registration fails closed";
-        let _first = register_counter(name, help);
-
-        let duplicate = panic::catch_unwind(|| register_counter(name, help));
-
-        assert!(duplicate.is_err());
-    }
+    use super::{body_rejection_to_pingora, RequestContext};
+    use crate::runtime_isolation::{
+        BodyLimitExceeded, RequestAdmissionBudget, RuntimeIsolationLimits,
+    };
+    use pingora::prelude::{ErrorType, ProxyHttp};
 
     #[test]
     fn admission_budget_rejects_at_capacity_and_recovers_after_release() {
-        let budget = RequestAdmissionBudget::new(1);
-        let first = budget
-            .acquire_or_reject()
-            .expect("first request is admitted");
-        assert!(budget.acquire_or_reject().is_err());
+        let limits = RuntimeIsolationLimits::try_new(1024, 1).expect("fixture limits are valid");
+        let budget = RequestAdmissionBudget::new(limits);
+        let first = budget.acquire().expect("first request is admitted");
+        assert!(budget.acquire().is_none());
 
         drop(first);
 
-        assert!(budget.acquire_or_reject().is_ok());
+        assert!(budget.acquire().is_some());
+    }
+
+    #[test]
+    fn request_context_starts_with_shared_runtime_isolation_budget() {
+        let limits = RuntimeIsolationLimits::try_new(8, 2).expect("fixture limits are valid");
+        let proxy_ctx = RequestContext::new(limits);
+        assert_eq!(proxy_ctx.request_body.observed(), 0);
+        assert!(proxy_ctx.admission.is_none());
+    }
+
+    #[test]
+    fn body_rejection_maps_to_payload_too_large() {
+        let error = body_rejection_to_pingora(BodyLimitExceeded {
+            observed: 2,
+            limit: 1,
+        });
+        assert_eq!(error.etype, ErrorType::HTTPStatus(413));
+    }
+
+    #[test]
+    fn gateway_proxy_context_constructor_uses_runtime_limits() {
+        let config = crate::edge_contract::GatewayConfig::from_yaml(
+            r#"
+version: 1
+listener: 127.0.0.1:18080
+metrics_listener: 127.0.0.1:18082
+max_request_body_bytes: 8
+max_in_flight_requests: 2
+upstream_keepalive_pool_size: 1
+upstreams:
+  - name: test
+    address: 127.0.0.1:18081
+    tls: false
+    timeouts:
+      connection_ms: 1
+      total_connection_ms: 1
+      read_ms: 1
+      write_ms: 1
+      idle_ms: 1
+"#,
+        )
+        .expect("fixture config is valid");
+        let proxy = super::GatewayProxy::try_from_config(&config).expect("proxy activates");
+        let ctx = proxy.new_ctx();
+        assert_eq!(ctx.request_body.observed(), 0);
     }
 }
