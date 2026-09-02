@@ -85,8 +85,8 @@ jobs:
         run: |
           rustup toolchain install 1.98.0 --profile minimal
           rustup default 1.98.0
-      - name: Build exact gateway candidate
-        run: cargo build --release --locked --bin cwl-pingora-gateway
+      - name: Build exact gateway candidates
+        run: cargo build --release --locked --bin cwl-pingora-gateway --bin cwl-pingora-pg-erd-migration
       - name: Install checksum-pinned k6 2.2.0
         shell: bash
         run: |
@@ -160,6 +160,98 @@ jobs:
         with:
           name: k6-loopback-${{ env.EXPECTED_SHA }}
           path: k6-summary.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Exercise routed pg-erd concurrent traffic contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          UPSTREAM_PORT=18181 UPSTREAM_PAYLOAD=backend-ok python3 tests/load/upstream_fixture.py >/tmp/pg-erd-backend.log 2>&1 &
+          backend_pid=$!
+          UPSTREAM_PORT=18183 UPSTREAM_PAYLOAD=frontend-ok python3 tests/load/upstream_fixture.py >/tmp/pg-erd-frontend.log 2>&1 &
+          frontend_pid=$!
+
+          cat >/tmp/pg-erd-load.yaml <<'EOF'
+          version: 1
+          listener: 127.0.0.1:18180
+          metrics_listener: 127.0.0.1:18182
+          max_request_body_bytes: 1048576
+          max_in_flight_requests: 128
+          upstream_keepalive_pool_size: 32
+          upstreams:
+            - name: backend
+              address: 127.0.0.1:18181
+              tls: false
+              timeouts:
+                connection_ms: 500
+                total_connection_ms: 1000
+                read_ms: 2000
+                write_ms: 2000
+                idle_ms: 5000
+            - name: frontend
+              address: 127.0.0.1:18183
+              tls: false
+              timeouts:
+                connection_ms: 500
+                total_connection_ms: 1000
+                read_ms: 2000
+                write_ms: 2000
+                idle_ms: 5000
+          EOF
+
+          target/release/cwl-pingora-pg-erd-migration --config /tmp/pg-erd-load.yaml >/tmp/pg-erd-gateway-load.log 2>&1 &
+          gateway_pid=$!
+          cleanup() {
+            status=$?
+            kill "$gateway_pid" "$backend_pid" "$frontend_pid" >/dev/null 2>&1 || true
+            wait "$gateway_pid" >/dev/null 2>&1 || true
+            wait "$backend_pid" >/dev/null 2>&1 || true
+            wait "$frontend_pid" >/dev/null 2>&1 || true
+            if [ "$status" -ne 0 ]; then
+              echo "--- pg-erd gateway log ---"
+              cat /tmp/pg-erd-gateway-load.log || true
+              echo "--- backend fixture log ---"
+              cat /tmp/pg-erd-backend.log || true
+              echo "--- frontend fixture log ---"
+              cat /tmp/pg-erd-frontend.log || true
+            fi
+          }
+          trap cleanup EXIT
+
+          for origin in http://127.0.0.1:18181/ready http://127.0.0.1:18183/ready; do
+            ready=false
+            for _ in $(seq 1 40); do
+              if curl --fail --silent --show-error --max-time 1 "$origin" >/dev/null; then
+                ready=true
+                break
+              fi
+              sleep 0.05
+            done
+            if [ "$ready" != true ]; then
+              echo "load origin did not become reachable: $origin" >&2
+              exit 1
+            fi
+          done
+
+          for _ in $(seq 1 80); do
+            if curl --fail --silent --show-error --max-time 1 http://127.0.0.1:18180/livez >/dev/null; then
+              break
+            fi
+            if ! kill -0 "$gateway_pid" 2>/dev/null; then
+              echo "pg-erd gateway exited before the load contract became live" >&2
+              exit 1
+            fi
+            sleep 0.1
+          done
+          curl --fail --silent --show-error --max-time 1 http://127.0.0.1:18180/livez >/dev/null
+
+          PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 k6 run --quiet tests/load/pg_erd_gateway_smoke.js
+      - name: Upload pg-erd routed latency evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: k6-pg-erd-loopback-${{ env.EXPECTED_SHA }}
+          path: k6-pg-erd-summary.json
           if-no-files-found: error
           retention-days: 7
 
