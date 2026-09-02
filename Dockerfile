@@ -8,22 +8,32 @@ RUN apt-get update \
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
-RUN cargo build --locked --release --bin cwl-pingora-gateway
+RUN cargo build --locked --release \
+    --bin cwl-pingora-gateway \
+    --bin cwl-pingora-pg-erd-migration
 
 # Pingora's pinned `pingora-openssl` dependency enables the OpenSSL crate's `vendored` feature, so
-# the gateway binary does not require Debian's libssl at runtime. Keep the runtime on distroless
-# `base-nossl` rather than carrying an unused libssl package and its unrelated QUIC-server attack
-# surface. The current Rust binary does require libgcc_s for unwinding; copy that single runtime
-# library from the already-pinned build environment instead of widening the final image to the
-# distroless `cc` package set. CI starts the exact image under read-only/rootless restrictions and
-# the supply-chain workflow scans the final image fail-closed for HIGH/CRITICAL vulnerabilities.
+# the gateway binaries do not require Debian's libssl at runtime. Keep both runtime targets on the
+# same distroless `base-nossl` foundation rather than duplicating or widening packaging authority.
+# The current Rust binaries do require libgcc_s for unwinding; copy that single runtime library from
+# the already-pinned build environment. Both final targets inherit the same non-root identity and
+# are exercised under read-only-root, capability-free, no-new-privileges constraints in CI.
 # The base-nossl digest is the Debian 13 nonroot image also pinned by Envoy 1.39.1 (2026-08-27).
-FROM gcr.io/distroless/base-nossl-debian13:nonroot@sha256:5cab74e7f8a5e7c5f1c8a9e6268b1f352f053c36c656f493308340bcecbc636c AS runtime
+FROM gcr.io/distroless/base-nossl-debian13:nonroot@sha256:5cab74e7f8a5e7c5f1c8a9e6268b1f352f053c36c656f493308340bcecbc636c AS runtime-common
 
 COPY --from=builder /usr/lib/x86_64-linux-gnu/libgcc_s.so.1 /usr/lib/x86_64-linux-gnu/libgcc_s.so.1
-COPY --from=builder /src/target/release/cwl-pingora-gateway /usr/local/bin/cwl-pingora-gateway
 
-# The process requires no writable application directory. Operators can run the image with a
-# read-only root filesystem and mount only the versioned configuration as a read-only file.
+# Neither process requires a writable application directory. Operators can run either target with a
+# read-only root filesystem and mount only the corresponding versioned configuration read-only.
 USER 65532:65532
+
+FROM runtime-common AS pg-erd-migration
+COPY --from=builder /src/target/release/cwl-pingora-pg-erd-migration /usr/local/bin/cwl-pingora-pg-erd-migration
+ENTRYPOINT ["/usr/local/bin/cwl-pingora-pg-erd-migration"]
+
+# Keep the generic gateway as the final/default target so existing `docker build .` consumers retain
+# the same binary and entrypoint. The dedicated migration image must be selected explicitly with
+# `--target pg-erd-migration` and therefore cannot silently replace generic v1 packaging.
+FROM runtime-common AS gateway
+COPY --from=builder /src/target/release/cwl-pingora-gateway /usr/local/bin/cwl-pingora-gateway
 ENTRYPOINT ["/usr/local/bin/cwl-pingora-gateway"]
