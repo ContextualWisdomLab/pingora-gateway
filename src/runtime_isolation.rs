@@ -325,6 +325,10 @@ mod tests {
             .expect("fixture limits are valid");
         let mut budget = ResponseBodyLifetimeBudget::new(limits);
         let started = Instant::now();
+        assert!(budget
+            .reject_if_expired(started + Duration::from_secs(1))
+            .is_ok());
+
         budget.start(started);
         budget.start(started + Duration::from_millis(250));
 
