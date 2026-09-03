@@ -21,20 +21,29 @@ enum ConnectionMode {
 }
 
 impl ConnectionMode {
-    /// Parses the explicit fixture mode and rejects unknown values instead of
-    /// silently changing the capacity semantics under test.
-    fn from_env() -> Result<Self, Box<dyn std::error::Error>> {
-        match env::var("UPSTREAM_CONNECTION_MODE") {
-            Ok(value) if value == "keep-alive" => Ok(Self::KeepAlive),
-            Ok(value) if value == "close" => Ok(Self::Close),
-            Ok(value) => Err(io::Error::new(
+    /// Parses an optional startup value without touching process-global state so
+    /// invalid-mode acceptance can be tested deterministically.
+    fn parse(value: Option<&str>) -> Result<Self, Box<dyn std::error::Error>> {
+        match value {
+            Some("keep-alive") => Ok(Self::KeepAlive),
+            Some("close") => Ok(Self::Close),
+            Some(value) => Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 format!(
                     "UPSTREAM_CONNECTION_MODE must be 'keep-alive' or 'close', received {value:?}"
                 ),
             )
             .into()),
-            Err(env::VarError::NotPresent) => Ok(Self::KeepAlive),
+            None => Ok(Self::KeepAlive),
+        }
+    }
+
+    /// Reads the fixture mode once at startup and delegates validation to the
+    /// pure parser used by the direct rustc test contract.
+    fn from_env() -> Result<Self, Box<dyn std::error::Error>> {
+        match env::var("UPSTREAM_CONNECTION_MODE") {
+            Ok(value) => Self::parse(Some(value.as_str())),
+            Err(env::VarError::NotPresent) => Self::parse(None),
             Err(error) => Err(error.into()),
         }
     }
@@ -129,52 +138,77 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Parses a non-zero loopback port; port zero would make the measured authority
-/// nondeterministic and unusable by the shell traffic contract.
+/// Parses a non-zero loopback port from an optional startup value. Keeping the
+/// validation pure lets tests prove rejection without racing on environment vars.
+fn parse_port_value(value: Option<&str>) -> Result<u16, Box<dyn std::error::Error>> {
+    let Some(value) = value else {
+        return Ok(DEFAULT_PORT);
+    };
+    let port = value.parse::<u16>()?;
+    if port == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "UPSTREAM_PORT must be non-zero",
+        )
+        .into());
+    }
+    Ok(port)
+}
+
+/// Reads the loopback port once at startup and applies the same pure validation
+/// used by the direct fixture tests.
 fn parse_port() -> Result<u16, Box<dyn std::error::Error>> {
     match env::var("UPSTREAM_PORT") {
-        Ok(value) => {
-            let port = value.parse::<u16>()?;
-            if port == 0 {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "UPSTREAM_PORT must be non-zero",
-                )
-                .into());
-            }
-            Ok(port)
-        }
-        Err(env::VarError::NotPresent) => Ok(DEFAULT_PORT),
+        Ok(value) => parse_port_value(Some(value.as_str())),
+        Err(env::VarError::NotPresent) => parse_port_value(None),
         Err(error) => Err(error.into()),
     }
 }
 
-/// Parses the finite worker budget and caps it so a malformed test invocation
-/// cannot turn the bounded-origin evidence back into thread-per-connection load.
+/// Parses the finite worker budget from an optional value and caps it before any
+/// listener is bound or worker thread is created.
+fn parse_workers_value(value: Option<&str>) -> Result<usize, Box<dyn std::error::Error>> {
+    let Some(value) = value else {
+        return Ok(DEFAULT_WORKERS);
+    };
+    let workers = value.parse::<usize>()?;
+    if workers == 0 || workers > MAX_WORKERS {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("UPSTREAM_WORKERS must be in 1..={MAX_WORKERS}"),
+        )
+        .into());
+    }
+    Ok(workers)
+}
+
+/// Reads the worker budget once at startup and delegates to the deterministic
+/// parser used by the fixture's direct unit contract.
 fn parse_workers() -> Result<usize, Box<dyn std::error::Error>> {
     match env::var("UPSTREAM_WORKERS") {
-        Ok(value) => {
-            let workers = value.parse::<usize>()?;
-            if workers == 0 || workers > MAX_WORKERS {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    format!("UPSTREAM_WORKERS must be in 1..={MAX_WORKERS}"),
-                )
-                .into());
-            }
-            Ok(workers)
-        }
-        Err(env::VarError::NotPresent) => Ok(DEFAULT_WORKERS),
+        Ok(value) => parse_workers_value(Some(value.as_str())),
+        Err(env::VarError::NotPresent) => parse_workers_value(None),
         Err(error) => Err(error.into()),
     }
 }
 
-/// Parses the startup-only service delay used to make finite origin capacity
+/// Parses the startup-only service delay without global environment mutation so
+/// malformed values can be rejected by deterministic tests.
+fn parse_response_delay_ms_value(
+    value: Option<&str>,
+) -> Result<u64, Box<dyn std::error::Error>> {
+    match value {
+        Some(value) => Ok(value.parse::<u64>()?),
+        None => Ok(DEFAULT_RESPONSE_DELAY_MS),
+    }
+}
+
+/// Reads the startup-only service delay used to make finite origin capacity
 /// observable without injecting delay into the gateway itself.
 fn parse_response_delay_ms() -> Result<u64, Box<dyn std::error::Error>> {
     match env::var("UPSTREAM_RESPONSE_DELAY_MS") {
-        Ok(value) => Ok(value.parse::<u64>()?),
-        Err(env::VarError::NotPresent) => Ok(DEFAULT_RESPONSE_DELAY_MS),
+        Ok(value) => parse_response_delay_ms_value(Some(value.as_str())),
+        Err(env::VarError::NotPresent) => parse_response_delay_ms_value(None),
         Err(error) => Err(error.into()),
     }
 }
@@ -273,7 +307,40 @@ fn find_header_end(buffer: &[u8]) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_response, find_header_end, ConnectionMode};
+    use super::{
+        build_response, find_header_end, parse_port_value, parse_response_delay_ms_value,
+        parse_workers_value, ConnectionMode, DEFAULT_PORT, DEFAULT_RESPONSE_DELAY_MS,
+        DEFAULT_WORKERS, MAX_WORKERS,
+    };
+
+    /// Proves malformed startup controls are rejected by the parsers that run
+    /// before `main` binds the listener, without mutating process-global env vars.
+    #[test]
+    fn invalid_startup_controls_fail_closed_before_binding() {
+        assert!(parse_port_value(Some("0")).is_err());
+        assert!(parse_port_value(Some("not-a-port")).is_err());
+        assert_eq!(parse_port_value(None).unwrap(), DEFAULT_PORT);
+
+        assert!(parse_workers_value(Some("0")).is_err());
+        assert!(parse_workers_value(Some(&(MAX_WORKERS + 1).to_string())).is_err());
+        assert!(parse_workers_value(Some("not-a-worker-count")).is_err());
+        assert_eq!(parse_workers_value(Some("4")).unwrap(), 4);
+        assert_eq!(parse_workers_value(None).unwrap(), DEFAULT_WORKERS);
+
+        assert!(parse_response_delay_ms_value(Some("not-a-delay")).is_err());
+        assert_eq!(parse_response_delay_ms_value(Some("150")).unwrap(), 150);
+        assert_eq!(
+            parse_response_delay_ms_value(None).unwrap(),
+            DEFAULT_RESPONSE_DELAY_MS
+        );
+
+        assert!(ConnectionMode::parse(Some("upgrade")).is_err());
+        assert_eq!(
+            ConnectionMode::parse(Some("close")).unwrap(),
+            ConnectionMode::Close
+        );
+        assert_eq!(ConnectionMode::parse(None).unwrap(), ConnectionMode::KeepAlive);
+    }
 
     /// Prevents connection-mode changes from drifting away from emitted framing.
     #[test]
