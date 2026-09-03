@@ -1,0 +1,65 @@
+name: PgErd bounded-origin capacity
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pg-erd-capacity-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+
+jobs:
+  bounded-origin-capacity:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          ref: ${{ env.EXPECTED_SHA }}
+          persist-credentials: false
+      - name: Verify checkout identity
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - name: Install native dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ca-certificates cmake curl libssl-dev pkg-config
+      - name: Install Rust 1.98.0
+        run: |
+          rustup toolchain install 1.98.0 --profile minimal --component rustfmt
+          rustup default 1.98.0
+      - name: Build exact pg-erd candidate and Rust origin fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --release --locked --bin cwl-pingora-pg-erd-migration
+          rustfmt --edition 2021 --check tests/load/load_origin.rs
+          rustc --edition 2021 -D warnings -C opt-level=3 -C debuginfo=0 \
+            --out-dir /tmp tests/load/load_origin.rs
+      - name: Install checksum-pinned k6 2.2.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="k6-v2.2.0-linux-amd64.tar.gz"
+          curl --fail --location --silent --show-error \
+            "https://github.com/grafana/k6/releases/download/v2.2.0/${archive}" \
+            --output "/tmp/${archive}"
+          echo "b5a8003c86f35f5cd5ceef1490312c48e587696c94d998cefc6d7b3b4cb1597d  /tmp/${archive}" | sha256sum --check --strict
+          tar -xzf "/tmp/${archive}" -C /tmp
+          sudo install -m 0755 /tmp/k6-v2.2.0-linux-amd64/k6 /usr/local/bin/k6
+          k6 version
+      - name: Exercise bounded-origin routed capacity contract
+        shell: bash
+        run: bash tests/load/run_pg_erd_capacity.sh
+      - name: Upload bounded-origin capacity evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: k6-pg-erd-capacity-${{ env.EXPECTED_SHA }}
+          path: k6-pg-erd-capacity-summary.json
+          if-no-files-found: error
+          retention-days: 7
