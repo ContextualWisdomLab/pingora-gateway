@@ -2,6 +2,8 @@ name: PgErd bounded-origin capacity
 
 on:
   push:
+    branches:
+      - main
   pull_request:
 
 permissions:
