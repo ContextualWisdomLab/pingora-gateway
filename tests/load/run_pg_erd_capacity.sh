@@ -31,10 +31,12 @@ validate_bounded_fixture() {
 
   cleanup_validation() {
     if [ -n "${first_fd:-}" ]; then
-      eval "exec ${first_fd}>&-" || true
+      exec {first_fd}>&- || true
+      first_fd=""
     fi
     if [ -n "${second_fd:-}" ]; then
-      eval "exec ${second_fd}>&-" || true
+      exec {second_fd}>&- || true
+      second_fd=""
     fi
     kill "$origin_pid" >/dev/null 2>&1 || true
     wait "$origin_pid" >/dev/null 2>&1 || true
@@ -58,9 +60,9 @@ validate_bounded_fixture() {
   finished_ms=$(date +%s%3N)
   elapsed_ms=$((finished_ms - started_ms))
 
-  eval "exec ${first_fd}>&-"
+  exec {first_fd}>&-
   first_fd=""
-  eval "exec ${second_fd}>&-"
+  exec {second_fd}>&-
   second_fd=""
 
   if [ "$status" -ne 0 ]; then
