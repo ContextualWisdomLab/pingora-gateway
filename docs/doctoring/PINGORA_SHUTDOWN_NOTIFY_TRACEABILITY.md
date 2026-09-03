@@ -4,18 +4,18 @@ This note is a focused primary-source supplement for `pingora-gateway#46`. It re
 
 ## Exact supplier state
 
-Protected Cloudflare Pingora `main` was revalidated at `09696b51bc59315353d96686355861604d0bb48c` on 2026-09-03. At that exact revision, `pingora-proxy/src/lib.rs` stores one `tokio::sync::Notify` and one `Arc<AtomicBool>` on `HttpProxy`. `handle_new_request()` uses a biased `tokio::select!` between `downstream_session.read_request()` and `self.shutdown.notified()`. `http_cleanup()` stores `shutdown_flag = true` with `Ordering::Release` and then invokes `notify_waiters()`.
+Protected Cloudflare Pingora `main` was revalidated at `09696b51bc59315353d96686355861604d0bb48c` on 2026-09-03. At that exact revision, `pingora-proxy/src/lib.rs` stores one `tokio::sync::Notify` and one `Arc<AtomicBool>` on each `HttpProxy` instance. `handle_new_request()` uses a biased `tokio::select!` between `downstream_session.read_request()` and `self.shutdown.notified()`. `http_cleanup()` stores `shutdown_flag = true` with `Ordering::Release` and then invokes `notify_waiters()`.
 
 That public source has two independently relevant consequences:
 
 - a one-shot notification can occur after `read_request()` has become pending but before the `Notified` future has registered its waiter; `handle_new_request()` does not consult `shutdown_flag` before parking, so that read can miss the signal and linger until the outer shutdown fallback;
-- every parked request registers and unregisters against the same `Notify` waiter-list mutex, creating a global synchronization point on a hot HTTP/1 path.
+- parked requests sharing an `HttpProxy` register and unregister against that instance's `Notify` waiter-list mutex, creating an instance-local synchronization point on a hot HTTP/1 path.
 
 This is not the same contract as an admitted request already executing upstream work. Existing gateway drain tests prove that admitted in-flight requests can finish inside the configured grace period. Issue #46 owns the distinct state in which a downstream connection is parked waiting for a request or a subsequent keep-alive request.
 
 ## Upstream evidence
 
-Cloudflare Pingora issue #844 reports the shared-`Notify` path as the dominant scaling bottleneck on a 128-core NUMA host. Its supplied off-CPU profile attributes 34.88% to `Notified::poll_notified -> Mutex::lock -> do_futex` and 30.78% to `Notified::drop -> Mutex::lock -> do_futex`, 65.66% combined. The issue is open but labeled `Accepted`, whose upstream description states the change is accepted and merged to Cloudflare's internal repository. That label is not public-source or release evidence for CWL; protected public `main@09696b51...` still contains the single-`Notify` implementation.
+Cloudflare Pingora issue #844 reports the shared-`Notify` path as the dominant scaling bottleneck on a 128-core NUMA host. Its supplied off-CPU profile attributes 34.88% to `Notified::poll_notified -> Mutex::lock -> do_futex` and 30.78% to `Notified::drop -> Mutex::lock -> do_futex`, 65.66% combined. The issue is open but labeled `Accepted`, whose upstream description states the change is accepted and merged to Cloudflare's internal repository. That label is not public-source or release evidence for CWL; protected public `main@09696b51...` still contains the single-`Notify`-per-`HttpProxy` implementation.
 
 Public PR #969 proposes a sharded notification path plus an explicit shutdown-flag handshake. Its two regression tests have different purposes: `shutdown_wakes_parked_read_requests` protects the requirement that parked reads are promptly interrupted; `shutdown_before_read_request_parks_returns_immediately` targets the lost-wakeup window.
 
