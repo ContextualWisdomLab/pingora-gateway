@@ -6,7 +6,7 @@
 
 ## Problem
 
-The protected public Pingora revision used by the current migration stack, `09696b51bc59315353d96686355861604d0bb48c`, still uses one `tokio::sync::Notify` shared by each `HttpProxy` instance for HTTP/1 request reads parked in `HttpProxy::handle_new_request()`. The public source has two distinct commercial-runtime concerns.
+The protected public Pingora revision used by the current migration stack, `09696b51bc59315353d96686355861604d0bb48c`, still has each `HttpProxy` instance own one shared `tokio::sync::Notify` for the HTTP/1 request reads handled by that instance while parked in `HttpProxy::handle_new_request()`. The public source has two distinct commercial-runtime concerns.
 
 First, shutdown is emitted as a one-shot `notify_waiters()` after setting an atomic shutdown flag, but the parked-read select path does not consult that flag before awaiting `Notified`. Upstream review of public PR #969 transplanted its regression to `09696b51...` and reproduced a lost-wakeup when shutdown occurs after the read is pending but before waiter registration. A separate adversarial jitter harness failed immediately on public main while the PR head passed 300/300 rounds.
 
