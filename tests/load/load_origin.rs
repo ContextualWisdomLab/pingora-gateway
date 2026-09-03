@@ -318,15 +318,19 @@ mod tests {
     #[test]
     fn invalid_startup_controls_fail_closed_before_binding() {
         assert!(parse_port_value(Some("0")).is_err());
+        assert!(parse_port_value(Some("65536")).is_err());
         assert!(parse_port_value(Some("not-a-port")).is_err());
         assert_eq!(parse_port_value(None).unwrap(), DEFAULT_PORT);
 
         assert!(parse_workers_value(Some("0")).is_err());
         assert!(parse_workers_value(Some(&(MAX_WORKERS + 1).to_string())).is_err());
+        let worker_overflow = format!("{}0", usize::MAX);
+        assert!(parse_workers_value(Some(worker_overflow.as_str())).is_err());
         assert!(parse_workers_value(Some("not-a-worker-count")).is_err());
         assert_eq!(parse_workers_value(Some("4")).unwrap(), 4);
         assert_eq!(parse_workers_value(None).unwrap(), DEFAULT_WORKERS);
 
+        assert!(parse_response_delay_ms_value(Some("18446744073709551616")).is_err());
         assert!(parse_response_delay_ms_value(Some("not-a-delay")).is_err());
         assert_eq!(parse_response_delay_ms_value(Some("150")).unwrap(), 150);
         assert_eq!(
