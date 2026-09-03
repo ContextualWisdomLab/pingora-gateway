@@ -62,11 +62,38 @@ jobs:
       - name: Exercise bounded-origin routed capacity contract
         shell: bash
         run: bash tests/load/run_pg_erd_capacity.sh
+      - name: Require bounded-origin capacity summary on successful traffic
+        if: ${{ success() }}
+        shell: bash
+        run: test -s k6-pg-erd-capacity-summary.json
+      - name: Stage bounded-origin capacity evidence
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence_dir="$RUNNER_TEMP/pg-erd-capacity-evidence"
+          mkdir -p "$evidence_dir"
+          printf 'expected_repository=%s\nexpected_sha=%s\n' \
+            "$EXPECTED_REPOSITORY" "$EXPECTED_SHA" \
+            >"$evidence_dir/execution-context.txt"
+          for evidence in \
+            "$GITHUB_WORKSPACE/k6-pg-erd-capacity-summary.json" \
+            /tmp/pg-erd-capacity-gateway.log \
+            /tmp/pg-erd-capacity-backend.log \
+            /tmp/pg-erd-capacity-frontend.log \
+            /tmp/bounded-origin-self-check.log \
+            /tmp/bounded-origin-a.raw \
+            /tmp/bounded-origin-b.raw \
+            /tmp/bounded-origin-expected.raw; do
+            if [ -f "$evidence" ]; then
+              cp "$evidence" "$evidence_dir/"
+            fi
+          done
       - name: Upload bounded-origin capacity evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: k6-pg-erd-capacity-${{ env.EXPECTED_SHA }}
-          path: k6-pg-erd-capacity-summary.json
+          path: ${{ runner.temp }}/pg-erd-capacity-evidence
           if-no-files-found: error
           retention-days: 7
