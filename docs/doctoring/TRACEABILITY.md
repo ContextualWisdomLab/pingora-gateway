@@ -4,7 +4,9 @@ This file links material technical/security claims to primary standards or upstr
 
 | Claim | Source |
 | --- | --- |
-| Pingora server/proxy composition and graceful server lifecycle | Cloudflare Pingora source at pinned commit `09696b51bc59315353d96686355861604d0bb48c`, the protected upstream `main` head revalidated on 2026-09-03 |
+| Pingora server/proxy composition and graceful server lifecycle | Cloudflare Pingora source at pinned commit `09696b51bc59315353d96686355861604d0bb48c`, the protected upstream `main` head revalidated on 2026-09-04 |
+| Current CWL application listeners are clear-text-only: both production composition roots call `http_proxy_service(...)` and `add_tcp(&listener)` with no downstream certificate/key or ALPN configuration | `src/bin/cwl-pingora-gateway.rs` blob `0bb1ce9ad23aa1d92e9fdff221350f5e0a946723` and `src/bin/cwl-pingora-pg-erd-migration.rs` blob `6819e6917912b256daeac04262f4848b1ea9a6d3` at parent `969ffd7db92776c3a2389646e81a39b79705c2e0`; `pingora-gateway#51` / ADR 0012 own the versioned downstream TLS/H2 transition |
+| Current CWL upstream transport is deliberately HTTP/1.1: every materialized peer sets `peer.options.alpn = ALPN::H1` | `src/pingora_delivery.rs` blob `ae5654216f50a9c9ad159d8247c4b9e401c24eef` at parent `969ffd7db92776c3a2389646e81a39b79705c2e0`; downstream H2 therefore immediately exercises H2-to-H1 translation until a separate upstream protocol version changes |
 | Pinned Pingora diagnostics can contain request-derived data outside CWL's callback logging vocabulary: proxy TRACE formats the full downstream `RequestHeader`, the HTTP/1 client TRACE formats the serialized upstream request header, and Pingora request summaries contain method/path/Host | `pingora-proxy/src/lib.rs`, `pingora-core/src/protocols/http/v1/client.rs`, and `pingora-core/src/protocols/http/v1/server.rs` at pinned commit `09696b51bc59315353d96686355861604d0bb48c`; this is the source basis for process-wide Pingora diagnostic message redaction in `logging_policy` |
 | Pingora downstream sessions expose accepted client/server socket addresses; Pingora socket addresses expose IP socket values through `as_inet()` | `pingora-core/src/protocols/http/server.rs`, `pingora-proxy/tests/utils/server_utils.rs`, and `pingora-core/src/protocols/l4/socket.rs` at pinned commit `09696b51bc59315353d96686355861604d0bb48c`; these are the transport observations used by the pg-erd forwarding adapter |
 | Pingora's server default `max_retries` is 16, while the proxy loop copies that field and loops while its attempt counter is below the value | `pingora-core/src/server/configuration/mod.rs` and `pingora-proxy/src/lib.rs` at pinned commit `09696b51bc59315353d96686355861604d0bb48c`; CWL v1 therefore sets the field to `1` for one total attempt |
@@ -20,6 +22,10 @@ This file links material technical/security claims to primary standards or upstr
 | Pinned Pingora HTTP/1 request-header admission is finite but supplier-fixed: `MAX_HEADERS = 256`, `INIT_HEADER_BUF_SIZE = 4096`, and `MAX_HEADER_SIZE = 1_048_575`; `HttpSession::read_request()` checks the accumulated size before a subsequent read and notes that the first large read can already exceed the nominal threshold. The public `HttpServerOptions` surface has no HTTP/1 header byte/count field at this revision | `pingora-core/src/protocols/http/v1/common.rs`, `pingora-core/src/protocols/http/v1/server.rs`, and `pingora-core/src/apps/mod.rs` at pinned commit `09696b51bc59315353d96686355861604d0bb48c`; downstream integration issue `pingora-gateway#43` and supplier request `cloudflare/pingora#993` track the missing parser/composition hook |
 | Pinned Pingora downstream HTTP/1 request-header acquisition has a 60 s default `read_timeout`, but it is applied to each individual socket read while `read_request()` loops until a complete header parses. A successful partial read therefore permits another relative wait, and request callbacks are not available until downstream header parsing completes; current `HttpServerOptions` exposes no monotonic whole-header deadline | `pingora-core/src/protocols/http/v1/server.rs`, `pingora-proxy/src/lib.rs`, and `pingora-core/src/apps/mod.rs` at commit `09696b51bc59315353d96686355861604d0bb48c`; existing supplier issue `cloudflare/pingora#447` records the original downstream timeout problem and its slow-drip distinction, while `pingora-gateway#45` tracks the downstream integration boundary |
 | Pingora HTTP/2 request-header admission uses separate decoded-header-list accounting: `default_h2_options()` sets a 64 KiB decoded header-list limit and 100 concurrent streams through `H2Options`; these semantics must not be reinterpreted as HTTP/1 wire/parser bytes | `pingora-core/src/protocols/http/v2/server.rs` at pinned commit `09696b51bc59315353d96686355861604d0bb48c` |
+| The current pinned public Pingora source exposes HTTP/1 and HTTP/2 server sessions and TLS listener support, but this supplier capability does not itself prove a CWL downstream TLS/H2 contract; no corresponding first-class HTTP/3 server session was established by the inspected public source | `pingora-core/src/protocols/http/server.rs`, `pingora-core/src/protocols/http/v2/`, and listener/TLS source at protected public `main@09696b51bc59315353d96686355861604d0bb48c`; issue #51 keeps H3/QUIC fail-closed |
+| H2-downstream to H1-upstream request-body translation has an open supplier defect report in which a final empty DATA+END_STREAM can cause two H1 chunk terminators and desynchronize a pooled keep-alive connection | Cloudflare Pingora issue #935, revalidated open 2026-09-04; the report identifies zero-length `BodyWriter` chunking plus `finish()` as the mechanism |
+| Supplier PR #936 proposes the narrow BodyWriter repair: zero-length chunked writes become no-ops in both async and cancel-safe task paths and `finish()` remains the sole terminator emitter; it is not yet an immutable maintainer-integrated dependency | Cloudflare Pingora PR #936, head `9b5bba91040a2ad5d03568a1a8e736ef3c2efa53`, one changed file, open/mergeable and unmerged when revalidated 2026-09-04. Its merge base is `e6e677fe9b58555140ab7bd14feff035392b3530`; current protected main is `09696b51...`, so normal restack/revalidation is required rather than downstream mutable-branch pinning |
+| H2-to-H1 Cookie translation has a separate open report: multiple decompressed H2 `Cookie` fields must be concatenated with `; ` before entering an H1 context | RFC 9113 §8.2.3 and Cloudflare Pingora issue #892, revalidated open 2026-09-04. #892 is a mandatory exact-supplier traffic characterization/disposition and is not treated as proof of the current protected source by issue text alone |
 | Pingora `read_timeout` is a per-individual-read inactivity budget and resets after each successful upstream `read()`; it is not a total-response lifetime bound | Cloudflare Pingora `docs/user_guide/peer.md` and `pingora-proxy/src/proxy_h1.rs` at pinned commit `09696b51bc59315353d96686355861604d0bb48c`; the pg-erd read-stall acceptance therefore characterizes a connected origin that sends no response bytes and deliberately does not claim slow-drip/whole-response bounding |
 | A proxy failure after the upstream response header has already been sent downstream cannot be replaced with a new error response or failover; Pingora logs/surfaces the error and gives up that request | Cloudflare Pingora `docs/user_guide/failover.md` and `pingora-proxy/src/proxy_h1.rs` at pinned commit `09696b51bc59315353d96686355861604d0bb48c`; this phase boundary is the basis of the dedicated pg-erd partial-response traffic contract |
 | Pingora HTTP/1 body framing treats a body that ends before its declared `Content-Length` as `PREMATURE_BODY_END`, while upstream read failures are propagated as failed proxy tasks | `pingora-core/src/protocols/http/v1/body.rs`, `pingora-core/src/protocols/http/v1/client.rs`, and `pingora-proxy/src/proxy_h1.rs` at pinned commit `09696b51bc59315353d96686355861604d0bb48c`; RFC 9112 defines HTTP/1.1 message framing requirements |
@@ -30,9 +36,11 @@ This file links material technical/security claims to primary standards or upstr
 | Forwarded-header grammar and trust semantics | RFC 7239 |
 | HTTP semantics | RFC 9110 |
 | HTTP/1.1 message framing/hop-by-hop requirements | RFC 9112 |
-| HTTP/2 framing and connection semantics | RFC 9113 |
-| HTTP/3 semantics over QUIC | RFC 9114; HTTP/3 is not claimed implemented by this v1 candidate until executable listener/interoperability evidence exists |
+| HTTP/2 framing and connection semantics, including Cookie coalescing before a non-H2 context | RFC 9113, especially §8.2.3 |
+| HTTP/3 semantics over QUIC | RFC 9114; HTTP/3 is not claimed implemented by this candidate until executable listener/interoperability evidence exists |
+| QUIC transport and TLS binding are distinct from TLS-over-TCP | RFC 9000 and RFC 9001; H3 cannot be inferred from a custom TLS ALPN label without QUIC transport integration |
 | Current TLS 1.3 protocol semantics and application identity-verification responsibility | RFC 9846, published July 2026, which obsoletes RFC 8446 and points applications to RFC 9525 for identity verification |
+| TLS service identity verification | RFC 9525 |
 | New protocols using TLS must require TLS 1.3 | RFC 9852, BCP 195, July 2026; this gateway is not claiming a new application protocol and still requires explicit migration-time protocol compatibility evidence |
 | March 2026 Pingora request-smuggling/cache-key advisories are patched in 0.8.0 | GitHub Security Advisories GHSA-xq2h-p299-vjwv, GHSA-hj7x-879w-vrp7, GHSA-f93w-pcj3-rggc |
 | Pingora 0.8.1 remains the latest GitHub release revalidated on 2026-09-03 and bounds default HTTP/2 server limits | Cloudflare Pingora GitHub Releases, 0.8.1, 2026-06-04 |
@@ -64,6 +72,12 @@ Cloudflare. (n.d.). *Pingora HTTP/2 server session and bounded defaults* [Source
 seonghobae. (2026, September 3). *Expose configurable HTTP/1 request-header parser admission limits* [GitHub issue #993]. Cloudflare Pingora. https://github.com/cloudflare/pingora/issues/993
 
 Ermakov, O. (2024, October 29). *Support for Configurable Timeout for Downstream Connections in HTTP/1.1* [GitHub issue #447]. Cloudflare Pingora. https://github.com/cloudflare/pingora/issues/447
+
+songhieu. (2026, July 17). *H1 upstream: chunked terminator written twice when an H2 downstream ends the request body with an empty DATA frame (END_STREAM)* [GitHub issue #935]. Cloudflare Pingora. https://github.com/cloudflare/pingora/issues/935
+
+songhieu. (2026, July 17). *Fix: don't emit the chunked terminator for zero-length body writes* [GitHub pull request #936]. Cloudflare Pingora. https://github.com/cloudflare/pingora/pull/936
+
+MyLittleLuckyDog. (2026, May 29). *HTTP/2 multiple Cookie headers not concatenated when proxied to HTTP/1.1 upstream (RFC 9113 §8.2.3)* [GitHub issue #892]. Cloudflare Pingora. https://github.com/cloudflare/pingora/issues/892
 
 Cloudflare. (n.d.). *Pingora HTTP/1 proxy implementation* [Source code, commit 09696b51bc59315353d96686355861604d0bb48c]. GitHub. https://github.com/cloudflare/pingora/blob/09696b51bc59315353d96686355861604d0bb48c/pingora-proxy/src/proxy_h1.rs
 
@@ -110,6 +124,12 @@ Schwartz, B. M. (2026). *Security considerations for optimistic protocol transit
 Thomson, M., & Benfield, C. (2022). *HTTP/2* (RFC 9113). RFC Editor. https://www.rfc-editor.org/rfc/rfc9113
 
 Bishop, M. (2022). *HTTP/3* (RFC 9114). RFC Editor. https://www.rfc-editor.org/rfc/rfc9114
+
+Iyengar, J., & Thomson, M. (2021). *QUIC: A UDP-Based Multiplexed and Secure Transport* (RFC 9000). RFC Editor. https://www.rfc-editor.org/rfc/rfc9000
+
+Thomson, M., & Turner, S. (2021). *Using TLS to Secure QUIC* (RFC 9001). RFC Editor. https://www.rfc-editor.org/rfc/rfc9001
+
+Saint-Andre, P., & Sheffer, Y. (2024). *Service identity in TLS* (RFC 9525). RFC Editor. https://www.rfc-editor.org/rfc/rfc9525
 
 Rescorla, E. (2026). *The Transport Layer Security (TLS) Protocol Version 1.3* (RFC 9846). RFC Editor. https://www.rfc-editor.org/rfc/rfc9846
 
