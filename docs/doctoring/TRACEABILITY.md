@@ -129,7 +129,7 @@ Iyengar, J., & Thomson, M. (2021). *QUIC: A UDP-Based Multiplexed and Secure Tra
 
 Thomson, M., & Turner, S. (2021). *Using TLS to Secure QUIC* (RFC 9001). RFC Editor. https://www.rfc-editor.org/rfc/rfc9001
 
-Saint-Andre, P., & Sheffer, Y. (2024). *Service identity in TLS* (RFC 9525). RFC Editor. https://www.rfc-editor.org/rfc/rfc9525
+Saint-Andre, P., & Salz, R. (2023). *Service identity in TLS* (RFC 9525). RFC Editor. https://www.rfc-editor.org/rfc/rfc9525
 
 Rescorla, E. (2026). *The Transport Layer Security (TLS) Protocol Version 1.3* (RFC 9846). RFC Editor. https://www.rfc-editor.org/rfc/rfc9846
 
