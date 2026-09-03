@@ -40,6 +40,9 @@ jobs:
           rustfmt --edition 2021 --check tests/load/load_origin.rs
           rustc --edition 2021 -D warnings -C opt-level=3 -C debuginfo=0 \
             --out-dir /tmp tests/load/load_origin.rs
+          rustc --edition 2021 -D warnings --test tests/load/load_origin.rs \
+            -o /tmp/load_origin_tests
+          /tmp/load_origin_tests
       - name: Install checksum-pinned k6 2.2.0
         shell: bash
         run: |
