@@ -90,7 +90,7 @@ Internet Engineering Task Force. (2021). *QUIC: A UDP-Based Multiplexed and Secu
 
 Internet Engineering Task Force. (2021). *Using TLS to Secure QUIC* (RFC 9001).
 
-Internet Engineering Task Force. (2024). *Service Identity in TLS* (RFC 9525).
+Internet Engineering Task Force. (2023). *Service Identity in TLS* (RFC 9525).
 
 Internet Engineering Task Force. (2026). *The Transport Layer Security (TLS) Protocol Version 1.3* (RFC 9846).
 
