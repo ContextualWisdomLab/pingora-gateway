@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Wait for a synthetic origin without mistaking a crashed fixture for slow startup.
 wait_for_origin() {
   local url="$1"
   local pid="$2"
@@ -18,6 +19,8 @@ wait_for_origin() {
   return 1
 }
 
+# Prove the fixture really serializes two simultaneously admitted requests with
+# one worker and exact close-framed responses before using it for gateway evidence.
 validate_bounded_fixture() {
   UPSTREAM_PORT=18291 \
   UPSTREAM_WORKERS=1 \
@@ -29,6 +32,7 @@ validate_bounded_fixture() {
   local first_fd
   local second_fd
 
+  # Close any probe descriptors and reap the temporary origin on every return path.
   cleanup_validation() {
     if [ -n "${first_fd:-}" ]; then
       exec {first_fd}>&- || true
@@ -110,6 +114,7 @@ UPSTREAM_RESPONSE_DELAY_MS=1 \
 frontend_pid=$!
 
 gateway_pid=""
+# Preserve the first failing status while reaping every process started by the lane.
 cleanup() {
   status=$?
   if [ -n "$gateway_pid" ]; then
