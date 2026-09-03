@@ -8,6 +8,8 @@ export const options = {
     checks: ['rate==1'],
     http_req_failed: ['rate==0'],
     http_req_duration: ['p(95)<20'],
+    'http_req_duration{route:backend}': ['p(95)<20'],
+    'http_req_duration{route:frontend}': ['p(95)<20'],
   },
 };
 
@@ -15,13 +17,14 @@ const gatewayUrl = __ENV.PG_ERD_GATEWAY_URL || 'http://127.0.0.1:18280';
 
 /**
  * Alternates the characterized backend and frontend routes while preserving the
- * same bounded-origin round-trip threshold for both route families.
+ * same bounded-origin round-trip threshold for each route family independently.
  */
 export default function () {
   const backendRoute = (__VU + __ITER) % 2 === 0;
+  const route = backendRoute ? 'backend' : 'frontend';
   const path = backendRoute ? '/api/capacity-contract' : '/capacity-contract';
   const expectedBody = backendRoute ? 'backend-capacity-ok' : 'frontend-capacity-ok';
-  const response = http.get(`${gatewayUrl}${path}`);
+  const response = http.get(`${gatewayUrl}${path}`, { tags: { route } });
 
   check(response, {
     'bounded-origin pg-erd gateway returns 200': (result) => result.status === 200,
