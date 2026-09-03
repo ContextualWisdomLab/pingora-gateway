@@ -17,6 +17,8 @@ This file links material technical/security claims to primary standards or upstr
 | WebSocket over HTTP/1.1 uses a GET opening handshake with `Upgrade: websocket` / `Connection: Upgrade` and requires a successful `101 Switching Protocols` before the connection enters the WebSocket protocol | RFC 6455 §§1.2, 4 |
 | WebSocket over HTTP/2 is a distinct Extended CONNECT mechanism rather than HTTP/1 connection-wide Upgrade | RFC 8441 §§3-5 |
 | Current IETF security guidance for optimistic HTTP/1.1 protocol transitions identifies request-smuggling/parser risks, confirms rejected upgrades are normal, and specifically notes that RFC 6455 forbids optimistic WebSocket data before the server response | RFC 9931, March 2026, especially §§3-8 |
+| Pinned Pingora HTTP/1 request-header admission is finite but supplier-fixed: `MAX_HEADERS = 256`, `INIT_HEADER_BUF_SIZE = 4096`, and `MAX_HEADER_SIZE = 1_048_575`; `HttpSession::read_request()` checks the accumulated size before a subsequent read and notes that the first large read can already exceed the nominal threshold. No supported CWL-facing HTTP/1 parser budget exists below that ceiling at this revision | `pingora-core/src/protocols/http/v1/common.rs` and `pingora-core/src/protocols/http/v1/server.rs` at pinned commit `09696b51bc59315353d96686355861604d0bb48c`; downstream integration issue `pingora-gateway#43` and supplier request `cloudflare/pingora#993` track the missing parser/composition hook |
+| Pingora HTTP/2 request-header admission uses separate decoded-header-list accounting: `default_h2_options()` sets a 64 KiB decoded header-list limit and 100 concurrent streams through `H2Options`; these semantics must not be reinterpreted as HTTP/1 wire/parser bytes | `pingora-core/src/protocols/http/v2/server.rs` at pinned commit `09696b51bc59315353d96686355861604d0bb48c` |
 | Pingora `read_timeout` is a per-individual-read inactivity budget and resets after each successful upstream `read()`; it is not a total-response lifetime bound | Cloudflare Pingora `docs/user_guide/peer.md` and `pingora-proxy/src/proxy_h1.rs` at pinned commit `09696b51bc59315353d96686355861604d0bb48c`; the pg-erd read-stall acceptance therefore characterizes a connected origin that sends no response bytes and deliberately does not claim slow-drip/whole-response bounding |
 | A proxy failure after the upstream response header has already been sent downstream cannot be replaced with a new error response or failover; Pingora logs/surfaces the error and gives up that request | Cloudflare Pingora `docs/user_guide/failover.md` and `pingora-proxy/src/proxy_h1.rs` at pinned commit `09696b51bc59315353d96686355861604d0bb48c`; this phase boundary is the basis of the dedicated pg-erd partial-response traffic contract |
 | Pingora HTTP/1 body framing treats a body that ends before its declared `Content-Length` as `PREMATURE_BODY_END`, while upstream read failures are propagated as failed proxy tasks | `pingora-core/src/protocols/http/v1/body.rs`, `pingora-core/src/protocols/http/v1/client.rs`, and `pingora-proxy/src/proxy_h1.rs` at pinned commit `09696b51bc59315353d96686355861604d0bb48c`; RFC 9112 defines HTTP/1.1 message framing requirements |
@@ -50,11 +52,17 @@ Cloudflare. (n.d.). *Peer: how to connect to upstream* [Documentation, commit 09
 
 Cloudflare. (n.d.). *Handling failures and failover* [Documentation, commit 09696b51bc59315353d96686355861604d0bb48c]. GitHub. https://github.com/cloudflare/pingora/blob/09696b51bc59315353d96686355861604d0bb48c/docs/user_guide/failover.md
 
+Cloudflare. (n.d.). *Pingora HTTP/1 request-header parser limits* [Source code, commit 09696b51bc59315353d96686355861604d0bb48c]. GitHub. https://github.com/cloudflare/pingora/blob/09696b51bc59315353d96686355861604d0bb48c/pingora-core/src/protocols/http/v1/common.rs
+
+Cloudflare. (n.d.). *Pingora HTTP/1 server session* [Source code, commit 09696b51bc59315353d96686355861604d0bb48c]. GitHub. https://github.com/cloudflare/pingora/blob/09696b51bc59315353d96686355861604d0bb48c/pingora-core/src/protocols/http/v1/server.rs
+
+Cloudflare. (n.d.). *Pingora HTTP/2 server session and bounded defaults* [Source code, commit 09696b51bc59315353d96686355861604d0bb48c]. GitHub. https://github.com/cloudflare/pingora/blob/09696b51bc59315353d96686355861604d0bb48c/pingora-core/src/protocols/http/v2/server.rs
+
+seonghobae. (2026, September 3). *Expose configurable HTTP/1 request-header parser admission limits* [GitHub issue #993]. Cloudflare Pingora. https://github.com/cloudflare/pingora/issues/993
+
 Cloudflare. (n.d.). *Pingora HTTP/1 proxy implementation* [Source code, commit 09696b51bc59315353d96686355861604d0bb48c]. GitHub. https://github.com/cloudflare/pingora/blob/09696b51bc59315353d96686355861604d0bb48c/pingora-proxy/src/proxy_h1.rs
 
 Cloudflare. (n.d.). *Pingora HTTP/1 client session* [Source code, commit 09696b51bc59315353d96686355861604d0bb48c]. GitHub. https://github.com/cloudflare/pingora/blob/09696b51bc59315353d96686355861604d0bb48c/pingora-core/src/protocols/http/v1/client.rs
-
-Cloudflare. (n.d.). *Pingora HTTP/1 server session* [Source code, commit 09696b51bc59315353d96686355861604d0bb48c]. GitHub. https://github.com/cloudflare/pingora/blob/09696b51bc59315353d96686355861604d0bb48c/pingora-core/src/protocols/http/v1/server.rs
 
 Cloudflare. (n.d.). *Pingora HTTP/1 body framing* [Source code, commit 09696b51bc59315353d96686355861604d0bb48c]. GitHub. https://github.com/cloudflare/pingora/blob/09696b51bc59315353d96686355861604d0bb48c/pingora-core/src/protocols/http/v1/body.rs
 
