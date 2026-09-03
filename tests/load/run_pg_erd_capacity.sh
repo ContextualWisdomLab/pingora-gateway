@@ -26,8 +26,16 @@ validate_bounded_fixture() {
     /tmp/load_origin >/tmp/bounded-origin-self-check.log 2>&1 &
   local origin_pid=$!
   local status=0
+  local first_fd
+  local second_fd
 
   cleanup_validation() {
+    if [ -n "${first_fd:-}" ]; then
+      eval "exec ${first_fd}>&-" || true
+    fi
+    if [ -n "${second_fd:-}" ]; then
+      eval "exec ${second_fd}>&-" || true
+    fi
     kill "$origin_pid" >/dev/null 2>&1 || true
     wait "$origin_pid" >/dev/null 2>&1 || true
   }
@@ -35,25 +43,46 @@ validate_bounded_fixture() {
 
   wait_for_origin http://127.0.0.1:18291/ready "$origin_pid"
 
+  exec {first_fd}<>/dev/tcp/127.0.0.1/18291
+  exec {second_fd}<>/dev/tcp/127.0.0.1/18291
+
   local started_ms
   local finished_ms
   local elapsed_ms
   started_ms=$(date +%s%3N)
-  curl --fail --silent --show-error --max-time 2 http://127.0.0.1:18291/a >/tmp/bounded-origin-a.out &
-  local first_pid=$!
-  curl --fail --silent --show-error --max-time 2 http://127.0.0.1:18291/b >/tmp/bounded-origin-b.out &
-  local second_pid=$!
-  wait "$first_pid" || status=$?
-  wait "$second_pid" || status=$?
-  if [ "$status" -ne 0 ]; then
-    echo "bounded-origin fixture self-check requests failed" >&2
-    return "$status"
-  fi
+  printf 'GET /a HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n' >&"$first_fd"
+  printf 'GET /b HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n' >&"$second_fd"
+
+  timeout 2s cat <&"$first_fd" >/tmp/bounded-origin-a.raw || status=$?
+  timeout 2s cat <&"$second_fd" >/tmp/bounded-origin-b.raw || status=$?
   finished_ms=$(date +%s%3N)
   elapsed_ms=$((finished_ms - started_ms))
 
+  eval "exec ${first_fd}>&-"
+  first_fd=""
+  eval "exec ${second_fd}>&-"
+  second_fd=""
+
+  if [ "$status" -ne 0 ]; then
+    echo "bounded-origin fixture did not close both responses after the exact body: status=$status" >&2
+    return "$status"
+  fi
+
+  printf 'HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 11\r\nConnection: close\r\n\r\nupstream-ok' \
+    >/tmp/bounded-origin-expected.raw
+  if ! cmp --silent /tmp/bounded-origin-expected.raw /tmp/bounded-origin-a.raw; then
+    echo "bounded-origin first response did not match the exact close-framed upstream-ok contract" >&2
+    cat -v /tmp/bounded-origin-a.raw >&2 || true
+    return 1
+  fi
+  if ! cmp --silent /tmp/bounded-origin-expected.raw /tmp/bounded-origin-b.raw; then
+    echo "bounded-origin second response did not match the exact close-framed upstream-ok contract" >&2
+    cat -v /tmp/bounded-origin-b.raw >&2 || true
+    return 1
+  fi
+
   if [ "$elapsed_ms" -lt 250 ] || [ "$elapsed_ms" -gt 1500 ]; then
-    echo "bounded-origin fixture did not serialize one-worker delayed requests: elapsed_ms=$elapsed_ms" >&2
+    echo "bounded-origin fixture did not serialize simultaneously admitted one-worker requests: elapsed_ms=$elapsed_ms" >&2
     return 1
   fi
 
