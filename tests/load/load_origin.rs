@@ -12,6 +12,8 @@ const MAX_WORKERS: usize = 256;
 const DEFAULT_RESPONSE_DELAY_MS: u64 = 0;
 const MAX_REQUEST_HEADER_BYTES: usize = 64 * 1024;
 
+/// Controls whether the synthetic origin exposes connection reuse or forces
+/// each request to pay connection churn in the measured gateway round trip.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ConnectionMode {
     KeepAlive,
@@ -19,6 +21,8 @@ enum ConnectionMode {
 }
 
 impl ConnectionMode {
+    /// Parses the explicit fixture mode and rejects unknown values instead of
+    /// silently changing the capacity semantics under test.
     fn from_env() -> Result<Self, Box<dyn std::error::Error>> {
         match env::var("UPSTREAM_CONNECTION_MODE") {
             Ok(value) if value == "keep-alive" => Ok(Self::KeepAlive),
@@ -35,6 +39,7 @@ impl ConnectionMode {
         }
     }
 
+    /// Returns the wire value paired with the selected connection behavior.
     fn response_header_value(self) -> &'static str {
         match self {
             Self::KeepAlive => "keep-alive",
@@ -43,6 +48,7 @@ impl ConnectionMode {
     }
 }
 
+/// Startup-only controls for the bounded loopback origin used by load evidence.
 #[derive(Debug)]
 struct OriginConfig {
     port: u16,
@@ -53,6 +59,8 @@ struct OriginConfig {
 }
 
 impl OriginConfig {
+    /// Loads and validates all capacity controls before binding the listener so
+    /// invalid evidence configuration cannot partially activate the fixture.
     fn from_env() -> Result<Self, Box<dyn std::error::Error>> {
         let workers = parse_workers()?;
         Ok(Self {
@@ -68,11 +76,15 @@ impl OriginConfig {
         })
     }
 
+    /// Keeps accepted-but-unassigned sockets bounded relative to worker
+    /// capacity instead of recreating an effectively unbounded origin.
     fn queue_capacity(&self) -> usize {
         self.workers.saturating_mul(2).max(1)
     }
 }
 
+/// Runs the synthetic origin with a fixed worker budget and bounded accept
+/// queue; it is test tooling and never part of the gateway production binary.
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = OriginConfig::from_env()?;
     let queue_capacity = config.queue_capacity();
@@ -117,6 +129,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// Parses a non-zero loopback port; port zero would make the measured authority
+/// nondeterministic and unusable by the shell traffic contract.
 fn parse_port() -> Result<u16, Box<dyn std::error::Error>> {
     match env::var("UPSTREAM_PORT") {
         Ok(value) => {
@@ -135,6 +149,8 @@ fn parse_port() -> Result<u16, Box<dyn std::error::Error>> {
     }
 }
 
+/// Parses the finite worker budget and caps it so a malformed test invocation
+/// cannot turn the bounded-origin evidence back into thread-per-connection load.
 fn parse_workers() -> Result<usize, Box<dyn std::error::Error>> {
     match env::var("UPSTREAM_WORKERS") {
         Ok(value) => {
@@ -153,6 +169,8 @@ fn parse_workers() -> Result<usize, Box<dyn std::error::Error>> {
     }
 }
 
+/// Parses the startup-only service delay used to make finite origin capacity
+/// observable without injecting delay into the gateway itself.
 fn parse_response_delay_ms() -> Result<u64, Box<dyn std::error::Error>> {
     match env::var("UPSTREAM_RESPONSE_DELAY_MS") {
         Ok(value) => Ok(value.parse::<u64>()?),
@@ -161,6 +179,8 @@ fn parse_response_delay_ms() -> Result<u64, Box<dyn std::error::Error>> {
     }
 }
 
+/// Receives one admitted socket at a time for a worker, then releases the queue
+/// lock before serving so the configured worker count can run concurrently.
 fn worker_loop(
     receiver: Arc<Mutex<mpsc::Receiver<TcpStream>>>,
     response: Arc<Vec<u8>>,
@@ -190,6 +210,8 @@ fn worker_loop(
     }
 }
 
+/// Prebuilds an exact Content-Length-framed response so per-request fixture work
+/// does not dominate the gateway latency signal.
 fn build_response(payload: &[u8], connection_mode: ConnectionMode) -> Vec<u8> {
     let header = format!(
         "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: {}\r\n\r\n",
@@ -202,6 +224,8 @@ fn build_response(payload: &[u8], connection_mode: ConnectionMode) -> Vec<u8> {
     response
 }
 
+/// Serves complete HTTP/1 request headers only, bounding buffered header bytes
+/// and honoring the selected reuse mode required by the load scenario.
 fn serve_connection(
     mut stream: TcpStream,
     response: &[u8],
@@ -238,6 +262,8 @@ fn serve_connection(
     }
 }
 
+/// Finds the first complete HTTP/1 header block and returns the drain boundary,
+/// leaving any pipelined bytes available for the next request.
 fn find_header_end(buffer: &[u8]) -> Option<usize> {
     buffer
         .windows(4)
@@ -249,6 +275,7 @@ fn find_header_end(buffer: &[u8]) -> Option<usize> {
 mod tests {
     use super::{build_response, find_header_end, ConnectionMode};
 
+    /// Prevents connection-mode changes from drifting away from emitted framing.
     #[test]
     fn response_framing_matches_connection_mode() {
         let keep_alive = build_response(b"ok", ConnectionMode::KeepAlive);
@@ -262,6 +289,8 @@ mod tests {
             .any(|window| window == b"Connection: close"));
     }
 
+    /// Locks the parser boundary to the terminal CRLF sequence used by the
+    /// direct socket self-check and keep-alive fixture path.
     #[test]
     fn header_boundary_includes_the_terminal_separator() {
         assert_eq!(find_header_end(b"GET / HTTP/1.1\r\nHost: test\r\n\r\nbody"), Some(30));
