@@ -1,4 +1,4 @@
-//! Real-wire supplier RED for RFC 9113 §8.2.3 H2-to-H1 Cookie normalization.
+//! Real-wire supplier RED for RFC 9113 §8.2.3 H2-to-H2 Cookie normalization.
 //!
 //! This test deliberately exercises a test-only TLS/H2 listener built from the same `GatewayProxy`
 //! and pinned Pingora supplier as production, while keeping the characterized upstream on HTTP/1.1.
@@ -305,6 +305,38 @@ fn traced_curl_h2_request(listener: SocketAddr, cert: &Path, trace: &NamedTempFi
     String::from_utf8(output.stdout).expect("curl write-out should be UTF-8")
 }
 
+/// Extracts each outbound `Cookie` field from curl's `=> Send header` trace blocks.
+fn outbound_trace_cookie_values(trace: &str) -> Vec<String> {
+    let mut in_send_header = false;
+    let mut values = Vec::new();
+    for line in trace.lines() {
+        if line.starts_with("=> Send header,") {
+            in_send_header = true;
+            continue;
+        }
+        if line.starts_with("=> ") || line.starts_with("<= ") || line.starts_with("== Info:") {
+            in_send_header = false;
+            continue;
+        }
+        if !in_send_header {
+            continue;
+        }
+        let Some((offset, payload)) = line.split_once(": ") else {
+            continue;
+        };
+        if offset.len() != 4 || !offset.chars().all(|character| character.is_ascii_hexdigit()) {
+            continue;
+        }
+        let Some((name, value)) = payload.split_once(':') else {
+            continue;
+        };
+        if name.eq_ignore_ascii_case("cookie") {
+            values.push(value.trim().to_string());
+        }
+    }
+    values
+}
+
 /// Extracts every raw H1 `Cookie` field value without hiding duplicate wire fields.
 fn cookie_header_values(raw_request: &str) -> Vec<&str> {
     raw_request
@@ -351,11 +383,13 @@ fn h2_multiple_cookie_fields_are_coalesced_before_h1_upstream() {
     assert_eq!(negotiated_version.trim(), "2", "fixture must negotiate HTTP/2");
 
     let client_trace = fs::read_to_string(trace.path()).expect("curl trace should be readable");
-    let lower_trace = client_trace.to_ascii_lowercase();
-    assert!(
-        lower_trace.contains("cookie: session_id=abc123")
-            && lower_trace.contains("cookie: preferred_language=en"),
-        "client fixture must originate two distinct Cookie fields: {client_trace}"
+    assert_eq!(
+        outbound_trace_cookie_values(&client_trace),
+        vec![
+            "session_id=abc123".to_string(),
+            "preferred_language=en".to_string()
+        ],
+        "client fixture must originate exactly two distinct outbound Cookie header records before the Pingora boundary: {client_trace}"
     );
 
     let raw_request = origin_request
