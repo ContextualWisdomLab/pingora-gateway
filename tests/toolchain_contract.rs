@@ -118,9 +118,7 @@ fn assert_host_cargo_jobs_use_fixed_compiler(path: &str, workflow: &str) {
         let install_position = job
             .find(FIXED_INSTALL)
             .expect("installation count was checked");
-        let select_position = job
-            .find(FIXED_SELECT)
-            .expect("selection count was checked");
+        let select_position = job.find(FIXED_SELECT).expect("selection count was checked");
         let verify_position = job
             .find(FIXED_VERIFY)
             .expect("verification count was checked");
@@ -207,10 +205,7 @@ fn image_build_selects_fixed_compiler_before_gateway_compilation() {
     );
 
     let compiler_to_build = &dockerfile[install_position..build_positions[0]];
-    assert_no_alternate_toolchain_selector(
-        "Dockerfile compiler-to-build path",
-        compiler_to_build,
-    );
+    assert_no_alternate_toolchain_selector("Dockerfile compiler-to-build path", compiler_to_build);
     let after_verify = &dockerfile[verify_position + FIXED_VERIFY.len()..build_positions[0]];
     for forbidden in [
         "rustup default ",
