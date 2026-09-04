@@ -1,4 +1,4 @@
-//! Real-wire supplier RED for RFC 9113 §8.2.3 H2-to-H2 Cookie normalization.
+//! Real-wire supplier RED for RFC 9113 §8.2.3 H2-to-H1 Cookie normalization.
 //!
 //! This test deliberately exercises a test-only TLS/H2 listener built from the same `GatewayProxy`
 //! and pinned Pingora supplier as production, while keeping the characterized upstream on HTTP/1.1.
