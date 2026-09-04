@@ -18,7 +18,7 @@ All notable changes are tracked here. No release has been published yet.
 - Overrode Pingora framework retry/drain defaults with one total upstream attempt, a 5-second SIGTERM grace period, and a 30-second graceful-shutdown timeout.
 - Added non-root/read-only-root OCI packaging and executable least-privilege runtime verification.
 - Added a committed dependency lock, fail-closed license/source/advisory policy, exact-source SBOM and image-vulnerability evidence.
-- Required Rust 1.98.1 for release compilation after the point release fixed the vtable-generation miscompilation in 1.98.0; CI, Supply Chain, crate metadata, coverage policy and the OCI builder now fail closed on the fixed compiler.
+- Required Rust 1.98.1 for release compilation after the point release fixed the vtable-generation miscompilation in 1.98.0. The executable contract requires every CI/Supply Chain job that runs host `cargo` to install, select, and verify 1.98.1 in that job before Cargo executes, rejects secondary or later toolchain selectors, requires crate metadata/coverage policy to stay on the fixed point release, and requires the OCI builder to verify 1.98.1 before its sole gateway `cargo build` while the digest-pinned 1.98.0 image remains bootstrap-only.
 - Added an exact-head owned-production coverage gate that requires 100% lines and regions without filename/function/branch exclusions; repaired compiler-generated generic startup coverage and structurally impossible literal-header error regions rather than weakening the gate.
 - Added missing-public-rustdoc enforcement and documentation builds with warnings denied.
 - Added DDD, product, technical, security, threat, test, operability, configuration, migration-gap, and primary-source traceability documentation.
