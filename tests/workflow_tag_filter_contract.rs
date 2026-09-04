@@ -1,9 +1,10 @@
 //! Regression contract for semantic `push` tag-filter keys in GitHub Actions YAML.
 //!
-//! GitHub Actions treats `tags` and `tags-ignore` as push-ref selectors. This test keeps
-//! presentation-equivalent YAML key spellings from bypassing the protected-main-only
-//! duplicate-evidence policy enforced by the workflow concurrency contract.
+//! GitHub Actions treats `tags` and `tags-ignore` as push-ref selectors. This test parses
+//! workflow YAML through the repository's YAML implementation so presentation-equivalent
+//! mapping keys cannot bypass the protected-main-only duplicate-evidence policy.
 
+use serde_yaml::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -33,97 +34,30 @@ fn read_workflow(path: &Path) -> String {
     })
 }
 
-/// Counts leading spaces so only direct `push` children are classified as filters.
-fn indentation(line: &str) -> usize {
-    line.bytes().take_while(|byte| *byte == b' ').count()
-}
-
-/// Returns one canonical block-style event beneath top-level `on:`.
-fn event_block<'a>(source: &'a str, event: &str) -> Option<Vec<&'a str>> {
-    let target = format!("  {event}:");
-    let mut in_on = false;
-    let mut in_event = false;
-    let mut block = Vec::new();
-
-    for line in source.lines() {
-        let trimmed = line.trim();
-        let ignorable = trimmed.is_empty() || trimmed.starts_with('#');
-
-        if !in_on {
-            if line == "on:" {
-                in_on = true;
-            }
-            continue;
-        }
-
-        if !in_event {
-            if !ignorable && indentation(line) == 0 {
-                return None;
-            }
-            if line == target {
-                in_event = true;
-            }
-            continue;
-        }
-
-        if !ignorable && indentation(line) <= 2 {
-            break;
-        }
-        block.push(line);
+/// Detects semantic tag selectors only in workflows that serve both PR and push events.
+fn pull_request_push_workflow_has_tag_filter(source: &str) -> bool {
+    let document: Value = serde_yaml::from_str(source)
+        .unwrap_or_else(|error| panic!("workflow YAML should parse before policy validation: {error}"));
+    let Some(on) = document.get("on") else {
+        return false;
+    };
+    if on.get("pull_request").is_none() {
+        return false;
     }
+    let Some(push) = on.get("push").and_then(Value::as_mapping) else {
+        return false;
+    };
 
-    in_event.then_some(block)
-}
-
-/// Normalizes a direct mapping key without treating YAML presentation whitespace as semantics.
-fn direct_mapping_key(line: &str, expected_indent: usize) -> Option<&str> {
-    if indentation(line) != expected_indent {
-        return None;
-    }
-
-    let body = line.get(expected_indent..)?;
-    let (raw_key, _) = body.split_once(':')?;
-    let key = raw_key.trim_end();
-
-    if let Some(unquoted) = key
-        .strip_prefix('\'')
-        .and_then(|value| value.strip_suffix('\''))
-    {
-        return Some(unquoted);
-    }
-    if let Some(unquoted) = key
-        .strip_prefix('"')
-        .and_then(|value| value.strip_suffix('"'))
-    {
-        return Some(unquoted);
-    }
-
-    Some(key)
-}
-
-/// Detects semantic tag selectors even when YAML key presentation differs.
-fn direct_push_filter_is_tag_selector(line: &str) -> bool {
-    matches!(
-        direct_mapping_key(line, 4),
-        Some("tags" | "tags-ignore")
-    )
+    push.keys()
+        .any(|key| matches!(key.as_str(), Some("tags" | "tags-ignore")))
 }
 
 #[test]
 fn pull_request_push_workflows_reject_semantic_tag_filters() {
     for path in workflow_paths() {
         let source = read_workflow(&path);
-        if event_block(&source, "pull_request").is_none() {
-            continue;
-        }
-        let Some(push) = event_block(&source, "push") else {
-            continue;
-        };
-
         assert!(
-            !push
-                .into_iter()
-                .any(direct_push_filter_is_tag_selector),
+            !pull_request_push_workflow_has_tag_filter(&source),
             "{} must not add tag selectors to a PR workflow's protected-main duplicate-evidence push lane",
             path.display()
         );
@@ -132,32 +66,56 @@ fn pull_request_push_workflows_reject_semantic_tag_filters() {
 
 #[test]
 fn yaml_separation_space_before_tag_colon_is_still_a_tag_filter() {
-    assert!(direct_push_filter_is_tag_selector("    tags :"));
-    assert!(direct_push_filter_is_tag_selector("    tags-ignore :"));
+    for key in ["tags :", "tags-ignore :"] {
+        let source = format!(
+            "on:\n  push:\n    branches:\n      - main\n    {key}\n      - 'v*'\n  pull_request:\n"
+        );
+        assert!(pull_request_push_workflow_has_tag_filter(&source));
+    }
 }
 
 #[test]
 fn quoted_tag_filter_keys_are_still_tag_filters() {
-    assert!(direct_push_filter_is_tag_selector("    'tags':"));
-    assert!(direct_push_filter_is_tag_selector("    \"tags-ignore\":"));
+    for key in ["'tags':", "\"tags-ignore\":"] {
+        let source = format!(
+            "on:\n  push:\n    branches:\n      - main\n    {key}\n      - 'v*'\n  pull_request:\n"
+        );
+        assert!(pull_request_push_workflow_has_tag_filter(&source));
+    }
 }
 
 #[test]
 fn escaped_double_quoted_tag_filter_keys_are_still_tag_filters() {
-    assert!(direct_push_filter_is_tag_selector(r#"    "t\u0061gs":"#));
-    assert!(direct_push_filter_is_tag_selector(
-        r#"    "tags\u002dignore":"#
+    let escaped_tags = r#"on:
+  push:
+    branches:
+      - main
+    "t\u0061gs":
+      - "v*"
+  pull_request:
+"#;
+    let escaped_tags_ignore = r#"on:
+  push:
+    branches:
+      - main
+    "tags\u002dignore":
+      - "v*"
+  pull_request:
+"#;
+
+    assert!(pull_request_push_workflow_has_tag_filter(escaped_tags));
+    assert!(pull_request_push_workflow_has_tag_filter(
+        escaped_tags_ignore
     ));
 }
 
 #[test]
-fn unrelated_direct_push_filters_are_not_tag_filters() {
-    for line in [
-        "    branches:",
-        "    paths:",
-        "    paths-ignore:",
-        "    tags-extra:",
-    ] {
-        assert!(!direct_push_filter_is_tag_selector(line));
-    }
+fn unrelated_push_filters_and_push_only_tag_workflows_remain_out_of_scope() {
+    let unrelated = "on:\n  push:\n    branches:\n      - main\n    paths:\n      - 'src/**'\n  pull_request:\n";
+    let push_only_tag_release = "on:\n  push:\n    tags:\n      - 'v*'\n";
+
+    assert!(!pull_request_push_workflow_has_tag_filter(unrelated));
+    assert!(!pull_request_push_workflow_has_tag_filter(
+        push_only_tag_release
+    ));
 }
