@@ -12,7 +12,7 @@
 
 use std::env;
 use std::fs;
-use std::io::{ErrorKind, Read, Write};
+use std::io::{self, ErrorKind, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
@@ -122,42 +122,38 @@ fn wait_until_listening(address: SocketAddr, process: &mut HelperProcess) {
     }
 }
 
-/// Accepts the gateway's H1 origin connection without leaving a detached thread blocked forever.
-fn accept_h1_origin(listener: &TcpListener, timeout: Duration) -> TcpStream {
-    listener
-        .set_nonblocking(true)
-        .expect("fixture listener should support bounded accept polling");
+/// Accepts the gateway's H1 origin connection within a finite fixture-owned deadline.
+fn accept_h1_origin(listener: &TcpListener, timeout: Duration) -> io::Result<TcpStream> {
+    listener.set_nonblocking(true)?;
     let deadline = Instant::now() + timeout;
     loop {
         match listener.accept() {
             Ok((stream, _)) => {
-                stream
-                    .set_nonblocking(false)
-                    .expect("accepted origin stream should use blocking fixture I/O");
-                return stream;
+                stream.set_nonblocking(false)?;
+                return Ok(stream);
             }
             Err(error) if error.kind() == ErrorKind::WouldBlock => {
-                assert!(
-                    Instant::now() < deadline,
-                    "gateway did not connect to H1 origin within {timeout:?}"
-                );
+                if Instant::now() >= deadline {
+                    return Err(io::Error::new(
+                        ErrorKind::TimedOut,
+                        format!("gateway did not connect to H1 origin within {timeout:?}"),
+                    ));
+                }
                 thread::sleep(Duration::from_millis(25));
             }
-            Err(error) => panic!("unexpected H1 origin accept failure: {error}"),
+            Err(error) => return Err(error),
         }
     }
 }
 
-/// Proves the raw-origin accept path fails within its budget when no gateway connection arrives.
+/// Proves the raw-origin accept path returns a timeout instead of blocking a detached thread.
 #[test]
 fn h1_origin_accept_is_bounded_without_gateway_connection() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("H1 origin fixture should bind");
     let started = Instant::now();
-    let worker = thread::spawn(move || accept_h1_origin(&listener, Duration::from_millis(50)));
-    assert!(
-        worker.join().is_err(),
-        "origin accept should fail when no gateway connection arrives"
-    );
+    let error = accept_h1_origin(&listener, Duration::from_millis(50))
+        .expect_err("origin accept should fail when no gateway connection arrives");
+    assert_eq!(error.kind(), ErrorKind::TimedOut);
     assert!(
         started.elapsed() < Duration::from_secs(2),
         "origin accept timeout must remain bounded"
@@ -195,7 +191,8 @@ fn write_ok(stream: &mut TcpStream) {
 fn spawn_h1_origin(listener: TcpListener) -> mpsc::Receiver<String> {
     let (sender, receiver) = mpsc::sync_channel(1);
     thread::spawn(move || {
-        let mut stream = accept_h1_origin(&listener, Duration::from_secs(30));
+        let mut stream = accept_h1_origin(&listener, Duration::from_secs(30))
+            .expect("gateway should connect to H1 origin within the fixture budget");
         let request = read_request_headers(&mut stream);
         write_ok(&mut stream);
         sender
