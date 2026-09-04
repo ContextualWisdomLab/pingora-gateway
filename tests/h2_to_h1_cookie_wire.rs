@@ -49,6 +49,42 @@ impl Drop for HelperProcess {
     }
 }
 
+/// Raw-origin worker whose drop path cancels and joins the fixture thread.
+struct H1OriginWorker {
+    receiver: mpsc::Receiver<String>,
+    cancel: mpsc::Sender<()>,
+    handle: Option<thread::JoinHandle<()>>,
+}
+
+impl H1OriginWorker {
+    /// Receives the captured request and observes worker completion on the success path.
+    fn recv_request(&mut self, timeout: Duration) -> String {
+        let request = self
+            .receiver
+            .recv_timeout(timeout)
+            .expect("H1 origin should receive the translated request");
+        self.join_successfully();
+        request
+    }
+
+    /// Joins the worker so a fixture-thread panic cannot be silently detached.
+    fn join_successfully(&mut self) {
+        if let Some(handle) = self.handle.take() {
+            handle.join().expect("H1 origin worker should exit cleanly");
+        }
+    }
+}
+
+impl Drop for H1OriginWorker {
+    /// Cancels a pre-accept worker and always reaps it during parent unwinding.
+    fn drop(&mut self) {
+        let _ = self.cancel.send(());
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
 /// Ephemeral certificate material whose temporary directory owns both files for the test lifetime.
 struct LocalCertificate {
     _directory: tempfile::TempDir,
@@ -122,11 +158,27 @@ fn wait_until_listening(address: SocketAddr, process: &mut HelperProcess) {
     }
 }
 
-/// Accepts the gateway's H1 origin connection within a finite fixture-owned deadline.
-fn accept_h1_origin(listener: &TcpListener, timeout: Duration) -> io::Result<TcpStream> {
+/// Accepts the gateway's H1 origin connection within a finite, cancellable fixture deadline.
+fn accept_h1_origin(
+    listener: &TcpListener,
+    timeout: Duration,
+    cancel: Option<&mpsc::Receiver<()>>,
+) -> io::Result<TcpStream> {
     listener.set_nonblocking(true)?;
     let deadline = Instant::now() + timeout;
     loop {
+        if let Some(cancel) = cancel {
+            match cancel.try_recv() {
+                Ok(()) | Err(mpsc::TryRecvError::Disconnected) => {
+                    return Err(io::Error::new(
+                        ErrorKind::Interrupted,
+                        "H1 origin accept cancelled by parent fixture",
+                    ));
+                }
+                Err(mpsc::TryRecvError::Empty) => {}
+            }
+        }
+
         match listener.accept() {
             Ok((stream, _)) => {
                 stream.set_nonblocking(false)?;
@@ -146,17 +198,30 @@ fn accept_h1_origin(listener: &TcpListener, timeout: Duration) -> io::Result<Tcp
     }
 }
 
-/// Proves the raw-origin accept path returns a timeout instead of blocking a detached thread.
+/// Proves the raw-origin accept path returns a timeout instead of blocking indefinitely.
 #[test]
 fn h1_origin_accept_is_bounded_without_gateway_connection() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("H1 origin fixture should bind");
     let started = Instant::now();
-    let error = accept_h1_origin(&listener, Duration::from_millis(50))
+    let error = accept_h1_origin(&listener, Duration::from_millis(50), None)
         .expect_err("origin accept should fail when no gateway connection arrives");
     assert_eq!(error.kind(), ErrorKind::TimedOut);
     assert!(
         started.elapsed() < Duration::from_secs(2),
         "origin accept timeout must remain bounded"
+    );
+}
+
+/// Proves dropping the parent guard cancels and joins a pre-accept origin worker promptly.
+#[test]
+fn h1_origin_worker_drop_cancels_and_joins() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("H1 origin fixture should bind");
+    let started = Instant::now();
+    let worker = spawn_h1_origin(listener);
+    drop(worker);
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "origin worker cancellation and join must remain bounded"
     );
 }
 
@@ -187,19 +252,29 @@ fn write_ok(stream: &mut TcpStream) {
         .expect("fixture response should be writable");
 }
 
-/// Starts the raw H1 origin and returns the channel carrying its observed request headers.
-fn spawn_h1_origin(listener: TcpListener) -> mpsc::Receiver<String> {
-    let (sender, receiver) = mpsc::sync_channel(1);
-    thread::spawn(move || {
-        let mut stream = accept_h1_origin(&listener, Duration::from_secs(30))
-            .expect("gateway should connect to H1 origin within the fixture budget");
+/// Starts the raw H1 origin under a cancellation-and-join guard.
+fn spawn_h1_origin(listener: TcpListener) -> H1OriginWorker {
+    let (request_sender, receiver) = mpsc::sync_channel(1);
+    let (cancel, cancellation) = mpsc::channel();
+    let handle = thread::spawn(move || {
+        let mut stream = match accept_h1_origin(
+            &listener,
+            Duration::from_secs(30),
+            Some(&cancellation),
+        ) {
+            Ok(stream) => stream,
+            Err(error) if error.kind() == ErrorKind::Interrupted => return,
+            Err(error) => panic!("gateway should connect to H1 origin within the fixture budget: {error}"),
+        };
         let request = read_request_headers(&mut stream);
         write_ok(&mut stream);
-        sender
-            .send(request)
-            .expect("test should still be waiting for origin evidence");
+        let _ = request_sender.send(request);
     });
-    receiver
+    H1OriginWorker {
+        receiver,
+        cancel,
+        handle: Some(handle),
+    }
 }
 
 /// Builds the strict production-shaped v1 contract used by the isolated H2 test composition root.
@@ -427,7 +502,7 @@ fn h2_multiple_cookie_fields_are_coalesced_before_h1_upstream() {
     let origin_address = origin
         .local_addr()
         .expect("H1 origin address should resolve");
-    let origin_request = spawn_h1_origin(origin);
+    let mut origin_request = spawn_h1_origin(origin);
     let listener_reservation = reserve_loopback_listener();
     let metrics_reservation = reserve_loopback_listener();
     let listener = listener_reservation
@@ -468,9 +543,7 @@ fn h2_multiple_cookie_fields_are_coalesced_before_h1_upstream() {
         "client fixture must originate exactly two distinct outbound Cookie header records before the Pingora boundary: {client_trace}"
     );
 
-    let raw_request = origin_request
-        .recv_timeout(Duration::from_secs(5))
-        .expect("H1 origin should receive the translated request");
+    let raw_request = origin_request.recv_request(Duration::from_secs(5));
     assert!(
         raw_request.starts_with("GET /cookie-wire HTTP/1.1\r\n"),
         "fixture must exercise the H2-downstream to H1-upstream proxy path: {raw_request}"
