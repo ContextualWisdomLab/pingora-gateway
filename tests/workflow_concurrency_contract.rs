@@ -1,7 +1,8 @@
 //! Repository-level contract for GitHub Actions admission and coalescing semantics.
 //!
 //! Pull-request runs may cancel only an older run for the same workflow, repository, and PR.
-//! Push runs are protected-main evidence and must not share that cancellation identity.
+//! Workflows that also run on pushes must keep that duplicate-evidence path on protected main;
+//! push-only release/tag workflows remain outside this PR-coalescing contract.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -173,17 +174,17 @@ fn pull_request_workflows_use_pr_scoped_cancellation_identity() {
 }
 
 #[test]
-fn push_workflows_are_limited_to_protected_main() {
+fn pull_request_workflows_with_push_are_limited_to_protected_main() {
     for path in workflow_paths() {
         let source = read_workflow(&path);
-        if event_block(&source, "push").is_none() {
+        if event_block(&source, "pull_request").is_none() || event_block(&source, "push").is_none() {
             continue;
         }
 
         assert_eq!(
             push_branches(&source),
             Some(vec!["main".to_owned()]),
-            "{} must admit push evidence for protected main and no other branch pattern",
+            "{} must admit duplicate push evidence for protected main and no feature-branch pattern",
             path.display()
         );
     }
