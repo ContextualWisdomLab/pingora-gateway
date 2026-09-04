@@ -143,6 +143,14 @@ fn quoted_tag_filter_keys_are_still_tag_filters() {
 }
 
 #[test]
+fn escaped_double_quoted_tag_filter_keys_are_still_tag_filters() {
+    assert!(direct_push_filter_is_tag_selector(r#"    "t\u0061gs":"#));
+    assert!(direct_push_filter_is_tag_selector(
+        r#"    "tags\u002dignore":"#
+    ));
+}
+
+#[test]
 fn unrelated_direct_push_filters_are_not_tag_filters() {
     for line in [
         "    branches:",
