@@ -66,7 +66,7 @@ The main commercial cost is sequencing: H2 activation waits on old-edge characte
 - Consumer characterization records actual SNI/vhost, public certificate identity, ALPN result, HTTP/1.1 fallback, HTTP/2 concurrency/header/body/idle behavior, forwarding trust, health, drain and rollback. Defaults are not inferred from Nginx, Traefik or Pingora.
 - GREEN uses an ephemeral local CA/certificate against the compiled candidate listener. Valid identity/SNI negotiates only admitted ALPN protocols; invalid or unrecognized authority fails closed according to the versioned contract; HTTP/1.1 fallback is deliberate.
 - H2 traffic covers concurrent streams, decoded-header-list boundaries, request-body limits, cancellation/reset, GOAWAY/drain, origin failure, readiness and independent post-failure recovery.
-- H2-to-H1 wire acceptance sends a streamed body ending with empty DATA+END_STREAM, requires exactly one H1 chunk terminator, then reuses the same H1 keep-alive connection for an unrelated request. Multiple H2 `Cookie` fields must arrive in the H1 context with the RFC 9113-required `; ` concatenation; pseudo/hop-by-hop translation is also observed on the wire.
+- H2-to-H1 wire acceptance sends a streamed body ending with empty DATA+END_STREAM, requires exactly one H1 chunk terminator, then reuses the same H1 keep-alive connection for an unrelated request. Multiple H2 `Cookie` fields must arrive in the H1 context with the RFC 9113-required `"; "` concatenation; pseudo/hop-by-hop translation is also observed on the wire.
 - Performance evidence separates new-connection/TLS-handshake and reused-connection measurements, keeps realistic concurrency/sample sizes, includes applicable handshake/routing I/O, and does not rely on artificial warm-up to satisfy the p95 contract.
 - HTTP/3 receives no GREEN from TLS/H2 tests. A future H3 candidate must independently prove UDP exposure/network policy, QUIC TLS/ALPN, QPACK/header limits, stream/connection flow control, loss/congestion behavior, amplification protection, connection migration, explicit 0-RTT replay policy, drain/close, OCI/Kubernetes exposure and rollback.
 - Exact-head fmt/compile/test/clippy/warning-denied rustdoc, 100% owned-production coverage, OCI/SBOM/provenance/security/supply-chain evidence, independent review and terminal hosted execution remain mandatory.
@@ -77,21 +77,3 @@ The main commercial cost is sequencing: H2 activation waits on old-edge characte
 Cloudflare. (n.d.). *Pingora public source* [Source code, commit `09696b51bc59315353d96686355861604d0bb48c`]. GitHub.
 
 songhieu. (2026, July 17). *H1 upstream: chunked terminator written twice when an H2 downstream ends the request body with an empty DATA frame (END_STREAM)* [GitHub issue #935]. Cloudflare Pingora.
-
-songhieu. (2026, July 17). *Fix: don't emit the chunked terminator for zero-length body writes* [GitHub pull request #936]. Cloudflare Pingora.
-
-MyLittleLuckyDog. (2026, May 29). *HTTP/2 multiple Cookie headers not concatenated when proxied to HTTP/1.1 upstream (RFC 9113 §8.2.3)* [GitHub issue #892]. Cloudflare Pingora.
-
-Internet Engineering Task Force. (2022). *HTTP/2* (RFC 9113).
-
-Internet Engineering Task Force. (2022). *HTTP/3* (RFC 9114).
-
-Internet Engineering Task Force. (2021). *QUIC: A UDP-Based Multiplexed and Secure Transport* (RFC 9000).
-
-Internet Engineering Task Force. (2021). *Using TLS to Secure QUIC* (RFC 9001).
-
-Internet Engineering Task Force. (2023). *Service Identity in TLS* (RFC 9525).
-
-Internet Engineering Task Force. (2026). *The Transport Layer Security (TLS) Protocol Version 1.3* (RFC 9846).
-
-ContextualWisdomLab. (2026, September 3). *Protocol: establish downstream TLS/HTTP/2 parity and keep HTTP/3 fail-closed until supplier support exists* [GitHub issue #51].
