@@ -27,10 +27,11 @@ jobs:
         run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
       - name: Install native dependencies
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends pkg-config libssl-dev openssl
-      - name: Install Rust 1.98.0
+      - name: Install Rust 1.98.1
         run: |
-          rustup toolchain install 1.98.0 --profile minimal --component clippy,rustfmt
-          rustup default 1.98.0
+          rustup toolchain install 1.98.1 --profile minimal --component clippy,rustfmt
+          rustup default 1.98.1
+          rustc --version --verbose | grep -Fx 'release: 1.98.1'
       - name: Verify formatting
         run: cargo fmt --all -- --check
       - name: Compile and test
@@ -41,7 +42,7 @@ jobs:
         run: RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --locked
       - name: Install pinned coverage tooling
         run: |
-          rustup component add llvm-tools-preview --toolchain 1.98.0
+          rustup component add llvm-tools-preview --toolchain 1.98.1
           cargo install cargo-llvm-cov --version 0.9.0 --locked
       - name: Run owned production coverage workload
         run: cargo llvm-cov --all-targets --locked --no-report
@@ -81,10 +82,11 @@ jobs:
         run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
       - name: Install native dependencies
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ca-certificates cmake curl libssl-dev pkg-config
-      - name: Install Rust 1.98.0
+      - name: Install Rust 1.98.1
         run: |
-          rustup toolchain install 1.98.0 --profile minimal
-          rustup default 1.98.0
+          rustup toolchain install 1.98.1 --profile minimal
+          rustup default 1.98.1
+          rustc --version --verbose | grep -Fx 'release: 1.98.1'
       - name: Build exact gateway candidate
         run: cargo build --release --locked --bin cwl-pingora-gateway
       - name: Install checksum-pinned k6 2.2.0
