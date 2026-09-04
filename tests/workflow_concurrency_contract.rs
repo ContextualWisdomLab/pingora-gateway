@@ -78,15 +78,19 @@ fn assert_block_style_on_mapping(path: &Path, source: &str) {
         }
 
         if indentation(line) == 2 {
-            let canonical_event_key = trimmed.strip_suffix(':').is_some_and(|event_name| {
-                !event_name.is_empty()
-                    && event_name == event_name.trim()
-                    && event_name
-                        .bytes()
-                        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
-            });
+            let direct_event_key = line
+                .strip_prefix("  ")
+                .expect("two-space indentation must have a two-space prefix");
+            let canonical_event_key = direct_event_key
+                .strip_suffix(':')
+                .is_some_and(|event_name| {
+                    !event_name.is_empty()
+                        && event_name
+                            .bytes()
+                            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+                });
             assert!(
-                !trimmed.starts_with('-') && canonical_event_key,
+                !direct_event_key.starts_with('-') && canonical_event_key,
                 "{} must declare direct children of `on:` as canonical block mapping event keys without alternate YAML spelling",
                 path.display()
             );
@@ -309,4 +313,11 @@ fn alternate_direct_event_indentation_cannot_bypass_event_contract() {
 fn alternate_direct_event_key_spelling_cannot_bypass_event_contract() {
     let path = Path::new("synthetic-spaced-event-key-workflow.yml");
     assert_block_style_on_mapping(path, "on:\n  push :\n  pull_request :\njobs:\n");
+}
+
+#[test]
+#[should_panic(expected = "canonical block mapping event keys")]
+fn trailing_whitespace_after_direct_event_colon_cannot_bypass_event_contract() {
+    let path = Path::new("synthetic-trailing-event-space-workflow.yml");
+    assert_block_style_on_mapping(path, "on:\n  push:   \n  pull_request:\njobs:\n");
 }
