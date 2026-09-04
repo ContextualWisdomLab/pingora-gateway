@@ -33,21 +33,25 @@ const HELPER_UPSTREAM_ENV: &str = "CWL_H2_H1_COOKIE_UPSTREAM";
 const HELPER_CERT_ENV: &str = "CWL_H2_H1_COOKIE_CERT";
 const HELPER_KEY_ENV: &str = "CWL_H2_H1_COOKIE_KEY";
 
+/// Child process guard that terminates the test-only gateway even after assertion failure.
 struct HelperProcess(Child);
 
 impl Drop for HelperProcess {
+    /// Prevents a failed RED assertion from leaving a listening gateway process behind.
     fn drop(&mut self) {
         let _ = self.0.kill();
         let _ = self.0.wait();
     }
 }
 
+/// Ephemeral certificate material whose temporary directory owns both files for the test lifetime.
 struct LocalCertificate {
     _directory: tempfile::TempDir,
     cert: PathBuf,
     key: PathBuf,
 }
 
+/// Runs one required OpenSSL command and fails the fixture before protocol claims are made.
 fn run_openssl(args: &[&str]) {
     let status = Command::new("openssl")
         .args(args)
@@ -56,6 +60,7 @@ fn run_openssl(args: &[&str]) {
     assert!(status.success(), "openssl command failed: {args:?}");
 }
 
+/// Issues a one-day `h2.test` certificate used only by the loopback TLS listener.
 fn issue_local_certificate() -> LocalCertificate {
     let directory = tempdir().expect("certificate workspace should be available");
     let key = directory.path().join("h2-test.key");
@@ -85,6 +90,7 @@ fn issue_local_certificate() -> LocalCertificate {
     }
 }
 
+/// Reserves a currently free loopback socket address without granting long-lived authority to it.
 fn reserve_loopback_address() -> SocketAddr {
     TcpListener::bind("127.0.0.1:0")
         .expect("loopback port should be available")
@@ -92,6 +98,7 @@ fn reserve_loopback_address() -> SocketAddr {
         .expect("loopback listener should expose its address")
 }
 
+/// Waits for the child listener to acquire network authority or fails if the child exits first.
 fn wait_until_listening(address: SocketAddr, process: &mut Child) {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
@@ -109,6 +116,7 @@ fn wait_until_listening(address: SocketAddr, process: &mut Child) {
     }
 }
 
+/// Captures one complete HTTP/1 request-header block from the raw origin connection.
 fn read_request_headers(stream: &mut TcpStream) -> String {
     stream
         .set_read_timeout(Some(Duration::from_secs(5)))
@@ -123,12 +131,14 @@ fn read_request_headers(stream: &mut TcpStream) -> String {
     String::from_utf8(request).expect("fixture request header should be UTF-8")
 }
 
+/// Completes the captured request with a minimal close-delimited fixture response.
 fn write_ok(stream: &mut TcpStream) {
     stream
         .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
         .expect("fixture response should be writable");
 }
 
+/// Starts the raw H1 origin and returns the channel carrying its observed request headers.
 fn spawn_h1_origin(listener: TcpListener) -> mpsc::Receiver<String> {
     let (sender, receiver) = mpsc::sync_channel(1);
     thread::spawn(move || {
@@ -142,6 +152,7 @@ fn spawn_h1_origin(listener: TcpListener) -> mpsc::Receiver<String> {
     receiver
 }
 
+/// Builds the strict production-shaped v1 contract used by the isolated H2 test composition root.
 fn helper_config(listener: SocketAddr, metrics: SocketAddr, upstream: SocketAddr) -> GatewayConfig {
     GatewayConfig::from_yaml(&format!(
         "version: 1\nlistener: {listener}\nmetrics_listener: {metrics}\nmax_request_body_bytes: 1048576\nmax_in_flight_requests: 8\nupstream_keepalive_pool_size: 4\nupstreams:\n  - name: h1-origin\n    address: {upstream}\n    tls: false\n    timeouts:\n      connection_ms: 1000\n      total_connection_ms: 2000\n      read_ms: 5000\n      write_ms: 5000\n      idle_ms: 10000\n"
@@ -149,6 +160,7 @@ fn helper_config(listener: SocketAddr, metrics: SocketAddr, upstream: SocketAddr
     .expect("test-only gateway configuration should be valid")
 }
 
+/// Reads one required helper socket authority from the child-process environment.
 fn env_socket(name: &str) -> SocketAddr {
     env::var(name)
         .unwrap_or_else(|_| panic!("missing helper environment variable {name}"))
@@ -156,10 +168,12 @@ fn env_socket(name: &str) -> SocketAddr {
         .unwrap_or_else(|_| panic!("invalid socket address in {name}"))
 }
 
+/// Reads one required certificate/key path from the child-process environment.
 fn env_path(name: &str) -> PathBuf {
     PathBuf::from(env::var_os(name).unwrap_or_else(|| panic!("missing helper path {name}")))
 }
 
+/// Runs the test-only Pingora TLS/H2 listener in a separate process so `Server::run` may block.
 #[test]
 #[ignore = "test-only Pingora TLS/H2 server process; invoked by the real-wire parent test"]
 fn h2_cookie_proxy_helper() {
@@ -190,6 +204,7 @@ fn h2_cookie_proxy_helper() {
     server.run(RunArgs::default());
 }
 
+/// Refuses to run the wire characterization when the installed client cannot negotiate HTTP/2.
 fn assert_curl_supports_http2() {
     let output = Command::new("curl")
         .arg("--version")
@@ -203,6 +218,7 @@ fn assert_curl_supports_http2() {
     );
 }
 
+/// Spawns the ignored helper test as a child process with explicit listener and certificate authority.
 fn spawn_helper(
     listener: SocketAddr,
     metrics: SocketAddr,
@@ -227,6 +243,7 @@ fn spawn_helper(
     HelperProcess(child)
 }
 
+/// Sends the two-field Cookie request and returns curl's negotiated HTTP version evidence.
 fn traced_curl_h2_request(listener: SocketAddr, cert: &Path, trace: &NamedTempFile) -> String {
     let authority = format!("h2.test:{}", listener.port());
     let resolve = format!("{authority}:127.0.0.1");
@@ -265,6 +282,7 @@ fn traced_curl_h2_request(listener: SocketAddr, cert: &Path, trace: &NamedTempFi
     String::from_utf8(output.stdout).expect("curl write-out should be UTF-8")
 }
 
+/// Extracts every raw H1 `Cookie` field value without hiding duplicate wire fields.
 fn cookie_header_values(raw_request: &str) -> Vec<&str> {
     raw_request
         .split("\r\n")
@@ -275,6 +293,7 @@ fn cookie_header_values(raw_request: &str) -> Vec<&str> {
         .collect()
 }
 
+/// Proves that H2 multiple-Cookie input is coalesced exactly once before the H1 origin boundary.
 #[test]
 fn h2_multiple_cookie_fields_are_coalesced_before_h1_upstream() {
     assert_curl_supports_http2();
