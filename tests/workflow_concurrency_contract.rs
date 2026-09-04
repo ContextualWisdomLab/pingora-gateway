@@ -43,6 +43,21 @@ fn indentation(line: &str) -> usize {
     line.bytes().take_while(|byte| *byte == b' ').count()
 }
 
+/// Requires the event declaration shape understood by this fail-closed repository contract.
+fn assert_block_style_on_mapping(path: &Path, source: &str) {
+    let top_level_on: Vec<_> = source
+        .lines()
+        .filter(|line| indentation(line) == 0 && line.trim_start().starts_with("on:"))
+        .collect();
+
+    assert_eq!(
+        top_level_on,
+        vec!["on:"],
+        "{} must use one block-style top-level `on:` mapping so admission checks cannot skip inline/alternate event syntax",
+        path.display()
+    );
+}
+
 /// Returns one block-style event nested directly under the top-level `on` mapping.
 fn event_block<'a>(source: &'a str, event: &str) -> Option<Vec<&'a str>> {
     let target = format!("  {event}:");
@@ -139,9 +154,18 @@ fn push_branches(source: &str) -> Option<Vec<String>> {
 }
 
 #[test]
+fn repository_workflows_keep_fail_closed_event_syntax() {
+    for path in workflow_paths() {
+        let source = read_workflow(&path);
+        assert_block_style_on_mapping(&path, &source);
+    }
+}
+
+#[test]
 fn pull_request_workflows_use_pr_scoped_cancellation_identity() {
     for path in workflow_paths() {
         let source = read_workflow(&path);
+        assert_block_style_on_mapping(&path, &source);
         if event_block(&source, "pull_request").is_none() {
             continue;
         }
@@ -177,6 +201,7 @@ fn pull_request_workflows_use_pr_scoped_cancellation_identity() {
 fn pull_request_workflows_with_push_are_limited_to_protected_main() {
     for path in workflow_paths() {
         let source = read_workflow(&path);
+        assert_block_style_on_mapping(&path, &source);
         if event_block(&source, "pull_request").is_none() || event_block(&source, "push").is_none() {
             continue;
         }
@@ -206,4 +231,11 @@ fn event_parser_ignores_same_named_job_outside_on_mapping() {
 
     assert!(event_block(source, "push").is_none());
     assert!(event_block(source, "pull_request").is_some());
+}
+
+#[test]
+#[should_panic(expected = "block-style top-level `on:` mapping")]
+fn inline_on_syntax_cannot_bypass_event_contract() {
+    let path = Path::new("synthetic-inline-workflow.yml");
+    assert_block_style_on_mapping(path, "on: [push, pull_request]\njobs:\n");
 }
