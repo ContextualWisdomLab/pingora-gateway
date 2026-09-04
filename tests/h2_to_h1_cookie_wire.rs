@@ -100,7 +100,7 @@ fn reserve_loopback_listener() -> TcpListener {
     TcpListener::bind("127.0.0.1:0").expect("loopback port should be available")
 }
 
-/// Waits for the child listener to acquire network authority or fails if the child exits first.
+/// Waits until the transferred listener remains reachable under child ownership or the child exits.
 fn wait_until_listening(address: SocketAddr, process: &mut HelperProcess) {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
@@ -225,9 +225,9 @@ fn assert_curl_supports_http2() {
     );
 }
 
-/// Spawns the ignored helper, transfers the still-bound listener FD, then proves it accepts traffic.
+/// Spawns the ignored helper, atomically hands it the reserved FD, then proves the socket survived.
 fn spawn_helper(
-    listener: &TcpListener,
+    listener: TcpListener,
     metrics: SocketAddr,
     upstream: SocketAddr,
     cert: &Path,
@@ -259,6 +259,9 @@ fn spawn_helper(
     inherited
         .send_to_sock(upgrade_sock)
         .expect("reserved H2 listener should transfer to the Pingora helper");
+    // SCM_RIGHTS has duplicated the already-listening socket into the child. Drop the parent copy so
+    // readiness cannot be satisfied by a listener that no child process owns.
+    drop(listener);
     wait_until_listening(listener_address, &mut process);
     process
 }
@@ -336,7 +339,7 @@ fn h2_multiple_cookie_fields_are_coalesced_before_h1_upstream() {
     let upgrade_directory = tempdir().expect("upgrade socket workspace should be available");
     let upgrade_sock = upgrade_directory.path().join("pingora-upgrade.sock");
     let _helper = spawn_helper(
-        &listener_reservation,
+        listener_reservation,
         metrics,
         origin_address,
         &certificate.cert,
