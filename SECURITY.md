@@ -10,7 +10,9 @@ HTTPS upstreams use certificate and hostname verification with an explicit SNI. 
 
 Inbound forwarding identity is deleted before proxying. V1 emits only `Forwarded: proto=http`; it deliberately does not claim a client IP. A future trusted-proxy feature must define allowed proxy CIDRs/hops and RFC 7239 semantics as a versioned contract with spoofing tests.
 
-Request bodies and upstream connect/read/write/idle time are bounded. The Pingora HTTP parser has finite protocol/header limits, but a smaller configurable header budget and an explicit concurrency/backpressure budget remain documented gaps.
+Request bodies and upstream connect/read/write/idle time are bounded. The Pingora HTTP parser has finite protocol/header limits, but a smaller configurable header budget remains a documented gap. Process-wide concurrent application traffic is bounded by the mandatory `max_in_flight_requests` admission budget and fails fast with 503 rather than queueing unbounded work.
+
+The transport-neutral `http_policy` candidate characterizes edge-owned response headers without activating them in v1. It treats field names ASCII case-insensitively, rejects duplicate field authority, empty values, and CR/LF values before activation. Its current name profile is deliberately narrower than the full legal HTTP field-name grammar because only observed migration contracts are admitted. This policy does not absorb product authorization/business response semantics, Wardnet/EgressWeave verdicts, or Keyverse identity.
 
 ## Logging and data minimization
 
