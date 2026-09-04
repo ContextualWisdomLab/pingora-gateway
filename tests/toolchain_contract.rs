@@ -28,7 +28,9 @@ fn workflow_jobs(workflow: &str) -> Vec<(String, String)> {
             continue;
         }
 
-        let indent = line.len().saturating_sub(line.trim_start_matches(' ').len());
+        let indent = line
+            .len()
+            .saturating_sub(line.trim_start_matches(' ').len());
         let trimmed = line.trim();
         if indent == 2 && trimmed.ends_with(':') && !trimmed.starts_with('-') {
             if let Some(name) = current_name.take() {
@@ -88,7 +90,10 @@ fn assert_no_alternate_toolchain_selector(context: &str, body: &str) {
 /// Requires every workflow job that executes host `cargo` to bind that job to Rust 1.98.1.
 fn assert_host_cargo_jobs_use_fixed_compiler(path: &str, workflow: &str) {
     for (job_name, job) in workflow_jobs(workflow) {
-        let cargo_positions: Vec<_> = job.match_indices("cargo ").map(|(index, _)| index).collect();
+        let cargo_positions: Vec<_> = job
+            .match_indices("cargo ")
+            .map(|(index, _)| index)
+            .collect();
         if cargo_positions.is_empty() {
             continue;
         }
@@ -110,9 +115,15 @@ fn assert_host_cargo_jobs_use_fixed_compiler(path: &str, workflow: &str) {
             "{context} must verify Rust 1.98.1 exactly once"
         );
 
-        let install_position = job.find(FIXED_INSTALL).expect("installation count was checked");
-        let select_position = job.find(FIXED_SELECT).expect("selection count was checked");
-        let verify_position = job.find(FIXED_VERIFY).expect("verification count was checked");
+        let install_position = job
+            .find(FIXED_INSTALL)
+            .expect("installation count was checked");
+        let select_position = job
+            .find(FIXED_SELECT)
+            .expect("selection count was checked");
+        let verify_position = job
+            .find(FIXED_VERIFY)
+            .expect("verification count was checked");
         assert!(
             install_position < select_position && select_position < verify_position,
             "{context} must install, select, then verify Rust 1.98.1 in that order"
@@ -196,7 +207,10 @@ fn image_build_selects_fixed_compiler_before_gateway_compilation() {
     );
 
     let compiler_to_build = &dockerfile[install_position..build_positions[0]];
-    assert_no_alternate_toolchain_selector("Dockerfile compiler-to-build path", compiler_to_build);
+    assert_no_alternate_toolchain_selector(
+        "Dockerfile compiler-to-build path",
+        compiler_to_build,
+    );
     let after_verify = &dockerfile[verify_position + FIXED_VERIFY.len()..build_positions[0]];
     for forbidden in [
         "rustup default ",
