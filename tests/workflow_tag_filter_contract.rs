@@ -75,14 +75,36 @@ fn event_block<'a>(source: &'a str, event: &str) -> Option<Vec<&'a str>> {
     in_event.then_some(block)
 }
 
-/// Detects tag selectors using the predecessor lexical classifier.
-fn direct_push_filter_is_tag_selector(line: &str) -> bool {
-    if indentation(line) != 4 {
-        return false;
+/// Normalizes a direct mapping key without treating YAML presentation whitespace as semantics.
+fn direct_mapping_key(line: &str, expected_indent: usize) -> Option<&str> {
+    if indentation(line) != expected_indent {
+        return None;
     }
 
+    let body = line.get(expected_indent..)?;
+    let (raw_key, _) = body.split_once(':')?;
+    let key = raw_key.trim_end();
+
+    if let Some(unquoted) = key
+        .strip_prefix('\'')
+        .and_then(|value| value.strip_suffix('\''))
+    {
+        return Some(unquoted);
+    }
+    if let Some(unquoted) = key
+        .strip_prefix('"')
+        .and_then(|value| value.strip_suffix('"'))
+    {
+        return Some(unquoted);
+    }
+
+    Some(key)
+}
+
+/// Detects semantic tag selectors even when YAML key presentation differs.
+fn direct_push_filter_is_tag_selector(line: &str) -> bool {
     matches!(
-        line.trim().split_once(':').map(|(key, _)| key),
+        direct_mapping_key(line, 4),
         Some("tags" | "tags-ignore")
     )
 }
