@@ -2,14 +2,16 @@ name: CI
 
 on:
   push:
+    branches:
+      - main
   pull_request:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.repository }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -133,6 +135,7 @@ jobs:
 
           target/release/cwl-pingora-gateway --config /tmp/gateway-load.yaml >/tmp/gateway-load.log 2>&1 &
           gateway_pid=$!
+          # shellcheck disable=SC2329  # Invoked indirectly by the EXIT trap.
           cleanup() {
             status=$?
             kill "$gateway_pid" "$upstream_pid" >/dev/null 2>&1 || true
@@ -290,6 +293,7 @@ jobs:
             --mount "type=bind,src=${PWD}/examples/gateway.yaml,dst=/etc/cwl/gateway.yaml,readonly" \
             "${image}" \
             --config /etc/cwl/gateway.yaml)"
+          # shellcheck disable=SC2329
           cleanup() {
             docker logs "${cid}" || true
             docker rm --force "${cid}" >/dev/null 2>&1 || true
@@ -328,6 +332,7 @@ jobs:
             --mount "type=bind,src=${PWD}/examples/pg-erd-migration.yaml,dst=/etc/cwl/pg-erd-migration.yaml,readonly" \
             "${image}" \
             --config /etc/cwl/pg-erd-migration.yaml)"
+          # shellcheck disable=SC2329
           cleanup() {
             docker logs "${cid}" || true
             docker rm --force "${cid}" >/dev/null 2>&1 || true
