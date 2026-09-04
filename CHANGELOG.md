@@ -18,6 +18,7 @@ All notable changes are tracked here. No release has been published yet.
 - Overrode Pingora framework retry/drain defaults with one total upstream attempt, a 5-second SIGTERM grace period, and a 30-second graceful-shutdown timeout.
 - Added non-root/read-only-root OCI packaging and executable least-privilege runtime verification.
 - Added a committed dependency lock, fail-closed license/source/advisory policy, exact-source SBOM and image-vulnerability evidence.
+- Added an intentional supply-chain RED that requires the committed lockfile to exclude `derivative`; it remains RED while the pinned Pingora supplier graph contains `derivative 2.2.0` / `RUSTSEC-2024-0388` and may turn GREEN only after a reviewed immutable supplier repair is consumed.
 - Added an exact-head owned-production coverage gate that requires 100% lines and regions without filename/function/branch exclusions; repaired compiler-generated generic startup coverage and structurally impossible literal-header error regions rather than weakening the gate.
 - Added missing-public-rustdoc enforcement and documentation builds with warnings denied.
 - Added DDD, product, technical, security, threat, test, operability, configuration, migration-gap, and primary-source traceability documentation.
