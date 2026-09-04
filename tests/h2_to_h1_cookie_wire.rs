@@ -12,7 +12,7 @@
 
 use std::env;
 use std::fs;
-use std::io::{Read, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
@@ -122,6 +122,48 @@ fn wait_until_listening(address: SocketAddr, process: &mut HelperProcess) {
     }
 }
 
+/// Accepts the gateway's H1 origin connection without leaving a detached thread blocked forever.
+fn accept_h1_origin(listener: &TcpListener, timeout: Duration) -> TcpStream {
+    listener
+        .set_nonblocking(true)
+        .expect("fixture listener should support bounded accept polling");
+    let deadline = Instant::now() + timeout;
+    loop {
+        match listener.accept() {
+            Ok((stream, _)) => {
+                stream
+                    .set_nonblocking(false)
+                    .expect("accepted origin stream should use blocking fixture I/O");
+                return stream;
+            }
+            Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                assert!(
+                    Instant::now() < deadline,
+                    "gateway did not connect to H1 origin within {timeout:?}"
+                );
+                thread::sleep(Duration::from_millis(25));
+            }
+            Err(error) => panic!("unexpected H1 origin accept failure: {error}"),
+        }
+    }
+}
+
+/// Proves the raw-origin accept path fails within its budget when no gateway connection arrives.
+#[test]
+fn h1_origin_accept_is_bounded_without_gateway_connection() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("H1 origin fixture should bind");
+    let started = Instant::now();
+    let worker = thread::spawn(move || accept_h1_origin(&listener, Duration::from_millis(50)));
+    assert!(
+        worker.join().is_err(),
+        "origin accept should fail when no gateway connection arrives"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "origin accept timeout must remain bounded"
+    );
+}
+
 /// Captures one complete HTTP/1 request-header block from the raw origin connection.
 fn read_request_headers(stream: &mut TcpStream) -> String {
     stream
@@ -153,7 +195,7 @@ fn write_ok(stream: &mut TcpStream) {
 fn spawn_h1_origin(listener: TcpListener) -> mpsc::Receiver<String> {
     let (sender, receiver) = mpsc::sync_channel(1);
     thread::spawn(move || {
-        let (mut stream, _) = listener.accept().expect("gateway should connect to H1 origin");
+        let mut stream = accept_h1_origin(&listener, Duration::from_secs(30));
         let request = read_request_headers(&mut stream);
         write_ok(&mut stream);
         sender
