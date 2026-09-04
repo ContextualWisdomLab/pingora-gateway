@@ -12,7 +12,7 @@ Configuration version 1 is strict YAML with `deny_unknown_fields`. Required top-
 
 Traffic and metrics listeners must be distinct. Request-body, in-flight and keepalive-pool budgets must be positive. Each upstream has a stable non-empty name, a concrete socket address, `tls`, optional `sni`, optional absolute `trust_bundle_file`, and explicit positive `connection_ms`, `total_connection_ms`, `read_ms`, `write_ms`, and `idle_ms` budgets.
 
-TLS upstreams require non-empty SNI. Pingora `HttpPeer` enables certificate and hostname verification. An optional trust bundle augments operator-supplied trust authority and is loaded before listener activation; a clear-text upstream may define neither SNI nor a trust bundle. The gateway does not issue, renew or rotate certificates.
+TLS upstreams require non-empty SNI. Pingora `HttpPeer` enables certificate and hostname verification. When `trust_bundle_file` is configured, the loaded PEM certificates are assigned to that peer's CA store and replace the default/platform verification store for that peer; they are not implicitly merged with platform roots. A clear-text upstream may define neither SNI nor a trust bundle. The gateway does not issue, renew or rotate certificates.
 
 ## Request policy
 
