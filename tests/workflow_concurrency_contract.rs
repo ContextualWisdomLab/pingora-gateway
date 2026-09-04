@@ -78,9 +78,16 @@ fn assert_block_style_on_mapping(path: &Path, source: &str) {
         }
 
         if indentation(line) == 2 {
+            let canonical_event_key = trimmed.strip_suffix(':').is_some_and(|event_name| {
+                !event_name.is_empty()
+                    && event_name == event_name.trim()
+                    && event_name
+                        .bytes()
+                        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+            });
             assert!(
-                !trimmed.starts_with('-') && trimmed.ends_with(':'),
-                "{} must declare direct children of `on:` as block mapping event keys, not a sequence or compact event value",
+                !trimmed.starts_with('-') && canonical_event_key,
+                "{} must declare direct children of `on:` as canonical block mapping event keys without alternate YAML spelling",
                 path.display()
             );
             saw_direct_event = true;
@@ -284,7 +291,7 @@ fn inline_on_syntax_cannot_bypass_event_contract() {
 }
 
 #[test]
-#[should_panic(expected = "block mapping event keys")]
+#[should_panic(expected = "canonical block mapping event keys")]
 fn sequence_on_syntax_cannot_bypass_event_contract() {
     let path = Path::new("synthetic-sequence-workflow.yml");
     assert_block_style_on_mapping(path, "on:\n  - push\n  - pull_request\njobs:\n");
@@ -295,4 +302,11 @@ fn sequence_on_syntax_cannot_bypass_event_contract() {
 fn alternate_direct_event_indentation_cannot_bypass_event_contract() {
     let path = Path::new("synthetic-four-space-workflow.yml");
     assert_block_style_on_mapping(path, "on:\n    push:\n    pull_request:\njobs:\n");
+}
+
+#[test]
+#[should_panic(expected = "canonical block mapping event keys")]
+fn alternate_direct_event_key_spelling_cannot_bypass_event_contract() {
+    let path = Path::new("synthetic-spaced-event-key-workflow.yml");
+    assert_block_style_on_mapping(path, "on:\n  push :\n  pull_request :\njobs:\n");
 }
