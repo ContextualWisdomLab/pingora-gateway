@@ -66,22 +66,39 @@ fn assert_block_style_on_mapping(path: &Path, source: &str) {
         path.display()
     );
 
+    let mut saw_direct_event = false;
     for line in lines.iter().skip(on_index + 1) {
         let trimmed = line.trim();
         let ignorable = trimmed.is_empty() || trimmed.starts_with('#');
         if !ignorable && indentation(line) == 0 {
             break;
         }
-        if ignorable || indentation(line) != 2 {
+        if ignorable {
+            continue;
+        }
+
+        if indentation(line) == 2 {
+            assert!(
+                !trimmed.starts_with('-') && trimmed.ends_with(':'),
+                "{} must declare direct children of `on:` as block mapping event keys, not a sequence or compact event value",
+                path.display()
+            );
+            saw_direct_event = true;
             continue;
         }
 
         assert!(
-            !trimmed.starts_with('-') && trimmed.ends_with(':'),
-            "{} must declare direct children of `on:` as block mapping event keys, not a sequence or compact event value",
+            saw_direct_event && indentation(line) > 2,
+            "{} must begin the `on:` mapping with a two-space direct event key; alternate direct-child indentation can bypass event detection",
             path.display()
         );
     }
+
+    assert!(
+        saw_direct_event,
+        "{} must declare at least one two-space direct event key under `on:`",
+        path.display()
+    );
 }
 
 /// Returns one block-style event nested directly under the top-level `on` mapping.
@@ -271,4 +288,11 @@ fn inline_on_syntax_cannot_bypass_event_contract() {
 fn sequence_on_syntax_cannot_bypass_event_contract() {
     let path = Path::new("synthetic-sequence-workflow.yml");
     assert_block_style_on_mapping(path, "on:\n  - push\n  - pull_request\njobs:\n");
+}
+
+#[test]
+#[should_panic(expected = "two-space direct event key")]
+fn alternate_direct_event_indentation_cannot_bypass_event_contract() {
+    let path = Path::new("synthetic-four-space-workflow.yml");
+    assert_block_style_on_mapping(path, "on:\n    push:\n    pull_request:\njobs:\n");
 }
