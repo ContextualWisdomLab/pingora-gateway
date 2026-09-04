@@ -194,9 +194,7 @@ fn parse_workers() -> Result<usize, Box<dyn std::error::Error>> {
 
 /// Parses the startup-only service delay without global environment mutation so
 /// malformed values can be rejected by deterministic tests.
-fn parse_response_delay_ms_value(
-    value: Option<&str>,
-) -> Result<u64, Box<dyn std::error::Error>> {
+fn parse_response_delay_ms_value(value: Option<&str>) -> Result<u64, Box<dyn std::error::Error>> {
     match value {
         Some(value) => Ok(value.parse::<u64>()?),
         None => Ok(DEFAULT_RESPONSE_DELAY_MS),
@@ -233,12 +231,9 @@ fn worker_loop(
             }
         };
 
-        if let Err(error) = serve_connection(
-            stream,
-            response.as_slice(),
-            response_delay,
-            connection_mode,
-        ) {
+        if let Err(error) =
+            serve_connection(stream, response.as_slice(), response_delay, connection_mode)
+        {
             eprintln!("load origin connection failed: {error}");
         }
     }
@@ -343,7 +338,10 @@ mod tests {
             ConnectionMode::parse(Some("close")).unwrap(),
             ConnectionMode::Close
         );
-        assert_eq!(ConnectionMode::parse(None).unwrap(), ConnectionMode::KeepAlive);
+        assert_eq!(
+            ConnectionMode::parse(None).unwrap(),
+            ConnectionMode::KeepAlive
+        );
     }
 
     /// Prevents connection-mode changes from drifting away from emitted framing.
@@ -364,7 +362,10 @@ mod tests {
     /// direct socket self-check and keep-alive fixture path.
     #[test]
     fn header_boundary_includes_the_terminal_separator() {
-        assert_eq!(find_header_end(b"GET / HTTP/1.1\r\nHost: test\r\n\r\nbody"), Some(30));
+        assert_eq!(
+            find_header_end(b"GET / HTTP/1.1\r\nHost: test\r\n\r\nbody"),
+            Some(30)
+        );
         assert_eq!(find_header_end(b"GET / HTTP/1.1\r\nHost: test\r\n"), None);
     }
 }
