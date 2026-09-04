@@ -4,7 +4,7 @@ This file links material technical/security claims to primary standards or upstr
 
 | Claim | Source |
 | --- | --- |
-| Pingora server/proxy composition and graceful server lifecycle | Cloudflare Pingora source at pinned commit `09696b51bc59315353d96686355861604d0bb48c`, the protected upstream `main` head observed on 2026-09-01 |
+| Pingora server/proxy composition and graceful server lifecycle | Cloudflare Pingora source at pinned commit `09696b51bc59315353d96686355861604d0bb48c`, still the protected upstream `main` head observed on 2026-09-05 |
 | Pingora's server default `max_retries` is 16, while the proxy loop copies that field and loops while its attempt counter is below the value | `pingora-core/src/server/configuration/mod.rs` and `pingora-proxy/src/lib.rs` at pinned commit `09696b51bc59315353d96686355861604d0bb48c`; CWL v1 therefore sets the field to `1` for one total attempt |
 | Graceful SIGTERM uses `grace_period_seconds` and `graceful_shutdown_timeout_seconds`, with framework fallbacks when unset | `pingora-core/src/server/mod.rs` and `pingora-core/src/server/configuration/mod.rs` at the pinned commit; CWL v1 sets 5 s grace and 10 s per-runtime graceful timeout explicitly inside a 30 s external termination budget |
 | Standard upstream request policy supports hop-by-hop/connection-nominated stripping and normalized WebSocket-only HTTP/1 upgrade forwarding | Cloudflare Pingora `HttpUpstreamRequestPolicy` / peer implementation at pinned commit `09696b51bc59315353d96686355861604d0bb48c` |
@@ -12,16 +12,17 @@ This file links material technical/security claims to primary standards or upstr
 | Forwarded-header grammar and trust semantics | RFC 7239 |
 | HTTP semantics | RFC 9110 |
 | HTTP/1.1 message framing/hop-by-hop requirements | RFC 9112 |
-| HTTP/2 framing and connection semantics | RFC 9113 |
+| HTTP/2 framing and connection semantics, including H2 Cookie-field reconstruction before a non-H2 hop | RFC 9113 |
 | HTTP/3 semantics over QUIC | RFC 9114; HTTP/3 is not claimed implemented by this v1 candidate until executable listener/interoperability evidence exists |
 | Current TLS 1.3 protocol semantics and application identity-verification responsibility | RFC 9846, published July 2026, which obsoletes RFC 8446 and points applications to RFC 9525 for identity verification |
 | New protocols using TLS must require TLS 1.3 | RFC 9852, BCP 195, July 2026; this gateway is not claiming a new application protocol and still requires explicit migration-time protocol compatibility evidence |
 | March 2026 Pingora request-smuggling/cache-key advisories are patched in 0.8.0 | GitHub Security Advisories GHSA-xq2h-p299-vjwv, GHSA-hj7x-879w-vrp7, GHSA-f93w-pcj3-rggc |
-| Pingora 0.8.1 is the latest release observed on 2026-09-01 and bounds default HTTP/2 server limits | Cloudflare Pingora GitHub Releases, 0.8.1, 2026-06-04 |
+| Pingora 0.8.1 is the latest public GitHub Release observed on 2026-09-05 and bounds default HTTP/2 server limits | Cloudflare Pingora GitHub Releases, 0.8.1, 2026-06-04 |
 | The pinned upstream head is seven commits after the prior security-resolution pin `6463ad6407a1d3fe256f1951dd0ecb054477e3f6`; the relevant retry/grace configuration remains unchanged at the new head | GitHub compare `6463ad6...09696b5` plus the exact `ServerConf` source at `09696b5` |
-| Rust 1.98.0 is the latest stable toolchain observed on 2026-09-01 | Rust Release Team, Rust 1.98.0 announcement, 2026-08-20 |
-| OCI runtime-spec 1.3.0 is the latest released runtime specification observed on 2026-09-01 | Open Container Initiative runtime-spec v1.3.0 release notice, 2025-11-04; runtime hardening claims still require executable container evidence |
+| Rust 1.98.1 is the latest stable toolchain observed on 2026-09-05; it repairs a Rust 1.98.0 vtable-generation miscompilation that can emit a null pointer where a trait-object function pointer should be | Rust Release Team, Rust 1.98.1 announcement and release notes, 2026-09-03. The current foundation manifest remains 1.98.0; Draft #56 is the separately gated release-path repair and must not be treated as inherited before integration |
+| OCI runtime-spec 1.3.0 is the latest released runtime specification observed on 2026-09-05 | Open Container Initiative runtime-spec v1.3.0 release notice and release list; runtime hardening claims still require executable container evidence |
 | `lru` versions before 0.18.2 are affected by RUSTSEC-2026-0253 | RustSec advisory RUSTSEC-2026-0253; the upstream pin includes the first-fixed `lru` dependency change, but release must use a committed audited lock |
+| `derivative` is unmaintained and RUSTSEC-2024-0388 has no patched versions | RustSec advisory RUSTSEC-2024-0388. The downstream policy therefore requires a maintainer-integrated supplier repair/removal rather than a generic audit ignore |
 
 ## References
 
@@ -59,6 +60,8 @@ Petersson, A., & Nilsson, M. (2014). *Forwarded HTTP extension* (RFC 7239). RFC 
 
 Open Container Initiative. (2025, November 4). *OCI runtime-spec v1.3.0 release notice*. https://opencontainers.org/release-notices/v1-3-0-runtime-spec/
 
-Rust Release Team. (2026, August 20). *Announcing Rust 1.98.0*. Rust Blog. https://blog.rust-lang.org/2026/08/20/Rust-1.98.0/
+Rust Release Team. (2026, September 3). *Announcing Rust 1.98.1*. Rust Blog. https://blog.rust-lang.org/2026/09/03/Rust-1.98.1/
+
+Rust Secure Code Working Group. (2024, November 10). *RUSTSEC-2024-0388: derivative—`derivative` is unmaintained; consider using an alternative*. RustSec Advisory Database. https://rustsec.org/advisories/RUSTSEC-2024-0388.html
 
 Rust Secure Code Working Group. (2026, August 11). *RUSTSEC-2026-0253: lru—memory safety issue under panic*. RustSec Advisory Database. https://rustsec.org/advisories/RUSTSEC-2026-0253.html
