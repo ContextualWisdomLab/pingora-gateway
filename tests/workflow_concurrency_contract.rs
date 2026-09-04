@@ -6,7 +6,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const EXPECTED_GROUP: &str = "group: ${{ github.workflow }}-${{ github.repository }}-${{ github.event.pull_request.number || github.run_id }}";
+const EXPECTED_GROUP: &str =
+    "group: ${{ github.workflow }}-${{ github.repository }}-${{ github.event.pull_request.number || github.run_id }}";
 const EXPECTED_CANCEL: &str =
     "cancel-in-progress: ${{ github.event_name == 'pull_request' }}";
 const EXPECTED_MAIN_PUSH: &str = "push:\n    branches:\n      - main";
@@ -16,7 +17,12 @@ fn workflow_paths() -> Vec<PathBuf> {
     let mut paths = fs::read_dir(".github/workflows")
         .expect("workflow directory should exist")
         .map(|entry| entry.expect("workflow entry should be readable").path())
-        .filter(|path| matches!(path.extension().and_then(|ext| ext.to_str()), Some("yml" | "yaml")))
+        .filter(|path| {
+            matches!(
+                path.extension().and_then(|ext| ext.to_str()),
+                Some("yml" | "yaml")
+            )
+        })
         .collect::<Vec<_>>();
     paths.sort();
     paths
@@ -25,7 +31,10 @@ fn workflow_paths() -> Vec<PathBuf> {
 /// Reads one workflow as UTF-8 because GitHub workflow sources are text contracts.
 fn read_workflow(path: &Path) -> String {
     fs::read_to_string(path).unwrap_or_else(|error| {
-        panic!("workflow {} should be readable UTF-8: {error}", path.display())
+        panic!(
+            "workflow {} should be readable UTF-8: {error}",
+            path.display()
+        )
     })
 }
 
