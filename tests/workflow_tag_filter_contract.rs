@@ -36,8 +36,9 @@ fn read_workflow(path: &Path) -> String {
 
 /// Detects semantic tag selectors only in workflows that serve both PR and push events.
 fn pull_request_push_workflow_has_tag_filter(source: &str) -> bool {
-    let document: Value = serde_yaml::from_str(source)
-        .unwrap_or_else(|error| panic!("workflow YAML should parse before policy validation: {error}"));
+    let document: Value = serde_yaml::from_str(source).unwrap_or_else(|error| {
+        panic!("workflow YAML should parse before policy validation: {error}")
+    });
     let Some(on) = document.get("on") else {
         return false;
     };
