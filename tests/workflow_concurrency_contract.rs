@@ -45,17 +45,43 @@ fn indentation(line: &str) -> usize {
 
 /// Requires the event declaration shape understood by this fail-closed repository contract.
 fn assert_block_style_on_mapping(path: &Path, source: &str) {
-    let top_level_on: Vec<_> = source
-        .lines()
-        .filter(|line| indentation(line) == 0 && line.trim_start().starts_with("on:"))
-        .collect();
+    let lines = source.lines().collect::<Vec<_>>();
+    let top_level_on = lines
+        .iter()
+        .enumerate()
+        .filter(|(_, line)| indentation(line) == 0 && line.trim_start().starts_with("on:"))
+        .collect::<Vec<_>>();
 
     assert_eq!(
-        top_level_on,
-        vec!["on:"],
-        "{} must use one block-style top-level `on:` mapping so admission checks cannot skip inline/alternate event syntax",
+        top_level_on.len(),
+        1,
+        "{} must define exactly one top-level `on:` key",
         path.display()
     );
+    let (on_index, on_line) = top_level_on[0];
+    assert_eq!(
+        *on_line,
+        "on:",
+        "{} must use a block-style top-level `on:` mapping so admission checks cannot skip inline/alternate event syntax",
+        path.display()
+    );
+
+    for line in lines.iter().skip(on_index + 1) {
+        let trimmed = line.trim();
+        let ignorable = trimmed.is_empty() || trimmed.starts_with('#');
+        if !ignorable && indentation(line) == 0 {
+            break;
+        }
+        if ignorable || indentation(line) != 2 {
+            continue;
+        }
+
+        assert!(
+            !trimmed.starts_with('-') && trimmed.ends_with(':'),
+            "{} must declare direct children of `on:` as block mapping event keys, not a sequence or compact event value",
+            path.display()
+        );
+    }
 }
 
 /// Returns one block-style event nested directly under the top-level `on` mapping.
@@ -238,4 +264,11 @@ fn event_parser_ignores_same_named_job_outside_on_mapping() {
 fn inline_on_syntax_cannot_bypass_event_contract() {
     let path = Path::new("synthetic-inline-workflow.yml");
     assert_block_style_on_mapping(path, "on: [push, pull_request]\njobs:\n");
+}
+
+#[test]
+#[should_panic(expected = "block mapping event keys")]
+fn sequence_on_syntax_cannot_bypass_event_contract() {
+    let path = Path::new("synthetic-sequence-workflow.yml");
+    assert_block_style_on_mapping(path, "on:\n  - push\n  - pull_request\njobs:\n");
 }
