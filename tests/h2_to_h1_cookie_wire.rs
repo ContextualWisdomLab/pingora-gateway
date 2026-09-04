@@ -114,7 +114,10 @@ fn wait_until_listening(address: SocketAddr, process: &mut HelperProcess) {
         if TcpStream::connect_timeout(&address, Duration::from_millis(100)).is_ok() {
             return;
         }
-        assert!(Instant::now() < deadline, "H2 helper did not start within 10s");
+        assert!(
+            Instant::now() < deadline,
+            "H2 helper did not start within 10s"
+        );
         thread::sleep(Duration::from_millis(25));
     }
 }
@@ -127,8 +130,13 @@ fn read_request_headers(stream: &mut TcpStream) -> String {
     let mut request = Vec::new();
     let mut buffer = [0_u8; 2048];
     while !request.windows(4).any(|window| window == b"\r\n\r\n") {
-        let read = stream.read(&mut buffer).expect("upstream request should be readable");
-        assert!(read > 0, "gateway closed before sending an HTTP/1.1 request header");
+        let read = stream
+            .read(&mut buffer)
+            .expect("upstream request should be readable");
+        assert!(
+            read > 0,
+            "gateway closed before sending an HTTP/1.1 request header"
+        );
         request.extend_from_slice(&buffer[..read]);
     }
     String::from_utf8(request).expect("fixture request header should be UTF-8")
@@ -191,7 +199,10 @@ fn h2_cookie_proxy_helper() {
     let config = helper_config(listener, metrics, upstream);
     let proxy = GatewayProxy::try_from_config(&config).expect("test-only proxy should activate");
     let mut server_conf = build_server_conf(config.upstream_keepalive_pool_size);
-    server_conf.upgrade_sock = upgrade_sock.to_string_lossy().into_owned();
+    server_conf.upgrade_sock = upgrade_sock
+        .to_str()
+        .expect("upgrade socket path should be UTF-8")
+        .to_owned();
     let options = Opt {
         upgrade: true,
         ..Opt::default()
@@ -220,7 +231,12 @@ fn assert_curl_supports_http2() {
     assert!(output.status.success(), "curl --version should succeed");
     let version = String::from_utf8(output.stdout).expect("curl version output should be UTF-8");
     assert!(
-        version.lines().any(|line| line.starts_with("Features:") && line.split_whitespace().any(|feature| feature == "HTTP2")),
+        version.lines().any(|line| {
+            line.starts_with("Features:")
+                && line
+                    .split_whitespace()
+                    .any(|feature| feature == "HTTP2")
+        }),
         "curl must expose HTTP2 support for this fixture: {version}"
     );
 }
@@ -237,8 +253,19 @@ fn spawn_helper(
     let listener_address = listener
         .local_addr()
         .expect("reserved H2 listener address should resolve");
+    // Pingora's Fds API requires a path that is both NixPath and Display; Rust Path intentionally
+    // uses a Display adapter instead of implementing Display itself, so keep one exact UTF-8 string
+    // for both the child configuration and the SCM_RIGHTS sender.
+    let upgrade_sock = upgrade_sock
+        .to_str()
+        .expect("upgrade socket path should be UTF-8");
     let child = Command::new(env::current_exe().expect("current test executable should resolve"))
-        .args(["--ignored", "--exact", "h2_cookie_proxy_helper", "--nocapture"])
+        .args([
+            "--ignored",
+            "--exact",
+            "h2_cookie_proxy_helper",
+            "--nocapture",
+        ])
         .env(HELPER_MODE_ENV, "1")
         .env(HELPER_LISTENER_ENV, listener_address.to_string())
         .env(HELPER_METRICS_ENV, metrics.to_string())
@@ -354,7 +381,9 @@ fn h2_multiple_cookie_fields_are_coalesced_before_h1_upstream() {
     assert_curl_supports_http2();
     let certificate = issue_local_certificate();
     let origin = TcpListener::bind("127.0.0.1:0").expect("H1 origin should bind");
-    let origin_address = origin.local_addr().expect("H1 origin address should resolve");
+    let origin_address = origin
+        .local_addr()
+        .expect("H1 origin address should resolve");
     let origin_request = spawn_h1_origin(origin);
     let listener_reservation = reserve_loopback_listener();
     let metrics_reservation = reserve_loopback_listener();
@@ -380,7 +409,11 @@ fn h2_multiple_cookie_fields_are_coalesced_before_h1_upstream() {
     );
     let trace = NamedTempFile::new().expect("curl trace file should be writable");
     let negotiated_version = traced_curl_h2_request(listener, &certificate.cert, &trace);
-    assert_eq!(negotiated_version.trim(), "2", "fixture must negotiate HTTP/2");
+    assert_eq!(
+        negotiated_version.trim(),
+        "2",
+        "fixture must negotiate HTTP/2"
+    );
 
     let client_trace = fs::read_to_string(trace.path()).expect("curl trace should be readable");
     assert_eq!(
