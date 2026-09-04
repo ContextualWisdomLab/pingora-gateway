@@ -207,6 +207,36 @@ fn push_branches(source: &str) -> Option<Vec<String>> {
     in_branches.then_some(branches)
 }
 
+/// Detects tag selectors that would expand a branch-scoped duplicate-evidence push policy.
+fn push_has_tag_filters(source: &str) -> bool {
+    event_block(source, "push").is_some_and(|block| {
+        block.into_iter().any(|line| {
+            if indentation(line) != 4 {
+                return false;
+            }
+            matches!(
+                line.trim().split_once(':').map(|(key, _)| key),
+                Some("tags" | "tags-ignore")
+            )
+        })
+    })
+}
+
+/// Enforces the complete duplicate-evidence push scope for workflows that also serve PRs.
+fn assert_protected_main_only_push(path: &Path, source: &str) {
+    assert_eq!(
+        push_branches(source),
+        Some(vec!["main".to_owned()]),
+        "{} must admit duplicate push evidence for protected main and no feature-branch pattern",
+        path.display()
+    );
+    assert!(
+        !push_has_tag_filters(source),
+        "{} must not combine protected-main duplicate evidence with `tags` or `tags-ignore` filters",
+        path.display()
+    );
+}
+
 #[test]
 fn repository_workflows_keep_fail_closed_event_syntax() {
     for path in workflow_paths() {
@@ -260,12 +290,7 @@ fn pull_request_workflows_with_push_are_limited_to_protected_main() {
             continue;
         }
 
-        assert_eq!(
-            push_branches(&source),
-            Some(vec!["main".to_owned()]),
-            "{} must admit duplicate push evidence for protected main and no feature-branch pattern",
-            path.display()
-        );
+        assert_protected_main_only_push(&path, &source);
     }
 }
 
@@ -277,6 +302,24 @@ fn push_branch_parser_rejects_additional_feature_branch_patterns() {
         push_branches(source),
         Some(vec!["main".to_owned(), "develop".to_owned()])
     );
+}
+
+#[test]
+#[should_panic(expected = "must not combine protected-main duplicate evidence")]
+fn tag_filter_cannot_expand_duplicate_push_evidence() {
+    let path = Path::new("synthetic-tag-filter-workflow.yml");
+    let source = "on:\n  push:\n    branches:\n      - main\n    tags:\n      - 'v*'\n  pull_request:\n";
+
+    assert_protected_main_only_push(path, source);
+}
+
+#[test]
+#[should_panic(expected = "must not combine protected-main duplicate evidence")]
+fn tag_ignore_filter_cannot_expand_duplicate_push_evidence() {
+    let path = Path::new("synthetic-tag-ignore-filter-workflow.yml");
+    let source = "on:\n  push:\n    branches:\n      - main\n    tags-ignore:\n      - 'v*'\n  pull_request:\n";
+
+    assert_protected_main_only_push(path, source);
 }
 
 #[test]
