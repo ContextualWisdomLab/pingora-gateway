@@ -11,7 +11,10 @@ fn read_repository_file(path: &str) -> String {
 /// Requires every hosted Rust build/evidence path to select and verify the fixed point release.
 #[test]
 fn hosted_release_paths_select_rust_1_98_1() {
-    for path in [".github/workflows/ci.yml", ".github/workflows/supply-chain.yml"] {
+    for path in [
+        ".github/workflows/ci.yml",
+        ".github/workflows/supply-chain.yml",
+    ] {
         let workflow = read_repository_file(path);
 
         assert!(
