@@ -1,6 +1,6 @@
 # Product / Technical Gap Baseline
 
-This baseline is code-current for the bootstrap PR. Exact source heads, base tips, reviews, workflow/security runs, rulesets, and sibling Context Fabric heads are always re-read live; predecessor evidence never transfers across source, documentation, dependency, base, or governance movement.
+This baseline is code-current for the foundation supply-chain RED child. Exact source heads, base tips, reviews, workflow/security runs, rulesets, and sibling Context Fabric heads are always re-read live; predecessor evidence never transfers across source, documentation, dependency, base, or governance movement.
 
 ## Shared runtime
 
@@ -19,7 +19,7 @@ This baseline is code-current for the bootstrap PR. Exact source heads, base tip
 | Graceful drain | Implemented candidate behavior | SIGTERM uses a bounded 5 s grace plus 10 s runtime shutdown timeout inside a 30 s external termination budget; exact-release evidence must be reacquired |
 | Logs / metrics / traces | Partial | Low-cardinality counters and credential/cookie-safe coarse access logs exist; tracing and richer bounded operability evidence remain gaps |
 | OCI isolation | Implemented candidate hardening | Runtime is uid/gid 65532, read-only-root compatible, capability-free and `no-new-privileges`; both builder and runtime base images are digest-pinned after the Scorecard review finding, and exact-head OCI/Scorecard evidence must reacquire |
-| Dependency policy | Release-blocked | `.github#1605` owns the exact-release Pingora vs patched-`lru` decision; current upstream also carries unmaintained `derivative 2.2.0` (`RUSTSEC-2024-0388`, no fixed release). `.github#810` independently owns the public non-fork Dependency Review compare-API HTTP 403 availability incident. Known-unsound downgrade, blanket advisory waiver, fail-open 403 handling, or substitute-scanner promotion is prohibited |
+| Dependency policy | Release-blocked with executable RED | `.github#1605` owns the exact-release Pingora vs patched-`lru` decision; current upstream also carries unmaintained `derivative 2.2.0` (`RUSTSEC-2024-0388`, no fixed release). `tests/supply_chain_policy.rs` now makes that supplier intake defect an explicit committed-lock RED: the exact package record must disappear rather than be hidden by an advisory ignore. The current graph is expected to fail this contract until a reviewed immutable supplier/backport/replacement is consumed. OSV/RustSec remains authoritative and this test is not a scanner substitute. `.github#810` independently owns the public non-fork Dependency Review compare-API HTTP 403 availability incident. Known-unsound downgrade, blanket advisory waiver, fail-open 403 handling, or substitute-scanner promotion is prohibited |
 | Coverage / public API docs | Gates implemented | Owned production line/region coverage is required at 100%; `#![deny(missing_docs)]` and warning-denied rustdoc cover public APIs. The platform-root peer branch that previously left two uncovered regions now has a focused executable regression; every changed head must satisfy the same gates |
 | Load / 20 ms p95 | Executable candidate | Checksum-pinned k6 2.2.0 exercises 400 release-mode loopback requests across four VUs and gates the minimal HTTP/1.1 path at p95 <20 ms with zero failures. This is only a local regression bound; representative consumer/TLS/network deployment evidence is still required before a 20 ms production SLO is claimed |
 | Rollback | Documented, not rehearsed | Rehearsal requires an immutable protected release artifact/digest |
@@ -59,7 +59,7 @@ For each eventual edge migration, EA admission must version `current technology/
 ## Dependency-ordered blockers
 
 1. Reacquire exact-current-head CI, 100% owned production line/region coverage, rustdoc, k6, OCI, SAST and supply-chain evidence after every source or documentation movement; repair only evidence-backed repository defects.
-2. Keep `.github#1605` and `.github#810` fail-closed until their respective policy and GitHub dependency-review availability owner paths are resolved; do not suppress `RUSTSEC-2024-0388` generically.
+2. Keep `.github#1605` and `.github#810` fail-closed until their respective policy and GitHub dependency-review availability owner paths are resolved; keep `tests/supply_chain_policy.rs` RED while `derivative` remains in the committed graph and do not suppress `RUSTSEC-2024-0388` to make it pass.
 3. Require the Context Fabric owner to repair EA #39's exact-current-head PostgreSQL invariant failure without weakening semantics, prove the repaired parent terminal GREEN, then restack #40 non-destructively on that exact parent and reacquire all child admission/provenance evidence; do not transfer historical #40 GREEN runs.
 4. Add explicit concurrency/backpressure budgets and broader timeout/reset/streaming/network-failure recovery evidence, then benchmark representative consumer traffic before adopting a production 20 ms p95 objective.
 5. Add a protected release path that publishes an immutable image digest with provenance and rehearse rollback against that exact digest.
