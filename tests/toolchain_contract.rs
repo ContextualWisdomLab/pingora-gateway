@@ -37,20 +37,32 @@ fn hosted_release_paths_select_rust_1_98_1() {
 #[test]
 fn image_build_selects_fixed_compiler_before_gateway_compilation() {
     let dockerfile = read_repository_file("Dockerfile");
-    let select_position = dockerfile
+    let install_position = dockerfile
         .find("rustup toolchain install 1.98.1 --profile minimal")
         .expect("Dockerfile must install Rust 1.98.1 before building the gateway");
+    let select_position = dockerfile
+        .find("rustup default 1.98.1")
+        .expect("Dockerfile must select Rust 1.98.1 before building the gateway");
+    let verify_position = dockerfile
+        .find("rustc --version --verbose | grep -Fx 'release: 1.98.1'")
+        .expect("Dockerfile must verify Rust 1.98.1 before building the gateway");
     let build_position = dockerfile
         .find("RUN cargo build --locked --release --bin cwl-pingora-gateway")
         .expect("Dockerfile must retain the locked release build");
 
+    for (step, position) in [
+        ("install", install_position),
+        ("select", select_position),
+        ("verify", verify_position),
+    ] {
+        assert!(
+            position < build_position,
+            "Rust 1.98.1 {step} must occur before release compilation"
+        );
+    }
     assert!(
-        select_position < build_position,
-        "the fixed Rust toolchain must be selected before release compilation"
-    );
-    assert!(
-        dockerfile.contains("rustc --version --verbose | grep -Fx 'release: 1.98.1'"),
-        "the image build must fail if Rust 1.98.1 is not active"
+        !dockerfile.contains("rustup default 1.98.0"),
+        "the image build must never reselect the known-bad Rust 1.98.0 compiler"
     );
 }
 
