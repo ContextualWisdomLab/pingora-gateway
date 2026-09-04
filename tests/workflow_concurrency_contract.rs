@@ -81,14 +81,15 @@ fn assert_block_style_on_mapping(path: &Path, source: &str) {
             let direct_event_key = line
                 .strip_prefix("  ")
                 .expect("two-space indentation must have a two-space prefix");
-            let canonical_event_key = direct_event_key
-                .strip_suffix(':')
-                .is_some_and(|event_name| {
-                    !event_name.is_empty()
-                        && event_name
-                            .bytes()
-                            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
-                });
+            let canonical_event_key =
+                direct_event_key
+                    .strip_suffix(':')
+                    .is_some_and(|event_name| {
+                        !event_name.is_empty()
+                            && event_name.bytes().all(|byte| {
+                                byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-')
+                            })
+                    });
             assert!(
                 !direct_event_key.starts_with('-') && canonical_event_key,
                 "{} must declare direct children of `on:` as canonical block mapping event keys without alternate YAML spelling",
@@ -286,7 +287,8 @@ fn pull_request_workflows_with_push_are_limited_to_protected_main() {
     for path in workflow_paths() {
         let source = read_workflow(&path);
         assert_block_style_on_mapping(&path, &source);
-        if event_block(&source, "pull_request").is_none() || event_block(&source, "push").is_none() {
+        if event_block(&source, "pull_request").is_none() || event_block(&source, "push").is_none()
+        {
             continue;
         }
 
@@ -308,7 +310,8 @@ fn push_branch_parser_rejects_additional_feature_branch_patterns() {
 #[should_panic(expected = "must not combine protected-main duplicate evidence")]
 fn tag_filter_cannot_expand_duplicate_push_evidence() {
     let path = Path::new("synthetic-tag-filter-workflow.yml");
-    let source = "on:\n  push:\n    branches:\n      - main\n    tags:\n      - 'v*'\n  pull_request:\n";
+    let source =
+        "on:\n  push:\n    branches:\n      - main\n    tags:\n      - 'v*'\n  pull_request:\n";
 
     assert_protected_main_only_push(path, source);
 }
