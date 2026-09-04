@@ -44,7 +44,7 @@ Pingora Gateway does **not** own product authentication, tenant/business routing
 
 ## Quickstart
 
-The current crate is `cwl-pingora-gateway` `0.1.0`, requires Rust 1.98.0, and pins Pingora `0.8.0` to an immutable upstream revision.
+The current crate is `cwl-pingora-gateway` `0.1.0`, requires Rust 1.98.1 or newer, and pins Pingora `0.8.0` to an immutable upstream revision. Release-producing CI and image builds select Rust 1.98.1 exactly until a later compiler is separately reviewed.
 
 Copy the example configuration, point the single upstream at a service you control, choose explicit positive `max_in_flight_requests` and `upstream_keepalive_pool_size` budgets, and run the gateway:
 
@@ -81,7 +81,7 @@ For the full threat and trust boundary, read [`SECURITY.md`](SECURITY.md) and [`
 
 ## Container usage
 
-The shipped `Dockerfile` packages the current candidate binary as numeric uid/gid `65532` and is designed for a read-only root filesystem with configuration mounted read-only.
+The shipped `Dockerfile` packages the current candidate binary as numeric uid/gid `65532` and is designed for a read-only root filesystem with configuration mounted read-only. Rust 1.98.1 fixes a compiler miscompilation in 1.98.0; while Docker Official Image metadata still lacks a `1.98.1-bookworm` tag, the build keeps the reviewed digest-pinned 1.98.0 image only as a bootstrap environment and explicitly installs, selects, and verifies Rust 1.98.1 before compiling the gateway. That bridge must be replaced by a digest-pinned official 1.98.1 image when one is published.
 
 This is an OCI **build/runtime contract**, not evidence of a published production image. No immutable registry digest, released image, customer cutover, or production availability claim exists unless separately backed by current release/deployment evidence.
 
