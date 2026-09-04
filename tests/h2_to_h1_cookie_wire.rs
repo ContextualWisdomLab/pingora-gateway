@@ -57,20 +57,29 @@ struct H1OriginWorker {
 }
 
 impl H1OriginWorker {
-    /// Receives the captured request and observes worker completion on the success path.
+    /// Receives the captured request and surfaces any worker panic on the evidence path.
     fn recv_request(&mut self, timeout: Duration) -> String {
-        let request = self
-            .receiver
-            .recv_timeout(timeout)
-            .expect("H1 origin should receive the translated request");
-        self.join_successfully();
-        request
+        match self.receiver.recv_timeout(timeout) {
+            Ok(request) => {
+                self.join_successfully();
+                request
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                self.join_successfully();
+                panic!("H1 origin worker disconnected without delivering request");
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                panic!("H1 origin should receive the translated request within {timeout:?}");
+            }
+        }
     }
 
-    /// Joins the worker so a fixture-thread panic cannot be silently detached.
+    /// Joins the worker and resumes its original panic payload instead of replacing attribution.
     fn join_successfully(&mut self) {
         if let Some(handle) = self.handle.take() {
-            handle.join().expect("H1 origin worker should exit cleanly");
+            if let Err(payload) = handle.join() {
+                std::panic::resume_unwind(payload);
+            }
         }
     }
 }
@@ -223,6 +232,24 @@ fn h1_origin_worker_drop_cancels_and_joins() {
         started.elapsed() < Duration::from_secs(2),
         "origin worker cancellation and join must remain bounded"
     );
+}
+
+/// Proves a disconnected evidence channel resumes the original origin-worker panic payload.
+#[test]
+#[should_panic(expected = "sentinel H1 origin worker panic")]
+fn h1_origin_worker_disconnect_surfaces_worker_panic() {
+    let (request_sender, receiver) = mpsc::sync_channel(1);
+    let (cancel, _cancellation) = mpsc::channel();
+    let handle = thread::spawn(move || {
+        drop(request_sender);
+        panic!("sentinel H1 origin worker panic");
+    });
+    let mut worker = H1OriginWorker {
+        receiver,
+        cancel,
+        handle: Some(handle),
+    };
+    let _ = worker.recv_request(Duration::from_secs(1));
 }
 
 /// Captures one complete HTTP/1 request-header block from the raw origin connection.
