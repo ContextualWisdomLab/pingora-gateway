@@ -4,14 +4,17 @@
 //! and pinned Pingora supplier as production, while keeping the characterized upstream on HTTP/1.1.
 //! It is expected to fail on Pingora `09696b51bc59315353d96686355861604d0bb48c` because the
 //! supplier currently forwards multiple HTTP/2 Cookie fields as multiple HTTP/1.1 header lines.
-//! The product listener contract is not widened by this fixture.
+//! The product listener contract is not widened by this fixture. The fixture is Linux-only because
+//! it uses Pingora's SCM_RIGHTS listener-transfer path to preserve one kernel-bound ephemeral socket
+//! from parent reservation through child ownership without a port-selection race.
 
-#![cfg(unix)]
+#![cfg(target_os = "linux")]
 
 use std::env;
 use std::fs;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
@@ -23,7 +26,8 @@ use cwl_pingora_gateway::gateway_proxy::GatewayProxy;
 use cwl_pingora_gateway::runtime_policy::build_server_conf;
 use pingora::listeners::tls::TlsSettings;
 use pingora::prelude::{http_proxy_service, Server};
-use pingora::server::RunArgs;
+use pingora::server::configuration::Opt;
+use pingora::server::{Fds, RunArgs};
 use tempfile::{tempdir, NamedTempFile};
 
 const HELPER_MODE_ENV: &str = "CWL_H2_H1_COOKIE_HELPER";
@@ -32,6 +36,7 @@ const HELPER_METRICS_ENV: &str = "CWL_H2_H1_COOKIE_METRICS";
 const HELPER_UPSTREAM_ENV: &str = "CWL_H2_H1_COOKIE_UPSTREAM";
 const HELPER_CERT_ENV: &str = "CWL_H2_H1_COOKIE_CERT";
 const HELPER_KEY_ENV: &str = "CWL_H2_H1_COOKIE_KEY";
+const HELPER_UPGRADE_SOCK_ENV: &str = "CWL_H2_H1_COOKIE_UPGRADE_SOCK";
 
 /// Child process guard that terminates the test-only gateway even after assertion failure.
 struct HelperProcess(Child);
@@ -90,19 +95,17 @@ fn issue_local_certificate() -> LocalCertificate {
     }
 }
 
-/// Reserves a currently free loopback socket address without granting long-lived authority to it.
-fn reserve_loopback_address() -> SocketAddr {
-    TcpListener::bind("127.0.0.1:0")
-        .expect("loopback port should be available")
-        .local_addr()
-        .expect("loopback listener should expose its address")
+/// Binds and retains one ephemeral loopback listener so its selected port cannot be stolen.
+fn reserve_loopback_listener() -> TcpListener {
+    TcpListener::bind("127.0.0.1:0").expect("loopback port should be available")
 }
 
 /// Waits for the child listener to acquire network authority or fails if the child exits first.
-fn wait_until_listening(address: SocketAddr, process: &mut Child) {
+fn wait_until_listening(address: SocketAddr, process: &mut HelperProcess) {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         if let Some(status) = process
+            .0
             .try_wait()
             .expect("helper process state should be readable")
         {
@@ -168,7 +171,7 @@ fn env_socket(name: &str) -> SocketAddr {
         .unwrap_or_else(|_| panic!("invalid socket address in {name}"))
 }
 
-/// Reads one required certificate/key path from the child-process environment.
+/// Reads one required certificate/key or Unix-socket path from the child-process environment.
 fn env_path(name: &str) -> PathBuf {
     PathBuf::from(env::var_os(name).unwrap_or_else(|| panic!("missing helper path {name}")))
 }
@@ -183,13 +186,17 @@ fn h2_cookie_proxy_helper() {
     let upstream = env_socket(HELPER_UPSTREAM_ENV);
     let cert = env_path(HELPER_CERT_ENV);
     let key = env_path(HELPER_KEY_ENV);
+    let upgrade_sock = env_path(HELPER_UPGRADE_SOCK_ENV);
 
     let config = helper_config(listener, metrics, upstream);
     let proxy = GatewayProxy::try_from_config(&config).expect("test-only proxy should activate");
-    let mut server = Server::new_with_opt_and_conf(
-        None,
-        build_server_conf(config.upstream_keepalive_pool_size),
-    );
+    let mut server_conf = build_server_conf(config.upstream_keepalive_pool_size);
+    server_conf.upgrade_sock = upgrade_sock.to_string_lossy().into_owned();
+    let options = Opt {
+        upgrade: true,
+        ..Opt::default()
+    };
+    let mut server = Server::new_with_opt_and_conf(Some(options), server_conf);
     server.bootstrap();
 
     let mut service = http_proxy_service(&server.configuration, proxy);
@@ -218,29 +225,42 @@ fn assert_curl_supports_http2() {
     );
 }
 
-/// Spawns the ignored helper test as a child process with explicit listener and certificate authority.
+/// Spawns the ignored helper, transfers the still-bound listener FD, then proves it accepts traffic.
 fn spawn_helper(
-    listener: SocketAddr,
+    listener: &TcpListener,
     metrics: SocketAddr,
     upstream: SocketAddr,
     cert: &Path,
     key: &Path,
+    upgrade_sock: &Path,
 ) -> HelperProcess {
-    let mut child = Command::new(env::current_exe().expect("current test executable should resolve"))
+    let listener_address = listener
+        .local_addr()
+        .expect("reserved H2 listener address should resolve");
+    let child = Command::new(env::current_exe().expect("current test executable should resolve"))
         .args(["--ignored", "--exact", "h2_cookie_proxy_helper", "--nocapture"])
         .env(HELPER_MODE_ENV, "1")
-        .env(HELPER_LISTENER_ENV, listener.to_string())
+        .env(HELPER_LISTENER_ENV, listener_address.to_string())
         .env(HELPER_METRICS_ENV, metrics.to_string())
         .env(HELPER_UPSTREAM_ENV, upstream.to_string())
         .env(HELPER_CERT_ENV, cert)
         .env(HELPER_KEY_ENV, key)
+        .env(HELPER_UPGRADE_SOCK_ENV, upgrade_sock)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::inherit())
         .spawn()
         .expect("test-only H2 proxy helper should start");
-    wait_until_listening(listener, &mut child);
-    HelperProcess(child)
+
+    // Guard immediately so transfer/bootstrap/readiness failures cannot leak or orphan the helper.
+    let mut process = HelperProcess(child);
+    let mut inherited = Fds::new();
+    inherited.add(listener_address.to_string(), listener.as_raw_fd());
+    inherited
+        .send_to_sock(upgrade_sock)
+        .expect("reserved H2 listener should transfer to the Pingora helper");
+    wait_until_listening(listener_address, &mut process);
+    process
 }
 
 /// Sends the two-field Cookie request and returns curl's negotiated HTTP version evidence.
@@ -301,18 +321,27 @@ fn h2_multiple_cookie_fields_are_coalesced_before_h1_upstream() {
     let origin = TcpListener::bind("127.0.0.1:0").expect("H1 origin should bind");
     let origin_address = origin.local_addr().expect("H1 origin address should resolve");
     let origin_request = spawn_h1_origin(origin);
-    let listener = reserve_loopback_address();
-    let metrics = reserve_loopback_address();
+    let listener_reservation = reserve_loopback_listener();
+    let metrics_reservation = reserve_loopback_listener();
+    let listener = listener_reservation
+        .local_addr()
+        .expect("H2 listener reservation should expose its address");
+    let metrics = metrics_reservation
+        .local_addr()
+        .expect("metrics reservation should expose its address");
     assert_ne!(listener, metrics);
     assert_ne!(listener, origin_address);
     assert_ne!(metrics, origin_address);
 
+    let upgrade_directory = tempdir().expect("upgrade socket workspace should be available");
+    let upgrade_sock = upgrade_directory.path().join("pingora-upgrade.sock");
     let _helper = spawn_helper(
-        listener,
+        &listener_reservation,
         metrics,
         origin_address,
         &certificate.cert,
         &certificate.key,
+        &upgrade_sock,
     );
     let trace = NamedTempFile::new().expect("curl trace file should be writable");
     let negotiated_version = traced_curl_h2_request(listener, &certificate.cert, &trace);
