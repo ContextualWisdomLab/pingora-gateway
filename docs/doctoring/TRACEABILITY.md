@@ -22,6 +22,7 @@ This file links material technical/security claims to primary standards or upstr
 | Rust 1.98.0 is the latest stable toolchain observed on 2026-09-01 | Rust Release Team, Rust 1.98.0 announcement, 2026-08-20 |
 | OCI runtime-spec 1.3.0 is the latest released runtime specification observed on 2026-09-01 | Open Container Initiative runtime-spec v1.3.0 release notice, 2025-11-04; runtime hardening claims still require executable container evidence |
 | `lru` versions before 0.18.2 are affected by RUSTSEC-2026-0253 | RustSec advisory RUSTSEC-2026-0253; the upstream pin includes the first-fixed `lru` dependency change, but release must use a committed audited lock |
+| `derivative` is classified as INFO Unmaintained and has no patched versions; the current committed Pingora graph resolves `derivative 2.2.0` | RustSec advisory RUSTSEC-2024-0388, issued 2024-11-10, plus exact committed `Cargo.lock`; upstream ownership is tracked in `cloudflare/pingora#889` |
 
 ## References
 
@@ -60,5 +61,7 @@ Petersson, A., & Nilsson, M. (2014). *Forwarded HTTP extension* (RFC 7239). RFC 
 Open Container Initiative. (2025, November 4). *OCI runtime-spec v1.3.0 release notice*. https://opencontainers.org/release-notices/v1-3-0-runtime-spec/
 
 Rust Release Team. (2026, August 20). *Announcing Rust 1.98.0*. Rust Blog. https://blog.rust-lang.org/2026/08/20/Rust-1.98.0/
+
+Rust Secure Code Working Group. (2024, November 10). *RUSTSEC-2024-0388: derivative—`derivative` is unmaintained; consider using an alternative*. RustSec Advisory Database. https://rustsec.org/advisories/RUSTSEC-2024-0388.html
 
 Rust Secure Code Working Group. (2026, August 11). *RUSTSEC-2026-0253: lru—memory safety issue under panic*. RustSec Advisory Database. https://rustsec.org/advisories/RUSTSEC-2026-0253.html
