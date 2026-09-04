@@ -12,6 +12,10 @@
 
 **Request-body budget** — the maximum number of downstream body bytes admitted for one request.
 
+**Request-header parser admission budget** — an operator-controlled bound enforced while downstream request headers are being parsed/buffered, before the application callback receives a constructed request header. A callback-only rejection after parsing is not this budget. Pinned Pingora has finite supplier HTTP/1 ceilings but no supported configurable HTTP/1 parser-phase hook for CWL yet; #43/#993 track that gap. HTTP/2 decoded-header-list accounting is a separate protocol-specific limit.
+
+**Response-body lifetime budget** — the optional pg-erd version-2 monotonic lifetime that begins at the first non-informational upstream response header and is checked on subsequent body-progress callbacks without resetting on progress. It complements per-read inactivity and is not an exact interrupt for a quiescent pending read.
+
 **Protocol transition** — a connection-wide change from HTTP/1.1 to another protocol, signaled by HTTP `Upgrade` semantics. Generic v1 and the bounded pg-erd candidate do not admit protocol transitions; WebSocket or another upgraded protocol requires a separate versioned consumer-derived contract. HTTP/2 Extended CONNECT and HTTP/3 mechanisms are distinct contracts rather than aliases for HTTP/1 Upgrade.
 
 **Delivery adapter** — Pingora-specific code that realizes an admitted edge contract. It may not define product domain rules.
