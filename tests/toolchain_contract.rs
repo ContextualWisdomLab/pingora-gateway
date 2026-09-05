@@ -108,11 +108,7 @@ fn assert_no_yaml_compiler_environment(context: &str, workflow: &str, job_name: 
     let document: Value = serde_yaml::from_str(workflow).unwrap_or_else(|error| {
         panic!("workflow YAML must parse before compiler environment validation: {error}")
     });
-    assert_environment_mapping_has_no_compiler_authority(
-        context,
-        "workflow",
-        document.get("env"),
-    );
+    assert_environment_mapping_has_no_compiler_authority(context, "workflow", document.get("env"));
 
     let job = document
         .get("jobs")
@@ -128,11 +124,7 @@ fn assert_no_yaml_compiler_environment(context: &str, workflow: &str, job_name: 
     if let Some(steps) = job.get("steps").and_then(Value::as_sequence) {
         for (index, step) in steps.iter().enumerate() {
             let scope = format!("step {index}");
-            assert_environment_mapping_has_no_compiler_authority(
-                context,
-                &scope,
-                step.get("env"),
-            );
+            assert_environment_mapping_has_no_compiler_authority(context, &scope, step.get("env"));
         }
     }
 }
