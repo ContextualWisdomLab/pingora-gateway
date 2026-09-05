@@ -5,7 +5,71 @@ mod toolchain_command_substitution_support;
 
 use serde_yaml::Value;
 use std::fs;
-use toolchain_command_substitution_support::assert_no_hidden_compiler_authority;
+use toolchain_command_substitution_support::assert_no_hidden_compiler_authority as assert_no_hidden_dollar_compiler_authority;
+
+/// Returns every active legacy backquote command-substitution body outside single quotes.
+///
+/// Bash documents the first unescaped backquote as the terminator of the legacy form. Backquotes
+/// remain active inside double quotes, while single quotes and an outer backslash keep them literal.
+fn legacy_command_substitution_bodies(shell: &str) -> Vec<String> {
+    let mut bodies = Vec::new();
+    let mut current: Option<String> = None;
+    let mut single_quoted = false;
+    let mut escaped = false;
+
+    for character in shell.chars() {
+        if let Some(body) = current.as_mut() {
+            if escaped {
+                body.push(character);
+                escaped = false;
+                continue;
+            }
+            if character == '\\' {
+                body.push(character);
+                escaped = true;
+                continue;
+            }
+            if character == '`' {
+                bodies.push(current.take().expect("legacy command body must exist"));
+                continue;
+            }
+            body.push(character);
+            continue;
+        }
+
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if character == '\\' && !single_quoted {
+            escaped = true;
+            continue;
+        }
+        if character == '\'' {
+            single_quoted = !single_quoted;
+            continue;
+        }
+        if character == '`' && !single_quoted {
+            current = Some(String::new());
+        }
+    }
+
+    assert!(
+        current.is_none(),
+        "compiler-authority shell contract requires terminated legacy command substitution"
+    );
+    bodies
+}
+
+/// Applies the same compiler-authority analysis to POSIX `$()` and Bash's legacy backquote form.
+fn assert_no_hidden_compiler_authority(context: &str, shell: &str) {
+    assert_no_hidden_dollar_compiler_authority(context, shell);
+
+    for body in legacy_command_substitution_bodies(shell) {
+        let normalized = format!("$({body})");
+        assert_no_hidden_dollar_compiler_authority(context, &normalized);
+    }
+}
 
 /// Returns every shell script attached to a direct GitHub Actions step.
 fn workflow_run_scripts(path: &str) -> Vec<String> {
