@@ -3,6 +3,7 @@
 use serde_yaml::Value;
 use std::fs;
 
+const FIXED_TOOLCHAIN: &str = "1.98.1";
 const FORBIDDEN_COMPILER_AUTHORITIES: [&str; 3] = ["RUSTC", "CARGO_BUILD_RUSTC", "RUSTUP_TOOLCHAIN"];
 
 /// Reads semantic `run` scripts from every workflow job.
@@ -23,6 +24,22 @@ fn workflow_run_scripts(workflow: &str) -> Vec<String> {
         })
         .filter_map(|step| step.get("run").and_then(Value::as_str))
         .map(str::to_owned)
+        .collect()
+}
+
+/// Reads executable shell-form Docker `RUN` bodies after continuation normalization.
+fn docker_run_scripts(dockerfile: &str) -> Vec<String> {
+    let normalized = dockerfile.replace("\\\r\n", "").replace("\\\n", "");
+    normalized
+        .lines()
+        .filter_map(|line| {
+            let trimmed = line.trim_start();
+            let boundary = trimmed.find(char::is_whitespace)?;
+            if !trimmed[..boundary].eq_ignore_ascii_case("RUN") {
+                return None;
+            }
+            Some(trimmed[boundary..].trim_start().to_owned())
+        })
         .collect()
 }
 
@@ -122,8 +139,8 @@ fn command_basename(word: &str) -> &str {
     word.rsplit('/').next().unwrap_or(word)
 }
 
-/// Detects compiler-selection environment authority in assignment prefixes or env/export commands.
-fn segment_has_forbidden_compiler_authority(segment: &[String]) -> bool {
+/// Detects alternate compiler authority in assignment prefixes or explicit selector commands.
+fn segment_has_alternate_compiler_authority(segment: &[String]) -> bool {
     let mut index = 0;
     while let Some(word) = segment.get(index) {
         let Some(name) = assignment_name(word) else {
@@ -149,11 +166,32 @@ fn segment_has_forbidden_compiler_authority(segment: &[String]) -> bool {
         index += 1;
     }
 
-    if matches!(command, "env" | "export") {
-        return segment[index..].iter().any(|word| {
+    if matches!(command, "env" | "export")
+        && segment[index..].iter().any(|word| {
             assignment_name(word)
                 .is_some_and(|name| FORBIDDEN_COMPILER_AUTHORITIES.contains(&name))
-        });
+        })
+    {
+        return true;
+    }
+
+    if command == "cargo" {
+        return segment
+            .get(index)
+            .is_some_and(|argument| argument.starts_with('+') && argument.len() > 1);
+    }
+
+    if command == "rustup" {
+        return match segment.get(index).map(String::as_str) {
+            Some("default") => {
+                segment.get(index + 1).map(String::as_str) != Some(FIXED_TOOLCHAIN)
+            }
+            Some("toolchain") if segment.get(index + 1).map(String::as_str) == Some("install") => {
+                segment.get(index + 2).map(String::as_str) != Some(FIXED_TOOLCHAIN)
+            }
+            Some("override" | "run") => true,
+            _ => false,
+        };
     }
 
     false
@@ -164,8 +202,8 @@ fn assert_no_hidden_compiler_authority(context: &str, script: &str) {
     assert!(
         !command_segments(script)
             .iter()
-            .any(|segment| segment_has_forbidden_compiler_authority(segment)),
-        "{context} must not hide compiler authority behind shell control operators"
+            .any(|segment| segment_has_alternate_compiler_authority(segment)),
+        "{context} must not hide alternate compiler authority behind shell control operators"
     );
 }
 
@@ -181,7 +219,9 @@ fn repository_release_shell_control_contract() {
 
     let dockerfile = fs::read_to_string("Dockerfile")
         .unwrap_or_else(|error| panic!("required Dockerfile is missing: {error}"));
-    assert_no_hidden_compiler_authority("Dockerfile", &dockerfile);
+    for script in docker_run_scripts(&dockerfile) {
+        assert_no_hidden_compiler_authority("Dockerfile RUN", &script);
+    }
 }
 
 #[test]
@@ -205,8 +245,29 @@ fn shell_control_operator_cannot_hide_compiler_assignment() {
 }
 
 #[test]
-fn quoted_text_and_comments_do_not_create_compiler_authority() {
+fn shell_control_operator_cannot_hide_toolchain_command_authority() {
     for script in [
+        "true;cargo +1.98.0 build --release --locked",
+        "true&&rustup default 1.98.0",
+        "false||rustup override set 1.98.0",
+        "printf ok|rustup toolchain install 1.98.0 --profile minimal",
+        "command cargo +nightly build --release --locked",
+        "command rustup run 1.98.0 cargo build --release --locked",
+    ] {
+        let result = std::panic::catch_unwind(|| {
+            assert_no_hidden_compiler_authority("synthetic shell", script);
+        });
+        assert!(
+            result.is_err(),
+            "control operator must not hide toolchain command authority: {script}"
+        );
+    }
+}
+
+#[test]
+fn fixed_toolchain_commands_quoted_text_and_comments_remain_allowed() {
+    for script in [
+        "rustup toolchain install 1.98.1 --profile minimal; rustup default 1.98.1",
         "echo 'RUSTC=/tmp/rustc-1.98.0'",
         "printf '%s\\n' \"CARGO_BUILD_RUSTC=/tmp/rustc-1.98.0\"",
         "# RUSTUP_TOOLCHAIN=1.98.0 cargo build --release --locked\necho ok",
