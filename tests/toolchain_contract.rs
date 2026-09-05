@@ -306,7 +306,9 @@ fn assert_no_alternate_toolchain_selector(context: &str, body: &str) {
                         "{context} must not select a compiler other than Rust 1.98.1"
                     );
                 }
-                Some("toolchain") if tokens.get(index + 2).map(String::as_str) == Some("install") => {
+                Some("toolchain")
+                    if tokens.get(index + 2).map(String::as_str) == Some("install") =>
+                {
                     assert_eq!(
                         tokens.get(index + 3).map(String::as_str),
                         Some("1.98.1"),

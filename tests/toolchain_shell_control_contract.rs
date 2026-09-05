@@ -4,7 +4,8 @@ use serde_yaml::Value;
 use std::fs;
 
 const FIXED_TOOLCHAIN: &str = "1.98.1";
-const FORBIDDEN_COMPILER_AUTHORITIES: [&str; 3] = ["RUSTC", "CARGO_BUILD_RUSTC", "RUSTUP_TOOLCHAIN"];
+const FORBIDDEN_COMPILER_AUTHORITIES: [&str; 3] =
+    ["RUSTC", "CARGO_BUILD_RUSTC", "RUSTUP_TOOLCHAIN"];
 
 /// Reads semantic `run` scripts from every workflow job.
 fn workflow_run_scripts(workflow: &str) -> Vec<String> {
@@ -227,7 +228,8 @@ fn env_prefix_violates_compiler_contract(arguments: &[String]) -> bool {
                         'S' => return true,
                         '0' | 'i' | 'v' => {}
                         'a' | 'u' | 'C' => {
-                            consumes_next_argument = offset + option.len_utf8() == short_options.len();
+                            consumes_next_argument =
+                                offset + option.len_utf8() == short_options.len();
                             break;
                         }
                         _ => return true,
@@ -289,8 +291,7 @@ fn segment_has_alternate_compiler_authority(segment: &[String]) -> bool {
 
     if command == "export"
         && segment[index..].iter().any(|word| {
-            assignment_name(word)
-                .is_some_and(|name| FORBIDDEN_COMPILER_AUTHORITIES.contains(&name))
+            assignment_name(word).is_some_and(|name| FORBIDDEN_COMPILER_AUTHORITIES.contains(&name))
         })
     {
         return true;
@@ -304,9 +305,7 @@ fn segment_has_alternate_compiler_authority(segment: &[String]) -> bool {
 
     if command == "rustup" {
         return match segment.get(index).map(String::as_str) {
-            Some("default") => {
-                segment.get(index + 1).map(String::as_str) != Some(FIXED_TOOLCHAIN)
-            }
+            Some("default") => segment.get(index + 1).map(String::as_str) != Some(FIXED_TOOLCHAIN),
             Some("toolchain") if segment.get(index + 1).map(String::as_str) == Some("install") => {
                 segment.get(index + 2).map(String::as_str) != Some(FIXED_TOOLCHAIN)
             }
@@ -330,7 +329,10 @@ fn assert_no_hidden_compiler_authority(context: &str, script: &str) {
 
 #[test]
 fn repository_release_shell_control_contract() {
-    for path in [".github/workflows/ci.yml", ".github/workflows/supply-chain.yml"] {
+    for path in [
+        ".github/workflows/ci.yml",
+        ".github/workflows/supply-chain.yml",
+    ] {
         let workflow = fs::read_to_string(path)
             .unwrap_or_else(|error| panic!("required workflow {path} is missing: {error}"));
         for script in workflow_run_scripts(&workflow) {

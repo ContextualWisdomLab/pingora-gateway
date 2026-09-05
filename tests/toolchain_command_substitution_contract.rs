@@ -59,11 +59,7 @@ fn docker_run_commands(source: &str) -> Vec<String> {
         let Some(after_run) = trimmed.strip_prefix("RUN") else {
             continue;
         };
-        if !after_run
-            .chars()
-            .next()
-            .is_some_and(char::is_whitespace)
-        {
+        if !after_run.chars().next().is_some_and(char::is_whitespace) {
             continue;
         }
         let rest = after_run.trim_start();
@@ -86,7 +82,10 @@ fn docker_run_commands(source: &str) -> Vec<String> {
 /// Production release workflows and the OCI build must not hide compiler selection inside `$(...)`.
 #[test]
 fn release_paths_reject_hidden_compiler_authority_in_command_substitution() {
-    for path in [".github/workflows/ci.yml", ".github/workflows/supply-chain.yml"] {
+    for path in [
+        ".github/workflows/ci.yml",
+        ".github/workflows/supply-chain.yml",
+    ] {
         for script in workflow_run_scripts(path) {
             assert_no_hidden_compiler_authority(path, &script);
         }

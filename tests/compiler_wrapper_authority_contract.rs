@@ -44,10 +44,7 @@ fn assignment_name(word: &str) -> Option<&str> {
     Some(name.strip_suffix('+').unwrap_or(name))
 }
 
-fn assert_environment_mapping_has_no_compiler_wrapper(
-    context: &str,
-    environment: Option<&Value>,
-) {
+fn assert_environment_mapping_has_no_compiler_wrapper(context: &str, environment: Option<&Value>) {
     let Some(environment) = environment.and_then(Value::as_mapping) else {
         return;
     };
