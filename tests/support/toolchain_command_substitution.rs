@@ -186,39 +186,61 @@ fn parameter_command_name(word: &str) -> Option<&str> {
     (name_end > 0).then_some(&body[..name_end])
 }
 
-/// Rejects Cargo executable indirection through shell variables in release-producing command position.
+/// Applies one persistent shell assignment to the recorded Cargo command aliases.
+fn apply_persistent_cargo_assignment(aliases: &mut Vec<String>, name: &str, value: &str) {
+    aliases.retain(|alias| alias != name);
+    if command_basename(value) == "cargo" {
+        aliases.push(name.to_owned());
+    }
+}
+
+/// Rejects Cargo executable indirection through persistent shell variables in command position.
 fn contains_variable_cargo_command(shell: &str) -> bool {
     let mut aliases: Vec<String> = Vec::new();
 
     for segment in shell_command_segments(shell) {
         let mut index = 0;
+        let mut assignment_prefix = Vec::new();
         while let Some(word) = segment.get(index) {
             let Some((name, value)) = assignment_parts(word) else {
                 break;
             };
-            aliases.retain(|alias| alias != name);
-            if command_basename(value) == "cargo" {
-                aliases.push(name.to_owned());
-            }
+            assignment_prefix.push((name, value));
             index += 1;
         }
 
         let Some(command) = segment.get(index) else {
+            for (name, value) in assignment_prefix {
+                apply_persistent_cargo_assignment(&mut aliases, name, value);
+            }
             continue;
         };
-        if command_basename(command) == "export" {
+        let command_basename = command_basename(command);
+
+        if command_basename == "export" {
+            // POSIX `export` is a special builtin, so its assignment prefix and assignment operands
+            // affect the current shell rather than merely the child-command environment.
+            for (name, value) in assignment_prefix {
+                apply_persistent_cargo_assignment(&mut aliases, name, value);
+            }
             for word in &segment[index + 1..] {
                 let Some((name, value)) = assignment_parts(word) else {
                     continue;
                 };
-                aliases.retain(|alias| alias != name);
-                if command_basename(value) == "cargo" {
-                    aliases.push(name.to_owned());
-                }
+                apply_persistent_cargo_assignment(&mut aliases, name, value);
             }
             continue;
         }
 
+        if command_basename == "unset" {
+            for name in &segment[index + 1..] {
+                aliases.retain(|alias| alias != name);
+            }
+            continue;
+        }
+
+        // Assignment prefixes on an ordinary command are command-local environment entries. They
+        // must not be remembered as parent-shell aliases after that command returns.
         if parameter_command_name(command)
             .is_some_and(|name| aliases.iter().any(|alias| alias == name))
         {
