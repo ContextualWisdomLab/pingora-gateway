@@ -166,18 +166,94 @@ fn unwrap_command_builtin<'a>(
     Some((command, index + 1))
 }
 
-/// Rejects GNU `env` split-string because it introduces a second command parser hidden from this shell contract.
-fn env_uses_split_string(arguments: &[String]) -> bool {
-    arguments.iter().any(|argument| {
-        let bundled_short_split = argument
-            .strip_prefix('-')
-            .filter(|options| !options.starts_with('-'))
-            .is_some_and(|options| options.contains('S'));
+/// Checks only GNU `env`'s own option/assignment prefix and stops at the child command boundary.
+fn env_prefix_violates_compiler_contract(arguments: &[String]) -> bool {
+    let mut index = 0;
+    let mut options_active = true;
 
-        bundled_short_split
-            || argument == "--split-string"
-            || argument.starts_with("--split-string=")
-    })
+    while let Some(argument) = arguments.get(index).map(String::as_str) {
+        if options_active {
+            if argument == "--" {
+                return false;
+            }
+            if argument == "-" {
+                options_active = false;
+                index += 1;
+                continue;
+            }
+
+            if let Some(long_option) = argument.strip_prefix("--") {
+                let (name, has_attached_argument) = long_option
+                    .split_once('=')
+                    .map_or((long_option, false), |(name, _)| (name, true));
+
+                match name {
+                    "split-string" => return true,
+                    "null"
+                    | "ignore-environment"
+                    | "default-signal"
+                    | "ignore-signal"
+                    | "block-signal"
+                    | "list-signal-handling"
+                    | "debug"
+                    | "help"
+                    | "version" => {
+                        index += 1;
+                        continue;
+                    }
+                    "argv0" | "unset" | "chdir" => {
+                        if !has_attached_argument {
+                            index += 1;
+                            if index >= arguments.len() {
+                                return true;
+                            }
+                        }
+                        index += 1;
+                        continue;
+                    }
+                    _ => return true,
+                }
+            }
+
+            if let Some(short_options) = argument.strip_prefix('-') {
+                let mut consumes_next_argument = false;
+                for (offset, option) in short_options.char_indices() {
+                    match option {
+                        'S' => return true,
+                        '0' | 'i' | 'v' => {}
+                        'a' | 'u' | 'C' => {
+                            consumes_next_argument = offset + option.len_utf8() == short_options.len();
+                            break;
+                        }
+                        _ => return true,
+                    }
+                }
+
+                if consumes_next_argument {
+                    index += 1;
+                    if index >= arguments.len() {
+                        return true;
+                    }
+                }
+                index += 1;
+                continue;
+            }
+
+            options_active = false;
+        }
+
+        if let Some(name) = assignment_name(argument) {
+            if FORBIDDEN_COMPILER_AUTHORITIES.contains(&name) {
+                return true;
+            }
+            index += 1;
+            continue;
+        }
+
+        return false;
+    }
+
+    false
 }
 
 /// Detects alternate compiler authority in assignment prefixes or explicit selector commands.
@@ -202,11 +278,11 @@ fn segment_has_alternate_compiler_authority(segment: &[String]) -> bool {
         return false;
     };
 
-    if command == "env" && env_uses_split_string(&segment[index..]) {
+    if command == "env" && env_prefix_violates_compiler_contract(&segment[index..]) {
         return true;
     }
 
-    if matches!(command, "env" | "export")
+    if command == "export"
         && segment[index..].iter().any(|word| {
             assignment_name(word)
                 .is_some_and(|name| FORBIDDEN_COMPILER_AUTHORITIES.contains(&name))
@@ -354,6 +430,10 @@ fn fixed_toolchain_commands_quoted_text_and_comments_remain_allowed() {
         "command -v rustup",
         "command -V cargo",
         "env -i PATH=/usr/bin /usr/bin/printf ok",
+        "env -i /usr/bin/printf -S",
+        "command -p env -i /usr/bin/printf -S",
+        "env -i /usr/bin/printf RUSTUP_TOOLCHAIN=1.98.0",
+        "command -p env -i /usr/bin/printf RUSTC=/tmp/rustc-1.98.0",
         "echo 'RUSTC=/tmp/rustc-1.98.0'",
         "printf '%s\\n' \"CARGO_BUILD_RUSTC=/tmp/rustc-1.98.0\"",
         "# RUSTUP_TOOLCHAIN=1.98.0 cargo build --release --locked\necho ok",
