@@ -1,105 +1,88 @@
 # Product / Technical Gap Baseline
 
-This file is the code-current commercial-development baseline for `ContextualWisdomLab/pingora-gateway`. It records current ownership, executable evidence, dependency roots, and buyer-visible gaps. Mutable PR heads are evidence candidates, not release authority. Before any promotion, re-read the exact head/base, reviews, checks, security and supply-chain runs, protected branch, supplier identity, release artifacts, and consumer deployment state.
+This document is the code-current commercial-development baseline for `ContextualWisdomLab/pingora-gateway`. Mutable PR heads are evidence candidates, not release authority. Promotion requires a fresh read of exact head/base ancestry, review threads, hosted checks, security/supply-chain evidence, protected branch, supplier identity, release artifacts, and consumer deployment state.
 
-Snapshot: 2026-09-05 KST. Later live evidence supersedes every exact identity below.
+Snapshot: 2026-09-05 KST. Later live evidence supersedes the exact identities below.
 
 ## Product and DDD boundary
 
-`pingora-gateway` is a Generic/Supporting edge runtime. Its bounded contexts are Ingress, Edge Routing, TLS transport policy, HTTP Policy, Load Balancing, Observability, Admin Config, and Runtime Isolation. It may implement transport-level admission, forwarding sanitation, connection limits, timeout/retry/backpressure, health/drain, low-cardinality transport telemetry, and immutable runtime packaging.
+`pingora-gateway` owns transport/runtime concerns only: Ingress, Edge Routing, TLS transport policy, HTTP Policy, Load Balancing, Observability, Admin Config, and Runtime Isolation. It may own forwarding sanitation, connection/request limits, timeout/retry/backpressure, health/drain, low-cardinality transport telemetry, and immutable edge packaging.
 
-It must not become a second authority for product authentication or authorization, tenancy, business routing, identity, egress governance, malware/policy decisions, or certificate issuance simply because a legacy Nginx/OpenResty deployment co-located those responsibilities. Keyverse remains the identity backend. Wardnet/EgressWeave remain their security-policy authorities. Certificate issuance/ACME/key custody stays with the actual certificate/secret owner. Product-specific semantics cross this boundary only through released contracts or an explicit Anti-Corruption Layer; source copies, cross-service application SQL, mutable dependencies, and hidden Shared Kernels are not accepted.
+It must not duplicate product authentication/authorization, tenancy or business routing, Keyverse identity authority, Wardnet/EgressWeave policy authority, certificate issuance/key custody, or application-specific FastCGI/business semantics. Cross-context behavior is consumed through released contracts or explicit ACLs; source copies, cross-service application SQL, mutable sibling PR heads, and hidden Shared Kernels are rejected.
 
-The code/API/test vocabulary must continue to match these bounded contexts. Route/config identities and transport limits are Value Objects; admitted configuration must be validated before listener activation; runtime policy belongs behind narrow domain services/adapters. There is no material admin UI in the current migration lane, so the Figma/Storybook/i18n UI gate is not applicable to the dependency root below.
+No material admin UI is in the current dependency root, so Figma/Storybook/i18n UI acceptance is not applicable to the work below.
 
 ## Current reusable runtime state
 
-| Area | Current state | Buyer-visible gap before release/cutover |
+| Area | Current state | Release/cutover gap |
 | --- | --- | --- |
-| Executable Pingora path | Implemented candidate on the foundation stack | Every moved exact head must reacquire fmt/compile/test/Clippy/rustdoc/coverage/load/OCI/security/supply-chain evidence. |
-| Ingress / routing | Implemented candidate | Representative production host/SNI/routing parity and consumer shadow traffic remain required. |
-| TLS | Partial | Upstream trust/SNI behavior is characterized. Certificate lifecycle stays outside this owner. Downstream TLS/H2 and later HTTP/3/QUIC need dependency-ordered traffic evidence. |
-| HTTP policy | Partial | Hop-by-hop sanitation and forwarding-identity distrust/reconstruction exist. H2→H1 Cookie normalization and zero-length chunk framing remain supplier-gated. |
-| WebSocket / streaming | Partial | Upgrade/streaming behavior exists in the supplier/runtime path, but long-lived-stream shutdown, backpressure and failure traffic still need release-candidate E2E evidence. |
-| Runtime isolation | Partial | Body/in-flight/connection/timeout/drain controls exist. Broader header budgets, parked-read shutdown and representative failure traffic remain open. |
-| Observability | Partial | Payload-free, low-cardinality edge telemetry exists. Product/identity/business telemetry remains outside this owner; production trace and incident evidence remains open. |
-| OCI | Implemented candidate | Rootless/read-only-root/capability-free/no-new-privileges checks exist. Immutable release, SBOM, provenance, reproducibility and rollback still gate commercial readiness. |
-| Performance | Local executable contract only | Applicable gateway paths use realistic async/load contracts with p95 `<20 ms`; this is not a production SLO until TLS/network/origin/deployment traffic is measured without sample shrinking or artificial warm-up. |
-| Release / rollback | Not released | Protected `main` is still `f8b4c99b8e5d3de79af1ff0c00c0c8fd63b52991`; GitHub Releases are empty. No immutable gateway artifact exists for consumer canary/cutover. |
+| Pingora executable path | Implemented candidate | Every moved exact head must reacquire fmt/compile/test/Clippy/rustdoc/coverage/load/OCI/security/supply-chain evidence. |
+| Ingress / routing | Implemented candidate | Representative production host/SNI/routing parity and shadow traffic remain required. |
+| TLS | Partial | Certificate lifecycle stays outside this owner. Downstream TLS/H2 and later HTTP/3/QUIC need dependency-ordered traffic evidence. |
+| HTTP policy | Partial | H2→H1 Cookie normalization and zero-length chunk framing remain supplier-gated. |
+| WebSocket / streaming | Partial | Long-lived-stream shutdown/backpressure/failure traffic still need release-candidate E2E evidence. |
+| Runtime isolation | Partial | Body/in-flight/timeout/drain controls exist; broader header budgets and failure traffic remain open. |
+| Observability | Partial | Payload-free low-cardinality edge telemetry exists; product/identity/business telemetry remains outside this owner. |
+| OCI | Implemented candidate | Immutable release, SBOM, provenance, reproducibility and rollback remain open. |
+| Performance | Local contract only | Applicable buyer paths require realistic async/k6 evidence with p95 ≤20 ms; this is not yet a production SLO. |
+| Release | Not released | Protected `main` is `f8b4c99b8e5d3de79af1ff0c00c0c8fd63b52991`; no immutable gateway release exists. |
 
 ## Dependency root: workflow admission repair (#58 / #59 / #60)
 
-Issue #58 owns a wrong-base repair. Merged #57 placed a valid repository workflow-coalescing delta inside #53's H2→H1 Cookie protocol lineage. Both deltas must survive: workflow policy moves to the earliest workflow-owning foundation ancestor, while the Cookie wire fixture remains in its protocol lane. Repair is by forward adoption and ordinary multi-parent ancestry, not force-push, destructive rebase, closure, or test deletion.
+Merged #57 placed a valid repository workflow-coalescing delta inside #53's H2→H1 Cookie protocol lineage. Both deltas must survive. Workflow policy is promoted to the earliest workflow-owning foundation ancestor, then descendants are repaired by forward adoption and ordinary multi-parent ancestry. Force-push, destructive rebase, simple closure, test deletion, self-approval, and gate weakening are not repair mechanisms.
 
 ### RED oracle — #59
 
-Draft #59 is based directly on foundation #1 `5a62e2fa56fdaa6f97c0518932711739e347c04a`. Current exact head is `802d9a30030759fc6410f86fda7128a1569956c8`; fresh compare is ahead 19 / behind 0 with the foundation as exact merge base. Effective range is exactly two Rust test contracts: `tests/workflow_concurrency_contract.rs` and `tests/workflow_tag_filter_contract.rs`.
+Draft #59 is based directly on foundation #1 `5a62e2fa56fdaa6f97c0518932711739e347c04a`. Current exact head is `3e452c850a6585ffca94468d841a8b8b3d817040`; effective range is exactly two Rust test contracts: `tests/workflow_concurrency_contract.rs` and `tests/workflow_tag_filter_contract.rs`.
 
-Predecessor `8eaccce7251b4eb8666212b57207da31c0146b9d` acquired hosted runners and reached `cargo test --all-targets --locked`. At that point 10/12 workflow-concurrency tests passed and the two then-defined foundation invariants failed: missing workflow/repository/PR cancellation identity and missing protected-main-only duplicate-push scope. OCI, load-contract and supply-chain evidence on that predecessor were GREEN. That is causal hosted semantic RED evidence, but it does not transfer to a moved head.
+Predecessor `8eaccce7251b4eb8666212b57207da31c0146b9d` acquired hosted runners. Supply Chain, OCI and load-contract were GREEN; CI reached `cargo test --all-targets --locked` and failed the then-defined foundation invariants for workflow/repository/PR cancellation identity and protected-main-only duplicate-push scope. That is causal hosted semantic RED evidence, but it does not transfer to a moved head.
 
-The oracle now also requires rerun isolation, direct-job draft admission, and the `converted_to_draft` event. Without that event, a run admitted while the PR was Ready retains the original event payload and may remain queued/running after the PR becomes Draft. The current contract therefore requires `opened`, `synchronize`, `reopened`, `converted_to_draft`, and `ready_for_review`: draft conversion enters the same PR concurrency group so superseded work can be retracted, all direct jobs skip because the converted event has `draft == true`, and Ready re-admits normal checks. Current exact runs are CI `33942508512` and Supply Chain `33942508519`, both queued at the latest sweep; CI has three materialized `ubuntu-24.04` jobs with `steps=[]`, `runner_id=0`. The current strengthened oracle must reacquire terminal hosted RED.
+The current oracle is stronger. It covers rerun isolation, `converted_to_draft` / `ready_for_review`, direct-job Draft admission, fail-closed event syntax, branch/tag scope, and semantic tag-filter parsing. Fresh independent review found one remaining fail-open: `direct_job_count` ignored a valid direct job line such as `  build: # comment`, so the expected number of Draft guards could be under-counted. `3e452c850a6585ffca94468d841a8b8b3d817040` repairs this by parsing only the top-level `jobs:` block, accepting canonical `job_id:` keys followed by whitespace/inline comments, failing closed on non-canonical direct children, and adding a regression that also proves the next top-level mapping ends the block. The finding thread was answered with this exact commit and resolved after the source repair existed.
+
+Current exact runs are CI `33943265637` and Supply Chain `33943265714`. CI jobs `101244606205`, `101244606294`, and `101244606384` are materialized on `ubuntu-24.04` but remain queued with `steps=[]` and `runner_id=0` at the latest read. Current exact terminal RED and fresh exact-range review are still required.
 
 ### GREEN implementation — #60
 
-#60 is Ready on exact #59 `802d9a...`. Current exact head is `b587d043bef8d11a5d08de9ea7e5f690e289250f`; fresh compare is ahead 30 / behind 0 with exact merge base and exactly two effective files: `.github/workflows/ci.yml` and `.github/workflows/supply-chain.yml` (`+17/-9`). The Rust oracle is no longer part of the GREEN range.
+#60 is Ready on exact #59 `3e452c850a6585ffca94468d841a8b8b3d817040`. Current exact head is `0e70ea9916146bcf82a305a349778ea4ec33e10a`. Fresh compare is ahead 33 / behind 0 with exact merge base and exactly two effective files: `.github/workflows/ci.yml` and `.github/workflows/supply-chain.yml` (`+17/-9`). No Rust test delta remains in the GREEN range.
 
-The implementation restricts duplicate push evidence to protected `main`; coalesces first-attempt PR work by workflow/repository/PR; sends reruns to `github.run_id`; cancels only PR runs; admits `opened`, `synchronize`, `reopened`, `converted_to_draft`, and `ready_for_review`; and rejects draft admission on every direct job. Existing exact-SHA checkout, test/load/OCI and supply-chain gates remain. The branch also retains narrow actionlint repairs for EXIT-trap cleanup without changing runtime acceptance thresholds.
+The implementation restricts duplicate push evidence to protected `main`; coalesces first-attempt PR work by workflow/repository/PR; isolates reruns with `github.run_id`; cancels only PR runs; admits `opened`, `synchronize`, `reopened`, `converted_to_draft`, and `ready_for_review`; and keeps every direct PR job out of the runner queue while Draft. Exact-SHA checkout, test/load/OCI and supply-chain gates remain intact.
 
-The draft-transition contract has real scheduler evidence on writer-safe #61 exact `afe89f22dbd136ecce5d2e7809b59539b5e46cc1`. With the PR Ready, CI `33942594155` and Supply Chain `33942594132` were queued. Ready→Draft emitted CI `33942600636` and Supply Chain `33942600621`; both completed `skipped`, and both older Ready runs reached terminal `cancelled`. Draft→Ready on the unchanged source head then emitted CI `33942615765` and Supply Chain `33942615738`. This proves draft retraction and Ready re-admission at the scheduler/admission layer, but it does not replace #60 exact hosted Cargo/security/supply-chain evidence. Current #60 runs are CI `33942572341` and Supply Chain `33942572392`, both queued; the three CI jobs remain pre-checkout with `runner_id=0`.
+The branch was non-force restacked after #59 moved. An ordinary two-parent commit adopted current #59 ancestry using the RED-parent tree, then the two intended GREEN workflow blobs were reapplied as forward commits. The final compare proves no inherited test or documentation delta remains.
+
+Current exact runs are CI `33943319652` and Supply Chain `33943319632`, still pending/queued at the latest read. Current all-gates hosted GREEN and fresh exact-range review remain required.
 
 ### Documentation projection — #61
 
-#61 is a documentation-only child of current #60 and must keep exactly six documentation files in its effective range. Its own exact head is intentionally not frozen into this baseline because changing this file creates a new documentation head; the live PR is the authority for its current head, compare, checks, and review state.
+#61 is the writer-safe documentation child. It was non-force restacked onto current #60 and then adopted the exact current #59 test blob so the effective range returned to documentation-only scope. Current compare against #60 `0e70ea9916146bcf82a305a349778ea4ec33e10a` is ahead 31 / behind 0 with exact merge base and exactly six documentation files: `CHANGELOG.md`, `SECURITY.md`, `THREAT_MODEL.md`, `TRD.md`, `docs/doctoring/TRACEABILITY.md`, and this baseline.
 
-The stable behavioral evidence above belongs to the workflow policy, not to the documentation release gate. Every later documentation-only head must still reacquire its own normal hosted checks and independent review before merge. Scheduler admission, skipped Draft evidence, bot/static review, Cargo semantic execution and final all-gates execution are distinct evidence classes.
+Stable Ready→Draft scheduler evidence captured on the earlier #61 source identity remains behavioral evidence for #60: converting a Ready PR to Draft emitted skipped Draft runs and cancelled the older Ready runs; marking the unchanged source Ready again re-admitted checks. That evidence is not a substitute for current #59 terminal Cargo RED, current #60 all-gates GREEN, or current #61 documentation checks/review.
 
-Promotion order is fixed: `#59 exact terminal RED + current review → #60 exact all-gates GREEN + current review → ordinary foundation adoption → descendant ancestry repair`.
+Promotion order remains `#59 exact terminal RED + current review → #60 exact all-gates GREEN + current review → ordinary foundation adoption → descendant ancestry repair`.
 
 ## Compiler and supply-chain prerequisites (#56 / #54)
 
-Draft #56 current exact head is `3b70ba734aae5f43a620b32bda5f0b59fe2b602b`, based on foundation #1 with 11 effective files. It moves release-producing paths to Rust 1.98.1 and contains the canonical compiler-authority oracle, including whitespace/continuation/quoting selector regressions plus fail-closed checks for `RUSTC` and `CARGO_BUILD_RUSTC` supplied through shell assignments or GitHub Actions workflow/job/step `env` mappings. Current runs remain CI `33939316667` queued and Supply Chain `33939316673` pending. Exact-head GREEN and current-range review are still required.
+Draft #56 is exact `3b70ba734aae5f43a620b32bda5f0b59fe2b602b`, based on foundation #1 with 11 effective files. It moves release-producing compiler authority to Rust 1.98.1 and rejects alternate compiler authority through rustup selectors, direct shell `RUSTC` / `CARGO_BUILD_RUSTC`, and workflow/job/step YAML `env` mappings. Exact hosted GREEN and current-range review are still required.
 
-Draft #54 current exact head is `02a739c0a3fa2772a649ef54bbd3563ac533ec5b`, a non-force child of #56 with exactly four derivative-advisory evidence files. It intentionally requires committed `Cargo.lock` to contain no `derivative`. Current runs are CI `33939346427` pending and Supply Chain `33939346408` pending. The intended RUSTSEC-2024-0388 RED is valid only after #56 proves its compiler/bootstrap path GREEN; an audit ignore or mutable supplier pin is not closure.
+Draft #54 is exact `02a739c0a3fa2772a649ef54bbd3563ac533ec5b`, an exact child of #56 with four derivative-advisory evidence files. It intentionally requires committed `Cargo.lock` to contain no `derivative`. The intended RUSTSEC-2024-0388 RED is valid only after #56 independently proves its compiler/bootstrap path GREEN; audit ignores or mutable supplier pins are not closure.
 
 ## Protocol and public supplier prerequisites
 
-Draft #53 is still exact `bf5436a7b482fffd2c22fb847672076d1063a26a`, base `996ee1f3cd59d8843c66fd2e39cab9bd0a76255c`, with five effective files. Its real-wire H2→H1 Cookie fixture is one 583-line test file, but four wrong-base workflow files from #57 remain in the lineage. It cannot receive protocol RED/GREEN, review-complete, merge or release credit until #58's foundation repair is adopted down #52/#53 and restores protocol-test-only scope.
+Draft #53 remains blocked from protocol credit while wrong-base workflow changes remain in its lineage. Its H2→H1 Cookie real-wire fixture must return to protocol-test-only scope before supplier RED/GREEN, review-complete, merge, or release credit.
 
-Protected public `cloudflare/pingora/main` is `09696b51bc59315353d96686355861604d0bb48c` at this snapshot. Latest published release is Pingora `0.8.1` (2026-06-04); the GitHub release object is not marked immutable. Mutable supplier work therefore remains evidence only:
-
-- #901 is open at `b856ddfc6be15f1727601d2d76cb10d2d72f95f0`. It implements RFC 9113 §8.2.3 H2 Cookie concatenation against an older `PeerOptions.h2_to_h1_concat_cookies` shape and still needs current-main adaptation to `HttpUpstreamRequestPolicy`, with default-on normalization and a narrow opt-out that does not disable unrelated hop-by-hop protections.
-- #936 is open at `e40ed4cceb0c0ed8c05cc39eb01a8c73dea5497a`, based on current protected main. It keeps zero-length chunked writes from emitting a premature H1 terminator in both async and cancel-safe paths. It is a separate body-framing prerequisite.
-- #889 remains open for RUSTSEC-2024-0388 (`derivative 2.2.0` unmaintained). No downstream exception or mutable fork is accepted as supplier closure.
-
-The Cookie path remains `#58 foundation repair → #53 protocol-only exact range → real TLS/H2 two-Cookie client evidence → raw H1 single-Cookie RED → current-main supplier adaptation/review/integration → immutable supplier identity → downstream dependency bump → unchanged wire GREEN`.
+Mutable supplier work is evidence only. The required path is `foundation repair → protocol-only H2→H1 Cookie RED → current-main supplier adaptation/review/integration → immutable supplier identity/release → downstream dependency bump → unchanged wire GREEN`. Zero-length chunk framing and `derivative` removal remain separate supplier prerequisites and must not be collapsed into the Cookie repair.
 
 ## Organization Actions owner-plane
 
-Organization-wide Actions queue/admission authority remains in `ContextualWisdomLab/.github`, not in Pingora leaf source. Protected `.github/main` is `8272e4f95c253ab067592460cc9288581bf3a422` at this snapshot, with #1880's repository-side Strix retry removal included. The Pingora writer only reads this authority and reports reproducible specimens to its owner; it does not mutate `.github` source, refs or PR state. Delayed runner assignment is not treated as a source race and does not justify no-op commits or runner-selector churn.
+Organization-wide Actions authority remains in `ContextualWisdomLab/.github`, not in the Pingora leaf. Protected `.github/main` is `8272e4f95c253ab067592460cc9288581bf3a422` at this snapshot. The Pingora lane reads owner evidence and reports reproducible specimens but does not mutate `.github` source/refs/PR state while its dedicated writer is active. Delayed runner assignment is not treated as a source race and does not justify no-op commits or runner-selector churn.
 
-## Legacy Nginx/OpenResty operational migration
+## Legacy Nginx/OpenResty migration
 
-`linux-cluster-ops` has a dedicated writer, so this lane is read-only there. The live owner path remains blocked. PR #251 is open at `3e5598c4d89f233dd2862d6d6bc20c797037232b`; its body still has `관련 이슈: #N/A` and describes `tar -U` as restore hardening. The previously identified safe-extraction requirement therefore remains: extract into an empty root-owned staging directory; validate archive member paths/types/links/ownership; promote only after validation; preserve its valid ReDoS/path-security delta.
-
-Issue #267 remains open with `status: blocked`. It correctly separates certificate lifecycle, edge runtime, and OJS/PHP/FastCGI application ownership. The shared gateway must not absorb ACME/key custody or grow an unbounded product-specific FastCGI subsystem. A released gateway artifact is a prerequisite for the owner repository's structural inventory, shadow/canary and Nginx removal.
-
-## Decision / evidence ledger
-
-| Problem | Constraint and rejected shortcut | Current decision | Exact evidence / next action |
-| --- | --- | --- | --- |
-| Workflow policy landed in Cookie lineage | Preserve both valid deltas; no close/rebase/force-push | Promote policy to foundation and restack descendants | #59 `802d9a...` RED oracle; #60 `b587d0...` workflow-only GREEN; await terminal runs and fresh reviews. |
-| GREEN lane had test-oracle delta | RED must own the acceptance contract | Moved strengthened test blob to #59, ordinary two-parent restack | Fresh #59→#60 compare is exactly two workflow files. |
-| Draft transition left Ready work queued | Draft status must retract already-admitted work without weakening Ready checks | Include `converted_to_draft`, use PR concurrency cancellation, skip direct jobs while Draft, re-admit on Ready | #61 `afe89f22...`: Ready runs cancelled by Draft transition; converted runs skipped; unchanged head re-admitted on Ready. |
-| Rust 1.98.0 compiler risk | Release-producing path must use repaired compiler authority | #56 moves release path to 1.98.1 and forbids alternate compiler authority | #56 `3b70ba...`; current exact runs still outstanding. |
-| `derivative` unmaintained | No audit-ignore manufactured GREEN | Keep intentional lock RED after compiler parent GREEN | #54 `02a739c...`; Cloudflare #889 remains open. |
-| H2 Cookie downgrade | No CWL shim or mutable supplier pin | Real-wire oracle, then current-main supplier repair | #53 blocked by ancestry; Cloudflare #901 remains mutable. |
-| Zero-length chunk framing | Separate from Cookie behavior | Maintain independent supplier prerequisite | Cloudflare #936 remains open on current main. |
-| Nginx operational removal | Dedicated writer; certificate/app boundaries must survive | Release gateway first, then owner-side structural cutover | `linux-cluster-ops` #251/#267 remain open/blocked. |
+`linux-cluster-ops` is dedicated-writer territory. The edge migration remains release-first: safe backup/extraction and structural inventory in the owner repository → explicit certificate/edge/application responsibility split → immutable `pingora-gateway` artifact → parity/shadow/canary → observed rollback → cutover → verified Nginx/OpenResty removal. The gateway must not absorb certificate issuance/key custody or an unbounded product-specific FastCGI subsystem merely because the legacy proxy co-located them.
 
 ## Release and cutover gate
 
-Commercial release credit is forbidden until the exact protected release candidate has version and CHANGELOG alignment, immutable tag/package/image, SBOM, provenance, reproducibility evidence, rollback artifact/runbook, and all then-live governance checks. The active organization ruleset on the default branch additionally requires an approving review, resolution of review threads, organization-required workflows, and blocks deletion/non-fast-forward updates; administrative bypass is not an acceptance path. Consumer migration then requires parity → shadow/canary → observed rollback path → cutover → verified legacy Nginx/OpenResty removal. A source merge, queued check, mutable supplier PR, local p95 result, or documentation-only PR is not equivalent to a shipped edge.
+Commercial release credit is forbidden until the exact protected release candidate has version/CHANGELOG alignment, immutable tag/package/image, SBOM, provenance, reproducibility evidence, rollback artifact/runbook, and all then-live governance checks. Consumer migration additionally requires parity → shadow/canary → observed rollback path → cutover → verified legacy removal. A Draft, queued/skipped check, static review, local p95 result, mutable supplier PR, documentation-only PR, or available administrative bypass is not equivalent to a shipped edge.
 
-At this snapshot protected `pingora-gateway/main` remains `f8b4c99b8e5d3de79af1ff0c00c0c8fd63b52991` and GitHub Releases are empty. Therefore immutable release, canary, cutover and legacy-removal counts remain zero.
+At this snapshot protected `pingora-gateway/main` remains `f8b4c99b8e5d3de79af1ff0c00c0c8fd63b52991`; immutable release, canary, cutover and legacy-removal counts remain zero.
 
-Historical source/standards reasoning and primary references belong in `docs/doctoring/TRACEABILITY.md`; this baseline intentionally keeps only the current decision state and exact execution dependencies so it can remain code-current as heads move.
+Primary standards and research citations belong in `docs/doctoring/TRACEABILITY.md`; this baseline intentionally keeps only code-current decisions, exact execution dependencies, buyer-visible gaps, and next actions.
