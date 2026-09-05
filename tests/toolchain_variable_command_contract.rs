@@ -22,3 +22,12 @@ fn variable_cargo_command_is_rejected_without_command_substitution() {
         );
     }
 }
+
+/// A command-local assignment prefix must not be remembered as parent-shell Cargo authority.
+#[test]
+fn command_local_cargo_assignment_does_not_persist() {
+    assert_no_hidden_compiler_authority(
+        "synthetic shell",
+        "CARGO=cargo printf ok; \"$CARGO\" build --release --locked",
+    );
+}
