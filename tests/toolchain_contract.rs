@@ -168,9 +168,10 @@ fn command_basename(word: &str) -> &str {
     word.rsplit('/').next().unwrap_or(word)
 }
 
-/// Returns an environment assignment name after shell word normalization.
+/// Returns the base environment name for simple or Bash `+=` assignments.
 fn assignment_name(word: &str) -> Option<&str> {
-    word.split_once('=').map(|(name, _)| name)
+    let (name, _) = word.split_once('=')?;
+    Some(name.strip_suffix('+').unwrap_or(name))
 }
 
 /// Returns byte positions for Cargo command tokens after shell-continuation normalization.
@@ -555,6 +556,10 @@ fn alternate_toolchain_guard_rejects_shell_normalized_authority_words() {
         "rust\\up toolchain install 1.98.0",
         "RUST\"C\"=/tmp/rustc-1.98.0 cargo build --release --locked",
         "CARGO_BUILD_RUST\\C=/tmp/rustc-1.98.0 cargo build --release --locked",
+        "RUSTUP_TOOLCHAIN=1.98.0 cargo build --release --locked",
+        "RUSTC+=/tmp/rustc-1.98.0 cargo build --release --locked",
+        "CARGO_BUILD_RUSTC+=/tmp/rustc-1.98.0 cargo build --release --locked",
+        "RUSTUP_TOOLCHAIN+=1.98.0 cargo build --release --locked",
     ] {
         let result = std::panic::catch_unwind(|| {
             assert_no_alternate_toolchain_selector("synthetic compiler path", command);
@@ -575,6 +580,9 @@ fn host_cargo_job_rejects_shell_normalized_authority_after_verification() {
         "rust\"up\" default 1.98.0\n          cargo build --release --locked",
         "RUST\"C\"=/tmp/rustc-1.98.0 cargo build --release --locked",
         "CARGO_BUILD_RUST\\C=/tmp/rustc-1.98.0 cargo build --release --locked",
+        "RUSTC+=/tmp/rustc-1.98.0 cargo build --release --locked",
+        "CARGO_BUILD_RUSTC+=/tmp/rustc-1.98.0 cargo build --release --locked",
+        "RUSTUP_TOOLCHAIN+=1.98.0 cargo build --release --locked",
     ] {
         let workflow = format!(
             "jobs:\n  build:\n    steps:\n      - run: |\n          rustup toolchain install 1.98.1 --profile minimal\n          rustup default 1.98.1\n          rustc --version --verbose | grep -Fx 'release: 1.98.1'\n          {tail}\n"
@@ -598,6 +606,9 @@ fn docker_post_verification_guard_rejects_shell_normalized_authority() {
         "rust\"up\" toolchain install 1.98.0",
         "RUST\"C\"=/tmp/rustc-1.98.0",
         "CARGO_BUILD_RUST\\C=/tmp/rustc-1.98.0",
+        "RUSTC+=/tmp/rustc-1.98.0",
+        "CARGO_BUILD_RUSTC+=/tmp/rustc-1.98.0",
+        "RUSTUP_TOOLCHAIN+=1.98.0",
     ] {
         let result = std::panic::catch_unwind(|| {
             assert_no_toolchain_authority_after_verification("synthetic Dockerfile", command);
