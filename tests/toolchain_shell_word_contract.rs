@@ -8,16 +8,39 @@ fn normalize_shell_continuations(script: &str) -> String {
     script.replace("\\\r\n", "").replace("\\\n", "")
 }
 
-/// Detects Cargo's explicit `+<toolchain>` selector across ordinary shell whitespace.
+/// Conservatively reduces quoting and escaping that can preserve one shell word at execution.
+fn normalize_security_sensitive_shell_word(word: &str) -> String {
+    let mut normalized = String::with_capacity(word.len());
+    let mut characters = word.chars();
+
+    while let Some(character) = characters.next() {
+        match character {
+            '\'' | '"' => {}
+            '\\' => {
+                if let Some(escaped) = characters.next() {
+                    normalized.push(escaped);
+                } else {
+                    normalized.push('\\');
+                }
+            }
+            _ => normalized.push(character),
+        }
+    }
+
+    normalized
+}
+
+/// Detects Cargo's explicit `+<toolchain>` selector across shell whitespace, quoting, and escapes.
 fn contains_explicit_cargo_toolchain_selector(script: &str) -> bool {
     let normalized = normalize_shell_continuations(script);
 
     normalized.lines().any(|line| {
         let tokens: Vec<_> = line.split_whitespace().collect();
         tokens.windows(2).any(|window| {
-            let command = window[0].trim_matches(|character| character == '\'' || character == '"');
-            let command = command.rsplit('/').next().unwrap_or(command);
-            command == "cargo" && window[1].starts_with('+') && window[1].len() > 1
+            let command = normalize_security_sensitive_shell_word(window[0]);
+            let command = command.rsplit('/').next().unwrap_or(&command);
+            let selector = normalize_security_sensitive_shell_word(window[1]);
+            command == "cargo" && selector.starts_with('+') && selector.len() > 1
         })
     })
 }
@@ -76,4 +99,8 @@ fn quoted_cargo_toolchain_selectors_are_detected() {
             "selector form must be detected: {command}"
         );
     }
+
+    assert!(!contains_explicit_cargo_toolchain_selector(
+        "cargo build --release --locked"
+    ));
 }
