@@ -173,6 +173,8 @@ fn command_substitution_guard_rejects_alternate_compiler_authority() {
         "echo $(rustup run 1.98.0 cargo build --release --locked)",
         "echo `rustup default 1.98.0`",
         "echo `cargo +1.98.0 build --release --locked`",
+        "printf '%s\\n' \"prefix '`rustup default 1.98.0`' suffix\"",
+        "printf '%s\\n' \"prefix '`cargo +1.98.0 build --release --locked`' suffix\"",
         "value=$(case x in x) RUSTUP_TOOLCHAIN=1.98.0 cargo build --release --locked;; esac)",
         "version=$(git rev-parse HEAD); CARGO=cargo; RUSTUP_TOOLCHAIN=1.98.0 \"$CARGO\" build --release --locked",
         "version=$(git rev-parse HEAD); CARGO=cargo; RUSTUP_TOOLCHAIN=1.98.0 \"${CARGO:?}\" build --release --locked",
