@@ -189,7 +189,7 @@ fn parameter_command_name(word: &str) -> Option<&str> {
 /// Applies one persistent shell assignment to the recorded Cargo command aliases.
 fn apply_persistent_cargo_assignment(aliases: &mut Vec<String>, name: &str, value: &str) {
     aliases.retain(|alias| alias != name);
-    if command_basename(value) == "cargo" {
+    if command_basename(value) == "cargo" || contains_active_command_substitution(value) {
         aliases.push(name.to_owned());
     }
 }
