@@ -1,7 +1,11 @@
-/// Finds executable POSIX-style command substitutions while respecting shell quoting and escapes.
-fn command_substitutions(shell: &str) -> Vec<String> {
+/// Reports whether shell text contains an executable POSIX-style `$(` introducer.
+///
+/// Matching the closing parenthesis requires full shell grammar (`case` patterns, here-documents,
+/// nested command substitutions, and subshells all affect it). This guard deliberately avoids a
+/// partial matcher: once an active `$(` exists, authority analysis is scoped to the already-bounded
+/// workflow step or Docker `RUN` command supplied by the caller.
+fn contains_active_command_substitution(shell: &str) -> bool {
     let bytes = shell.as_bytes();
-    let mut substitutions = Vec::new();
     let mut index = 0;
     let mut single_quoted = false;
     let mut double_quoted = false;
@@ -30,72 +34,12 @@ fn command_substitutions(shell: &str) -> Vec<String> {
             continue;
         }
         if !single_quoted && byte == b'$' && bytes.get(index + 1) == Some(&b'(') {
-            let (end, body) = command_substitution_body(shell, index + 2);
-            substitutions.push(body.to_owned());
-            index = end + 1;
-            continue;
+            return true;
         }
         index += 1;
     }
 
-    substitutions
-}
-
-/// Returns the matching `)` and body for one active `$(` command substitution.
-fn command_substitution_body(shell: &str, body_start: usize) -> (usize, &str) {
-    let bytes = shell.as_bytes();
-    let mut depth = 1usize;
-    let mut index = body_start;
-    let mut single_quoted = false;
-    let mut double_quoted = false;
-    let mut escaped = false;
-
-    while index < bytes.len() {
-        let byte = bytes[index];
-        if escaped {
-            escaped = false;
-            index += 1;
-            continue;
-        }
-        if byte == b'\\' && !single_quoted {
-            escaped = true;
-            index += 1;
-            continue;
-        }
-        if byte == b'\'' && !double_quoted {
-            single_quoted = !single_quoted;
-            index += 1;
-            continue;
-        }
-        if byte == b'"' && !single_quoted {
-            double_quoted = !double_quoted;
-            index += 1;
-            continue;
-        }
-        if single_quoted {
-            index += 1;
-            continue;
-        }
-        if byte == b'$' && bytes.get(index + 1) == Some(&b'(') {
-            let (nested_end, _) = command_substitution_body(shell, index + 2);
-            index = nested_end + 1;
-            continue;
-        }
-        if !double_quoted && byte == b'(' {
-            depth += 1;
-            index += 1;
-            continue;
-        }
-        if !double_quoted && byte == b')' {
-            depth -= 1;
-            if depth == 0 {
-                return (index, &shell[body_start..index]);
-            }
-        }
-        index += 1;
-    }
-
-    panic!("active command substitution must have a matching closing parenthesis");
+    false
 }
 
 /// Conservatively normalizes shell punctuation, quoting, and escapes into security-relevant words.
@@ -115,7 +59,7 @@ fn security_tokens(shell: &str) -> Vec<String> {
         }
         match character {
             '\'' | '"' => {}
-            '(' | ')' | '{' | '}' | ';' | '|' | '&' | '\n' | '\r' | '\t' => {
+            '$' | '(' | ')' | '{' | '}' | ';' | '|' | '&' | '\n' | '\r' | '\t' => {
                 normalized.push(' ');
             }
             _ => normalized.push(character),
@@ -139,9 +83,13 @@ fn assignment_name(word: &str) -> Option<&str> {
     Some(name.strip_suffix('+').unwrap_or(name))
 }
 
-/// Detects compiler authority that can execute inside a command-substitution subshell.
-fn substitution_changes_compiler_authority(body: &str) -> bool {
-    let tokens = security_tokens(body);
+/// Detects compiler authority within one already-bounded executable shell step or Docker `RUN`.
+fn shell_changes_compiler_authority(shell: &str) -> bool {
+    if !contains_active_command_substitution(shell) {
+        return false;
+    }
+
+    let tokens = security_tokens(shell);
     let contains_cargo = tokens
         .iter()
         .any(|token| command_basename(token) == "cargo");
@@ -176,12 +124,10 @@ fn substitution_changes_compiler_authority(body: &str) -> bool {
     })
 }
 
-/// Fails closed when executable `$(...)` text can select an alternate compiler for a release path.
+/// Fails closed when an active `$()` shares a bounded shell step with alternate compiler authority.
 pub fn assert_no_hidden_compiler_authority(context: &str, shell: &str) {
-    for substitution in command_substitutions(shell) {
-        assert!(
-            !substitution_changes_compiler_authority(&substitution),
-            "{context} must not hide Cargo compiler authority inside command substitution: {substitution}"
-        );
-    }
+    assert!(
+        !shell_changes_compiler_authority(shell),
+        "{context} must not combine active command substitution with alternate Cargo compiler authority"
+    );
 }
