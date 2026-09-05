@@ -52,6 +52,33 @@ fn workflow_jobs(workflow: &str) -> Vec<(String, String)> {
     jobs
 }
 
+/// Returns byte positions for Cargo command tokens after normalizing shell line continuations.
+fn cargo_command_positions(body: &str) -> (String, Vec<usize>) {
+    let normalized = body.replace("\\\n", " ");
+    let mut positions = Vec::new();
+    let mut body_offset = 0;
+
+    for line in normalized.split_inclusive('\n') {
+        let content = line.strip_suffix('\n').unwrap_or(line);
+        let mut search_start = 0;
+        for token in content.split_whitespace() {
+            let relative = content[search_start..]
+                .find(token)
+                .expect("split token must exist in its source line");
+            let token_start = search_start + relative;
+            let command = token.trim_matches(|character| character == '\'' || character == '"');
+            let command = command.rsplit('/').next().unwrap_or(command);
+            if command == "cargo" {
+                positions.push(body_offset + token_start);
+            }
+            search_start = token_start + token.len();
+        }
+        body_offset += line.len();
+    }
+
+    (normalized, positions)
+}
+
 /// Detects Cargo's explicit `+<toolchain>` selector across shell whitespace and line continuations.
 fn contains_explicit_cargo_toolchain_selector(body: &str) -> bool {
     let normalized = body.replace("\\\n", " ");
@@ -108,36 +135,35 @@ fn assert_no_alternate_toolchain_selector(context: &str, body: &str) {
 /// Requires every workflow job that executes host `cargo` to bind that job to Rust 1.98.1.
 fn assert_host_cargo_jobs_use_fixed_compiler(path: &str, workflow: &str) {
     for (job_name, job) in workflow_jobs(workflow) {
-        let cargo_positions: Vec<_> = job
-            .match_indices("cargo ")
-            .map(|(index, _)| index)
-            .collect();
+        let (normalized_job, cargo_positions) = cargo_command_positions(&job);
         if cargo_positions.is_empty() {
             continue;
         }
 
         let context = format!("{path} job {job_name}");
         assert_eq!(
-            job.matches(FIXED_INSTALL).count(),
+            normalized_job.matches(FIXED_INSTALL).count(),
             1,
             "{context} must install Rust 1.98.1 exactly once"
         );
         assert_eq!(
-            job.matches(FIXED_SELECT).count(),
+            normalized_job.matches(FIXED_SELECT).count(),
             1,
             "{context} must select Rust 1.98.1 exactly once"
         );
         assert_eq!(
-            job.matches(FIXED_VERIFY).count(),
+            normalized_job.matches(FIXED_VERIFY).count(),
             1,
             "{context} must verify Rust 1.98.1 exactly once"
         );
 
-        let install_position = job
+        let install_position = normalized_job
             .find(FIXED_INSTALL)
             .expect("installation count was checked");
-        let select_position = job.find(FIXED_SELECT).expect("selection count was checked");
-        let verify_position = job
+        let select_position = normalized_job
+            .find(FIXED_SELECT)
+            .expect("selection count was checked");
+        let verify_position = normalized_job
             .find(FIXED_VERIFY)
             .expect("verification count was checked");
         assert!(
@@ -151,8 +177,8 @@ fn assert_host_cargo_jobs_use_fixed_compiler(path: &str, workflow: &str) {
             );
         }
 
-        assert_no_alternate_toolchain_selector(&context, &job);
-        let after_verify = &job[verify_position + FIXED_VERIFY.len()..];
+        assert_no_alternate_toolchain_selector(&context, &normalized_job);
+        let after_verify = &normalized_job[verify_position + FIXED_VERIFY.len()..];
         assert!(
             !contains_explicit_cargo_toolchain_selector(after_verify),
             "{context} must not select a cargo toolchain after compiler verification"
@@ -269,4 +295,18 @@ fn cargo_toolchain_selector_detection_normalizes_shell_spacing() {
     assert!(!contains_explicit_cargo_toolchain_selector(
         "cargo build --release --locked"
     ));
+}
+
+/// Proves host-Cargo job discovery cannot ignore valid shell whitespace around the command.
+#[test]
+fn host_cargo_job_detection_rejects_tab_separated_command_without_fixed_compiler() {
+    let workflow = "jobs:\n  build:\n    steps:\n      - run: cargo\tbuild --release --locked\n";
+    let result = std::panic::catch_unwind(|| {
+        assert_host_cargo_jobs_use_fixed_compiler("synthetic.yml", workflow);
+    });
+
+    assert!(
+        result.is_err(),
+        "tab-separated cargo command must still require the fixed compiler contract"
+    );
 }
