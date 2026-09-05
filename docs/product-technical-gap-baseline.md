@@ -36,7 +36,7 @@ The oracle was strengthened for rerun isolation, Ready→Draft retraction, direc
 
 Current `8893ab433a06bf25b63385689118d60861fe6a78` makes that semantic companion complete for GitHub Actions' supported `on` value shapes (string, sequence, mapping) and adds regressions for `on: pull_request` and `on: [push, pull_request]`. This is defense-in-depth, not a newly discovered repository-wide bypass: the canonical lexical contract independently requires exact block-style top-level `on:` and already rejects inline/alternate event syntax. The real RED remains the foundation workflows' missing canonical Draft admission guards plus concurrency/push-scope invariants.
 
-Current exact runs are CI `33946975892` and Supply Chain `33946975863`. CI jobs `101254743610`, `101254743748`, `101254743868` and Supply Chain `101254743841` are all materialized on `ubuntu-24.04` with `steps=[]`, `runner_id=0` at both fresh end-of-run sweeps. Current exact terminal RED and fresh exact-range review remain required.
+Current exact runs are CI `33946975892` and Supply Chain `33946975863`. CI remains pending and Supply Chain queued at the latest read; current exact terminal RED and fresh exact-range review remain required.
 
 ### GREEN implementation — #60
 
@@ -46,7 +46,7 @@ The implementation restricts duplicate push evidence to protected `main`; coales
 
 Current `f1b09eb0a669a6f9f439daf250b1c7d0d95b6c1a` has old #60 `275aa356b59968337c60a964c6759fb3eb4378ca` as first parent and current #59 as second parent; its tree starts from the current RED parent and reapplies only the two intended workflow blobs. The branch ref advanced with `force=false`.
 
-Current exact runs are CI `33947016327` and Supply Chain `33947016368`. CI jobs `101254852041`, `101254852089`, `101254852178` and Supply Chain `101254851630` remain materialized with `steps=[]`, `runner_id=0` at the latest sweep. Current all-gates hosted GREEN and fresh exact-range review remain required.
+Current exact runs are CI `33947016327` and Supply Chain `33947016368`; current all-gates hosted GREEN and fresh exact-range review remain required.
 
 ### Documentation projection — #61
 
@@ -56,9 +56,9 @@ Promotion order remains `#59 exact terminal RED + current review → #60 exact a
 
 ## Compiler and supply-chain prerequisites (#56 / #54)
 
-Draft #56 remains exact `3b70ba734aae5f43a620b32bda5f0b59fe2b602b`, based on foundation #1 with 11 effective files. It moves release-producing compiler authority to Rust 1.98.1 and rejects alternate compiler authority through rustup selectors, direct shell `RUSTC` / `CARGO_BUILD_RUSTC`, and semantic workflow/job/step YAML `env` mappings. Exact hosted GREEN and current-range review remain required.
+Draft #56 is now exact `da8a2c288c7d8664de4097e27441b0dda3c8ed06`, based on foundation #1 with 11 effective files. Exact predecessor `3b70ba734aae5f43a620b32bda5f0b59fe2b602b` acquired a hosted `ubuntu-24.04` runner: Rust 1.98.1 install/select/verify succeeded, `load-contract` and `oci-runtime` were GREEN, and `test` failed deterministically at `cargo fmt --all -- --check` before compile/test, Clippy, rustdoc, coverage and dependency-lock evidence. The formatter requested only two call-layout changes in `tests/toolchain_contract.rs`; current `da8a2c28...` applies exactly those changes without altering compiler authority, assertions, workflow behavior, or thresholds. Current exact CI `33949919187` and Supply Chain `33949919177` are queued, and fresh exact-range review has been requested; current-head hosted GREEN is not yet credited.
 
-Draft #54 remains exact `02a739c0a3fa2772a649ef54bbd3563ac533ec5b`, an exact child of #56 with four derivative-advisory evidence files. It intentionally requires committed `Cargo.lock` to contain no `derivative`. The RUSTSEC-2024-0388 RED is valid only after #56 independently proves its compiler/bootstrap path GREEN; audit ignores or mutable supplier pins are not closure.
+Draft #54 is now exact `573cad1ff9880ed6422329e204eeda6f3ef0c3f3`, an exact child of #56 `da8a2c28...` with four effective derivative-advisory evidence files. The restack is an ordinary two-parent commit: old child `02a739c0...` is first parent, current #56 is second parent, and the tree is current #56 plus only `CHANGELOG.md`, `TEST_STRATEGY.md`, `docs/doctoring/TRACEABILITY.md`, and `tests/supply_chain_policy.rs`; the branch advanced with `force=false`. It intentionally requires committed `Cargo.lock` to contain no `derivative`. The RUSTSEC-2024-0388 RED is valid only after #56 independently proves its compiler/bootstrap path GREEN; audit ignores or mutable supplier pins are not closure. Current exact CI `33949966019` and Supply Chain `33949966039` are queued and fresh child-range review has been requested.
 
 ## Protocol and public supplier prerequisites
 
@@ -68,7 +68,7 @@ Protected public `cloudflare/pingora/main` remains `09696b51bc59315353d966863558
 
 ## Organization Actions owner-plane
 
-Organization-wide Actions authority remains in `ContextualWisdomLab/.github`. Protected `.github/main` is `1e84a69631a1bba959170e1734951f7d3574bdcc` after #1895 restored user-directed model-timeout policy by reverting 900-second OpenCode/Strix limits. Canonical queue-health PR `.github#1150@bbacf9e81ae954eb8365fbfe1856d8698a768a4a` is stale: against current protected main it is diverged 67 ahead / 180 behind with old merge base `8c085835fbf77de2321b72fa6b8dd946227e523e`. Pingora reports exact specimens to #712 but does not mutate `.github` source/refs/PR state while its dedicated writer is active.
+Organization-wide Actions authority remains in `ContextualWisdomLab/.github`. Protected `.github/main` is now `6d7fbebec8aec31d88a30a36e71ca5b3925d241d` after #1896 made startup-failure recovery tests `GITHUB_ACTIONS`-agnostic and reported 2,833 passed / 1 skipped with 100% tracked-module coverage under the CI-shaped environment. Canonical queue-health PR #1150 has also been repaired by its dedicated owner: current head `e6622a428060194b558929ad651d5b4ae3a9840f` is based on current protected main, and fresh compare is **69 ahead / 0 behind** with `6d7fbebe...` as exact merge base. Its PR body still contains older historical wording, but its actual refs/ancestry are no longer the previously observed 180-behind stale state. Pingora reports exact specimens to #712 but does not mutate `.github` source/refs/PR state while its dedicated writer is active.
 
 ## Legacy migration and release gate
 
