@@ -88,6 +88,28 @@ fn normalize_shell_continuations(script: &str) -> String {
     script.replace("\\\r\n", "").replace("\\\n", "")
 }
 
+/// Conservatively reduces shell quoting/escaping before comparing a security-sensitive word.
+fn normalize_security_sensitive_shell_word(word: &str) -> String {
+    let mut normalized = String::with_capacity(word.len());
+    let mut characters = word.chars();
+
+    while let Some(character) = characters.next() {
+        match character {
+            '\'' | '"' => {}
+            '\\' => {
+                if let Some(escaped) = characters.next() {
+                    normalized.push(escaped);
+                } else {
+                    normalized.push('\\');
+                }
+            }
+            _ => normalized.push(character),
+        }
+    }
+
+    normalized
+}
+
 /// Returns byte positions for Cargo command tokens after shell-continuation normalization.
 fn cargo_command_positions(script: &str) -> (String, Vec<usize>) {
     let normalized = normalize_shell_continuations(script);
@@ -102,8 +124,8 @@ fn cargo_command_positions(script: &str) -> (String, Vec<usize>) {
                 .find(token)
                 .expect("split token must exist in its source line");
             let token_start = search_start + relative;
-            let command = token.trim_matches(|character| character == '\'' || character == '"');
-            let command = command.rsplit('/').next().unwrap_or(command);
+            let command = normalize_security_sensitive_shell_word(token);
+            let command = command.rsplit('/').next().unwrap_or(&command);
             if command == "cargo" {
                 positions.push(body_offset + token_start);
             }
@@ -115,16 +137,17 @@ fn cargo_command_positions(script: &str) -> (String, Vec<usize>) {
     (normalized, positions)
 }
 
-/// Detects Cargo's explicit `+<toolchain>` selector across shell whitespace and continuations.
+/// Detects Cargo's explicit `+<toolchain>` selector across shell whitespace, continuations, and word quoting.
 fn contains_explicit_cargo_toolchain_selector(script: &str) -> bool {
     let normalized = normalize_shell_continuations(script);
 
     normalized.lines().any(|line| {
         let tokens: Vec<_> = line.split_whitespace().collect();
         tokens.windows(2).any(|window| {
-            let command = window[0].trim_matches(|character| character == '\'' || character == '"');
-            let command = command.rsplit('/').next().unwrap_or(command);
-            command == "cargo" && window[1].starts_with('+') && window[1].len() > 1
+            let command = normalize_security_sensitive_shell_word(window[0]);
+            let command = command.rsplit('/').next().unwrap_or(&command);
+            let selector = normalize_security_sensitive_shell_word(window[1]);
+            command == "cargo" && selector.starts_with('+') && selector.len() > 1
         })
     })
 }
@@ -324,7 +347,7 @@ fn crate_requires_fixed_rust_point_release() {
     );
 }
 
-/// Keeps Cargo's explicit toolchain shorthand fail-closed under valid shell whitespace variants.
+/// Keeps Cargo's explicit toolchain shorthand fail-closed under valid shell word variants.
 #[test]
 fn cargo_toolchain_selector_detection_normalizes_shell_spacing() {
     for command in [
@@ -339,6 +362,8 @@ fn cargo_toolchain_selector_detection_normalizes_shell_spacing() {
         "cargo \\+1.98.0 build",
         "cargo \"+\"1.98.0 build",
         "\"/home/runner/.cargo/bin/cargo\" '+1.98.0' build",
+        "car\"go\" '+1.98.0' build",
+        "car\\go +1.98.0 build",
     ] {
         assert!(contains_explicit_cargo_toolchain_selector(command));
     }
