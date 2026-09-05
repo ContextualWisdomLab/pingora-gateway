@@ -12,6 +12,7 @@ fn variable_cargo_command_is_rejected_without_command_substitution() {
         "CARGO=cargo; $CARGO build --release --locked",
         "CARGO=/home/runner/.cargo/bin/cargo; \"$CARGO\" +1.98.0 build --release --locked",
         "export CARGO=cargo; ${CARGO:?} build --release --locked",
+        "readonly CARGO=/opt/rust-1.98.0/bin/cargo; \"$CARGO\" build --release --locked",
     ] {
         let result = std::panic::catch_unwind(|| {
             assert_no_hidden_compiler_authority("synthetic shell", shell);
