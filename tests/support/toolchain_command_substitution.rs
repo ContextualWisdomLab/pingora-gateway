@@ -131,7 +131,11 @@ fn unquoted_command_substitution_assignment_names(shell: &str) -> Vec<String> {
             && bytes.get(index + 1) == Some(&b'$')
             && bytes.get(index + 2) == Some(&b'(')
         {
-            let mut name_start = index;
+            let mut name_end = index;
+            if name_end > 0 && bytes[name_end - 1] == b'+' {
+                name_end -= 1;
+            }
+            let mut name_start = name_end;
             while name_start > 0
                 && (bytes[name_start - 1].is_ascii_alphanumeric() || bytes[name_start - 1] == b'_')
             {
@@ -141,7 +145,7 @@ fn unquoted_command_substitution_assignment_names(shell: &str) -> Vec<String> {
             let has_boundary = name_start == 0
                 || bytes[name_start - 1].is_ascii_whitespace()
                 || matches!(bytes[name_start - 1], b';' | b'|' | b'&' | b'(' | b')');
-            let name = &shell[name_start..index];
+            let name = &shell[name_start..name_end];
             let valid_name = !name.is_empty()
                 && name
                     .as_bytes()
