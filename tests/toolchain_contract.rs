@@ -270,3 +270,17 @@ fn cargo_toolchain_selector_detection_normalizes_shell_spacing() {
         "cargo build --release --locked"
     ));
 }
+
+/// Proves host-Cargo job discovery cannot ignore valid shell whitespace around the command.
+#[test]
+fn host_cargo_job_detection_rejects_tab_separated_command_without_fixed_compiler() {
+    let workflow = "jobs:\n  build:\n    steps:\n      - run: cargo\tbuild --release --locked\n";
+    let result = std::panic::catch_unwind(|| {
+        assert_host_cargo_jobs_use_fixed_compiler("synthetic.yml", workflow);
+    });
+
+    assert!(
+        result.is_err(),
+        "tab-separated cargo command must still require the fixed compiler contract"
+    );
+}
