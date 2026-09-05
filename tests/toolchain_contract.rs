@@ -1,0 +1,701 @@
+//! Fail-closed acceptance for the compiler used by release-producing paths.
+
+use serde_yaml::Value;
+use std::{fs, path::Path};
+
+const FIXED_INSTALL: &str = "rustup toolchain install 1.98.1 --profile minimal";
+const FIXED_SELECT: &str = "rustup default 1.98.1";
+const FIXED_VERIFY: &str = "rustc --version --verbose | grep -Fx 'release: 1.98.1'";
+
+/// Reads one repository file required by the toolchain contract.
+fn read_repository_file(path: &str) -> String {
+    fs::read_to_string(path)
+        .unwrap_or_else(|error| panic!("required repository evidence {path} is missing: {error}"))
+}
+
+/// Splits the workflow's top-level `jobs` mapping without accepting setup from sibling jobs.
+fn workflow_jobs(workflow: &str) -> Vec<(String, String)> {
+    let mut jobs = Vec::new();
+    let mut current_name = None;
+    let mut current_body = String::new();
+    let mut in_jobs = false;
+
+    for line in workflow.lines() {
+        if line == "jobs:" {
+            in_jobs = true;
+            continue;
+        }
+        if !in_jobs {
+            continue;
+        }
+
+        let indent = line
+            .len()
+            .saturating_sub(line.trim_start_matches(' ').len());
+        let trimmed = line.trim();
+        if indent == 2 && trimmed.ends_with(':') && !trimmed.starts_with('-') {
+            if let Some(name) = current_name.take() {
+                jobs.push((name, std::mem::take(&mut current_body)));
+            }
+            current_name = Some(trimmed.trim_end_matches(':').to_owned());
+            continue;
+        }
+
+        if current_name.is_some() {
+            current_body.push_str(line);
+            current_body.push('\n');
+        }
+    }
+
+    if let Some(name) = current_name {
+        jobs.push((name, current_body));
+    }
+    jobs
+}
+
+/// Extracts shell scripts from each semantic YAML job so block indentation is not treated as shell text.
+fn workflow_job_run_scripts(workflow: &str) -> Vec<(String, String)> {
+    let document: Value = serde_yaml::from_str(workflow).unwrap_or_else(|error| {
+        panic!("workflow YAML must parse before toolchain validation: {error}")
+    });
+    let jobs = document
+        .get("jobs")
+        .and_then(Value::as_mapping)
+        .expect("workflow must contain a jobs mapping");
+
+    jobs.iter()
+        .map(|(name, job)| {
+            let name = name
+                .as_str()
+                .expect("workflow job names must be strings")
+                .to_owned();
+            let mut scripts = String::new();
+            if let Some(steps) = job.get("steps").and_then(Value::as_sequence) {
+                for step in steps {
+                    if let Some(run) = step.get("run").and_then(Value::as_str) {
+                        scripts.push_str(run);
+                        scripts.push('\n');
+                    }
+                }
+            }
+            (name, scripts)
+        })
+        .collect()
+}
+
+/// Rejects compiler selectors provided through GitHub Actions YAML environment mappings.
+fn assert_environment_mapping_has_no_compiler_authority(
+    context: &str,
+    scope: &str,
+    environment: Option<&Value>,
+) {
+    let Some(environment) = environment.and_then(Value::as_mapping) else {
+        return;
+    };
+
+    for forbidden in ["RUSTC", "CARGO_BUILD_RUSTC", "RUSTUP_TOOLCHAIN"] {
+        assert!(
+            !environment
+                .keys()
+                .any(|key| key.as_str() == Some(forbidden)),
+            "{context} must not set Cargo compiler authority {forbidden} in {scope} env"
+        );
+    }
+}
+
+/// Checks workflow-, job-, and step-level YAML env scopes for Cargo compiler overrides.
+fn assert_no_yaml_compiler_environment(context: &str, workflow: &str, job_name: &str) {
+    let document: Value = serde_yaml::from_str(workflow).unwrap_or_else(|error| {
+        panic!("workflow YAML must parse before compiler environment validation: {error}")
+    });
+    assert_environment_mapping_has_no_compiler_authority(context, "workflow", document.get("env"));
+
+    let job = document
+        .get("jobs")
+        .and_then(Value::as_mapping)
+        .and_then(|jobs| {
+            jobs.iter()
+                .find(|(name, _)| name.as_str() == Some(job_name))
+                .map(|(_, job)| job)
+        })
+        .unwrap_or_else(|| panic!("{context} must exist in the semantic workflow jobs mapping"));
+    assert_environment_mapping_has_no_compiler_authority(context, "job", job.get("env"));
+
+    if let Some(steps) = job.get("steps").and_then(Value::as_sequence) {
+        for (index, step) in steps.iter().enumerate() {
+            let scope = format!("step {index}");
+            assert_environment_mapping_has_no_compiler_authority(context, &scope, step.get("env"));
+        }
+    }
+}
+
+/// Mirrors the shell's removal of an unquoted backslash-newline pair before tokenization.
+fn normalize_shell_continuations(script: &str) -> String {
+    script.replace("\\\r\n", "").replace("\\\n", "")
+}
+
+/// Conservatively reduces shell quoting/escaping before comparing a security-sensitive word.
+fn normalize_security_sensitive_shell_word(word: &str) -> String {
+    let mut normalized = String::with_capacity(word.len());
+    let mut characters = word.chars();
+
+    while let Some(character) = characters.next() {
+        match character {
+            '\'' | '"' => {}
+            '\\' => {
+                if let Some(escaped) = characters.next() {
+                    normalized.push(escaped);
+                } else {
+                    normalized.push('\\');
+                }
+            }
+            _ => normalized.push(character),
+        }
+    }
+
+    normalized
+}
+
+/// Normalizes shell words on one logical line before authority comparisons.
+fn normalized_shell_line_tokens(line: &str) -> Vec<String> {
+    line.split_whitespace()
+        .map(normalize_security_sensitive_shell_word)
+        .collect()
+}
+
+/// Returns the executable basename after conservative quote/escape normalization.
+fn command_basename(word: &str) -> &str {
+    word.rsplit('/').next().unwrap_or(word)
+}
+
+/// Returns the base environment name for simple or Bash `+=` assignments.
+fn assignment_name(word: &str) -> Option<&str> {
+    let (name, _) = word.split_once('=')?;
+    Some(name.strip_suffix('+').unwrap_or(name))
+}
+
+/// Returns byte positions for Cargo command tokens after shell-continuation normalization.
+fn cargo_command_positions(script: &str) -> (String, Vec<usize>) {
+    let normalized = normalize_shell_continuations(script);
+    let mut positions = Vec::new();
+    let mut body_offset = 0;
+
+    for line in normalized.split_inclusive('\n') {
+        let content = line.strip_suffix('\n').unwrap_or(line);
+        let mut search_start = 0;
+        for token in content.split_whitespace() {
+            let relative = content[search_start..]
+                .find(token)
+                .expect("split token must exist in its source line");
+            let token_start = search_start + relative;
+            let command = normalize_security_sensitive_shell_word(token);
+            if command_basename(&command) == "cargo" {
+                positions.push(body_offset + token_start);
+            }
+            search_start = token_start + token.len();
+        }
+        body_offset += line.len();
+    }
+
+    (normalized, positions)
+}
+
+/// Extracts executable Dockerfile shell-form `RUN` bodies and excludes Dockerfile comments/metadata.
+fn docker_run_scripts(dockerfile: &str) -> String {
+    let normalized = normalize_shell_continuations(dockerfile);
+    let mut scripts = String::new();
+
+    for line in normalized.lines() {
+        let trimmed = line.trim_start();
+        let Some(boundary) = trimmed.find(|character: char| character.is_ascii_whitespace()) else {
+            continue;
+        };
+        let instruction = &trimmed[..boundary];
+        if !instruction.eq_ignore_ascii_case("RUN") {
+            continue;
+        }
+
+        scripts.push_str(trimmed[boundary..].trim_start());
+        scripts.push('\n');
+    }
+
+    scripts
+}
+
+/// Finds executable `cargo build` commands after shell word normalization.
+fn cargo_build_command_positions(script: &str) -> Vec<usize> {
+    let mut positions = Vec::new();
+    let mut body_offset = 0;
+
+    for line in script.split_inclusive('\n') {
+        let content = line.strip_suffix('\n').unwrap_or(line);
+        let raw_tokens: Vec<_> = content.split_whitespace().collect();
+        let normalized_tokens: Vec<_> = raw_tokens
+            .iter()
+            .map(|token| normalize_security_sensitive_shell_word(token))
+            .collect();
+        let mut search_start = 0;
+
+        for (index, token) in raw_tokens.iter().enumerate() {
+            let relative = content[search_start..]
+                .find(token)
+                .expect("split token must exist in its source line");
+            let token_start = search_start + relative;
+            if command_basename(&normalized_tokens[index]) == "cargo"
+                && normalized_tokens.get(index + 1).map(String::as_str) == Some("build")
+            {
+                positions.push(body_offset + token_start);
+            }
+            search_start = token_start + token.len();
+        }
+
+        body_offset += line.len();
+    }
+
+    positions
+}
+
+/// Detects Cargo's explicit `+<toolchain>` selector across shell whitespace, continuations, and word quoting.
+fn contains_explicit_cargo_toolchain_selector(script: &str) -> bool {
+    let normalized = normalize_shell_continuations(script);
+
+    normalized.lines().any(|line| {
+        let tokens = normalized_shell_line_tokens(line);
+        tokens.windows(2).any(|window| {
+            command_basename(&window[0]) == "cargo"
+                && window[1].starts_with('+')
+                && window[1].len() > 1
+        })
+    })
+}
+
+/// Rejects normalized compiler environment assignments in a shell authority span.
+fn assert_no_compiler_environment_assignment(context: &str, tokens: &[String]) {
+    for token in tokens {
+        if let Some(name) = assignment_name(token) {
+            assert!(
+                !matches!(name, "RUSTC" | "CARGO_BUILD_RUSTC" | "RUSTUP_TOOLCHAIN"),
+                "{context} must not introduce compiler environment authority {name}"
+            );
+        }
+    }
+}
+
+/// Rejects secondary toolchain authorities that could bypass the verified default compiler.
+fn assert_no_alternate_toolchain_selector(context: &str, body: &str) {
+    assert!(
+        !contains_explicit_cargo_toolchain_selector(body),
+        "{context} must not select a compiler with cargo +<toolchain>"
+    );
+
+    let normalized = normalize_shell_continuations(body);
+    for line in normalized.lines() {
+        let tokens = normalized_shell_line_tokens(line);
+        assert_no_compiler_environment_assignment(context, &tokens);
+
+        for (index, token) in tokens.iter().enumerate() {
+            if command_basename(token) != "rustup" {
+                continue;
+            }
+
+            match tokens.get(index + 1).map(String::as_str) {
+                Some("default") => {
+                    assert_eq!(
+                        tokens.get(index + 2).map(String::as_str),
+                        Some("1.98.1"),
+                        "{context} must not select a compiler other than Rust 1.98.1"
+                    );
+                }
+                Some("toolchain") if tokens.get(index + 2).map(String::as_str) == Some("install") => {
+                    assert_eq!(
+                        tokens.get(index + 3).map(String::as_str),
+                        Some("1.98.1"),
+                        "{context} must not install an alternate release compiler"
+                    );
+                }
+                Some("override" | "run") => {
+                    panic!("{context} must not introduce secondary rustup authority");
+                }
+                _ => {}
+            }
+        }
+    }
+
+    for forbidden in [
+        "dtolnay/rust-toolchain",
+        "actions-rust-lang/setup-rust-toolchain",
+    ] {
+        assert!(
+            !body.contains(forbidden),
+            "{context} must not introduce secondary toolchain selector {forbidden}"
+        );
+    }
+}
+
+/// Rejects every compiler authority change after the fixed compiler was verified.
+fn assert_no_toolchain_authority_after_verification(context: &str, body: &str) {
+    assert!(
+        !contains_explicit_cargo_toolchain_selector(body),
+        "{context} must not select a cargo toolchain after compiler verification"
+    );
+
+    let normalized = normalize_shell_continuations(body);
+    for line in normalized.lines() {
+        let tokens = normalized_shell_line_tokens(line);
+        assert_no_compiler_environment_assignment(context, &tokens);
+
+        for (index, token) in tokens.iter().enumerate() {
+            if command_basename(token) != "rustup" {
+                continue;
+            }
+
+            let subcommand = tokens.get(index + 1).map(String::as_str);
+            let changes_authority = matches!(subcommand, Some("default" | "override" | "run"))
+                || (subcommand == Some("toolchain")
+                    && tokens.get(index + 2).map(String::as_str) == Some("install"));
+            assert!(
+                !changes_authority,
+                "{context} must not change rustup authority after compiler verification"
+            );
+        }
+    }
+
+    for forbidden in [
+        "dtolnay/rust-toolchain",
+        "actions-rust-lang/setup-rust-toolchain",
+    ] {
+        assert!(
+            !body.contains(forbidden),
+            "{context} must not change toolchain authority after compiler verification: {forbidden}"
+        );
+    }
+}
+
+/// Requires every workflow job that executes host `cargo` to bind that job to Rust 1.98.1.
+fn assert_host_cargo_jobs_use_fixed_compiler(path: &str, workflow: &str) {
+    let raw_jobs = workflow_jobs(workflow);
+
+    for (job_name, scripts) in workflow_job_run_scripts(workflow) {
+        let (normalized_scripts, cargo_positions) = cargo_command_positions(&scripts);
+        if cargo_positions.is_empty() {
+            continue;
+        }
+
+        let context = format!("{path} job {job_name}");
+        let raw_job = raw_jobs
+            .iter()
+            .find(|(name, _)| name == &job_name)
+            .map(|(_, body)| body)
+            .unwrap_or_else(|| panic!("{context} must use a canonical block-style job mapping"));
+
+        assert_no_yaml_compiler_environment(&context, workflow, &job_name);
+        assert_eq!(
+            normalized_scripts.matches(FIXED_INSTALL).count(),
+            1,
+            "{context} must install Rust 1.98.1 exactly once"
+        );
+        assert_eq!(
+            normalized_scripts.matches(FIXED_SELECT).count(),
+            1,
+            "{context} must select Rust 1.98.1 exactly once"
+        );
+        assert_eq!(
+            normalized_scripts.matches(FIXED_VERIFY).count(),
+            1,
+            "{context} must verify Rust 1.98.1 exactly once"
+        );
+
+        let install_position = normalized_scripts
+            .find(FIXED_INSTALL)
+            .expect("installation count was checked");
+        let select_position = normalized_scripts
+            .find(FIXED_SELECT)
+            .expect("selection count was checked");
+        let verify_position = normalized_scripts
+            .find(FIXED_VERIFY)
+            .expect("verification count was checked");
+        assert!(
+            install_position < select_position && select_position < verify_position,
+            "{context} must install, select, then verify Rust 1.98.1 in that order"
+        );
+        for cargo_position in cargo_positions {
+            assert!(
+                verify_position < cargo_position,
+                "{context} must verify Rust 1.98.1 before every host cargo command"
+            );
+        }
+
+        assert_no_alternate_toolchain_selector(&context, &normalized_scripts);
+        assert_no_alternate_toolchain_selector(&context, raw_job);
+        let after_verify = &normalized_scripts[verify_position + FIXED_VERIFY.len()..];
+        assert_no_toolchain_authority_after_verification(&context, after_verify);
+    }
+}
+
+/// Requires executable Docker build commands to use the verified Rust 1.98.1 compiler authority.
+fn assert_dockerfile_uses_fixed_compiler(dockerfile: &str) {
+    let scripts = docker_run_scripts(dockerfile);
+    let install_position = scripts
+        .find(FIXED_INSTALL)
+        .expect("Dockerfile RUN scripts must install Rust 1.98.1 before building the gateway");
+    let select_position = scripts
+        .find(FIXED_SELECT)
+        .expect("Dockerfile RUN scripts must select Rust 1.98.1 before building the gateway");
+    let verify_position = scripts
+        .find(FIXED_VERIFY)
+        .expect("Dockerfile RUN scripts must verify Rust 1.98.1 before building the gateway");
+    let build_positions = cargo_build_command_positions(&scripts);
+
+    assert_eq!(
+        build_positions.len(),
+        1,
+        "Dockerfile must keep exactly one executable gateway cargo build authority"
+    );
+    assert!(
+        install_position < select_position && select_position < verify_position,
+        "Dockerfile must install, select, then verify Rust 1.98.1 in that order"
+    );
+    assert!(
+        verify_position < build_positions[0],
+        "Dockerfile must verify Rust 1.98.1 before gateway compilation"
+    );
+
+    let compiler_to_build = &scripts[install_position..build_positions[0]];
+    assert_no_alternate_toolchain_selector("Dockerfile compiler-to-build path", compiler_to_build);
+    let after_verify = &scripts[verify_position + FIXED_VERIFY.len()..build_positions[0]];
+    assert_no_toolchain_authority_after_verification("Dockerfile", after_verify);
+}
+
+/// Requires every hosted host-Cargo build/evidence job to select and verify the fixed point release.
+#[test]
+fn hosted_release_paths_select_rust_1_98_1_per_job() {
+    for path in [
+        ".github/workflows/ci.yml",
+        ".github/workflows/supply-chain.yml",
+    ] {
+        let workflow = read_repository_file(path);
+        assert_host_cargo_jobs_use_fixed_compiler(path, &workflow);
+    }
+
+    for path in ["rust-toolchain", "rust-toolchain.toml"] {
+        assert!(
+            !Path::new(path).exists(),
+            "{path} would become a second repository-level compiler selector; govern it explicitly before adding it"
+        );
+    }
+}
+
+/// Requires the OCI release binary to select the fixed compiler before executable `cargo build` runs.
+#[test]
+fn image_build_selects_fixed_compiler_before_gateway_compilation() {
+    let dockerfile = read_repository_file("Dockerfile");
+    assert_dockerfile_uses_fixed_compiler(&dockerfile);
+}
+
+/// Rejects metadata that still permits the compiler release carrying the vtable miscompilation.
+#[test]
+fn crate_requires_fixed_rust_point_release() {
+    let manifest = read_repository_file("Cargo.toml");
+
+    assert!(
+        manifest.contains("rust-version = \"1.98.1\""),
+        "Cargo metadata must reject Rust 1.98.0 for this production candidate"
+    );
+}
+
+/// Keeps Cargo's explicit toolchain shorthand fail-closed under valid shell word variants.
+#[test]
+fn cargo_toolchain_selector_detection_normalizes_shell_spacing() {
+    for command in [
+        "cargo +1.98.0 build",
+        "cargo  +1.98.0 build",
+        "cargo\t+1.98.0 build",
+        "cargo \\\n  +1.98.0 build",
+        "car\\\ngo +1.98.0 build",
+        "/home/runner/.cargo/bin/cargo  +1.98.0 build",
+        "cargo '+1.98.0' build",
+        "cargo \"+1.98.0\" build",
+        "cargo \\+1.98.0 build",
+        "cargo \"+\"1.98.0 build",
+        "\"/home/runner/.cargo/bin/cargo\" '+1.98.0' build",
+        "car\"go\" '+1.98.0' build",
+        "car\\go +1.98.0 build",
+    ] {
+        assert!(contains_explicit_cargo_toolchain_selector(command));
+    }
+
+    assert!(!contains_explicit_cargo_toolchain_selector(
+        "cargo build --release --locked"
+    ));
+}
+
+/// Proves host-Cargo job discovery cannot ignore valid shell whitespace around the command.
+#[test]
+fn host_cargo_job_detection_rejects_tab_separated_command_without_fixed_compiler() {
+    let workflow = "jobs:\n  build:\n    steps:\n      - run: cargo\tbuild --release --locked\n";
+    let result = std::panic::catch_unwind(|| {
+        assert_host_cargo_jobs_use_fixed_compiler("synthetic.yml", workflow);
+    });
+
+    assert!(
+        result.is_err(),
+        "tab-separated cargo command must still require the fixed compiler contract"
+    );
+}
+
+/// Proves YAML block-scalar indentation cannot hide a Cargo token split by shell continuation.
+#[test]
+fn host_cargo_job_detection_rejects_split_command_without_fixed_compiler() {
+    let workflow = "jobs:\n  build:\n    steps:\n      - run: |\n          car\\\n          go build --release --locked\n";
+    let result = std::panic::catch_unwind(|| {
+        assert_host_cargo_jobs_use_fixed_compiler("synthetic.yml", workflow);
+    });
+
+    assert!(
+        result.is_err(),
+        "Cargo split across a shell continuation must still require the fixed compiler contract"
+    );
+}
+
+/// Proves shell word quoting cannot hide a Cargo command from job-scoped compiler admission.
+#[test]
+fn host_cargo_job_detection_rejects_quoted_command_without_fixed_compiler() {
+    let workflow = "jobs:\n  build:\n    steps:\n      - run: car\"go\" build --release --locked\n";
+    let result = std::panic::catch_unwind(|| {
+        assert_host_cargo_jobs_use_fixed_compiler("synthetic.yml", workflow);
+    });
+
+    assert!(
+        result.is_err(),
+        "quoted Cargo command token must still require the fixed compiler contract"
+    );
+}
+
+/// Proves a verified default cannot be bypassed by Cargo's direct `RUSTC` environment override.
+#[test]
+fn host_cargo_job_rejects_rustc_environment_override_after_verification() {
+    let workflow = "jobs:\n  build:\n    steps:\n      - run: |\n          rustup toolchain install 1.98.1 --profile minimal\n          rustup default 1.98.1\n          rustc --version --verbose | grep -Fx 'release: 1.98.1'\n          RUSTC=/tmp/rustc-1.98.0 cargo build --release --locked\n";
+    let result = std::panic::catch_unwind(|| {
+        assert_host_cargo_jobs_use_fixed_compiler("synthetic.yml", workflow);
+    });
+
+    assert!(
+        result.is_err(),
+        "Cargo's RUSTC environment authority must not bypass the verified Rust 1.98.1 compiler"
+    );
+}
+
+/// Proves GitHub Actions YAML env scopes cannot rebind Cargo after standalone compiler verification.
+#[test]
+fn host_cargo_job_rejects_yaml_environment_compiler_override() {
+    for workflow in [
+        "env:\n  RUSTC: /tmp/rustc-1.98.0\njobs:\n  build:\n    steps:\n      - run: |\n          rustup toolchain install 1.98.1 --profile minimal\n          rustup default 1.98.1\n          rustc --version --verbose | grep -Fx 'release: 1.98.1'\n          cargo build --release --locked\n",
+        "jobs:\n  build:\n    env:\n      CARGO_BUILD_RUSTC: /tmp/rustc-1.98.0\n    steps:\n      - run: |\n          rustup toolchain install 1.98.1 --profile minimal\n          rustup default 1.98.1\n          rustc --version --verbose | grep -Fx 'release: 1.98.1'\n          cargo build --release --locked\n",
+        "jobs:\n  build:\n    steps:\n      - env:\n          RUSTC: /tmp/rustc-1.98.0\n        run: |\n          rustup toolchain install 1.98.1 --profile minimal\n          rustup default 1.98.1\n          rustc --version --verbose | grep -Fx 'release: 1.98.1'\n          cargo build --release --locked\n",
+        "jobs:\n  build:\n    steps:\n      - env:\n          RUSTUP_TOOLCHAIN: 1.98.0\n        run: |\n          rustup toolchain install 1.98.1 --profile minimal\n          rustup default 1.98.1\n          rustc --version --verbose | grep -Fx 'release: 1.98.1'\n          cargo build --release --locked\n",
+    ] {
+        let result = std::panic::catch_unwind(|| {
+            assert_host_cargo_jobs_use_fixed_compiler("synthetic.yml", workflow);
+        });
+
+        assert!(
+            result.is_err(),
+            "workflow/job/step YAML compiler authority must not bypass the verified Rust 1.98.1 compiler"
+        );
+    }
+}
+
+/// Proves shell word quoting/escaping cannot hide direct compiler authority from the shared workflow/OCI guard.
+#[test]
+fn alternate_toolchain_guard_rejects_shell_normalized_authority_words() {
+    for command in [
+        "rustup\tdefault\t1.98.0",
+        "rust\"up\" default 1.98.0",
+        "rust\\up toolchain install 1.98.0",
+        "RUST\"C\"=/tmp/rustc-1.98.0 cargo build --release --locked",
+        "CARGO_BUILD_RUST\\C=/tmp/rustc-1.98.0 cargo build --release --locked",
+        "RUSTUP_TOOLCHAIN=1.98.0 cargo build --release --locked",
+        "RUSTC+=/tmp/rustc-1.98.0 cargo build --release --locked",
+        "CARGO_BUILD_RUSTC+=/tmp/rustc-1.98.0 cargo build --release --locked",
+        "RUSTUP_TOOLCHAIN+=1.98.0 cargo build --release --locked",
+    ] {
+        let result = std::panic::catch_unwind(|| {
+            assert_no_alternate_toolchain_selector("synthetic compiler path", command);
+        });
+
+        assert!(
+            result.is_err(),
+            "normalized shell authority must be rejected: {command}"
+        );
+    }
+}
+
+/// Proves a valid Rust 1.98.1 verification cannot be followed by shell-obfuscated authority changes.
+#[test]
+fn host_cargo_job_rejects_shell_normalized_authority_after_verification() {
+    for tail in [
+        "rustup\tdefault\t1.98.0\n          cargo build --release --locked",
+        "rust\"up\" default 1.98.0\n          cargo build --release --locked",
+        "RUST\"C\"=/tmp/rustc-1.98.0 cargo build --release --locked",
+        "CARGO_BUILD_RUST\\C=/tmp/rustc-1.98.0 cargo build --release --locked",
+        "RUSTC+=/tmp/rustc-1.98.0 cargo build --release --locked",
+        "CARGO_BUILD_RUSTC+=/tmp/rustc-1.98.0 cargo build --release --locked",
+        "RUSTUP_TOOLCHAIN+=1.98.0 cargo build --release --locked",
+    ] {
+        let workflow = format!(
+            "jobs:\n  build:\n    steps:\n      - run: |\n          rustup toolchain install 1.98.1 --profile minimal\n          rustup default 1.98.1\n          rustc --version --verbose | grep -Fx 'release: 1.98.1'\n          {tail}\n"
+        );
+        let result = std::panic::catch_unwind(|| {
+            assert_host_cargo_jobs_use_fixed_compiler("synthetic.yml", &workflow);
+        });
+
+        assert!(
+            result.is_err(),
+            "post-verification shell authority must be rejected: {tail}"
+        );
+    }
+}
+
+/// Proves the Docker post-verification guard shares the normalized shell authority contract.
+#[test]
+fn docker_post_verification_guard_rejects_shell_normalized_authority() {
+    for command in [
+        "rustup\tdefault\t1.98.0",
+        "rust\"up\" toolchain install 1.98.0",
+        "RUST\"C\"=/tmp/rustc-1.98.0",
+        "CARGO_BUILD_RUST\\C=/tmp/rustc-1.98.0",
+        "RUSTC+=/tmp/rustc-1.98.0",
+        "CARGO_BUILD_RUSTC+=/tmp/rustc-1.98.0",
+        "RUSTUP_TOOLCHAIN+=1.98.0",
+    ] {
+        let result = std::panic::catch_unwind(|| {
+            assert_no_toolchain_authority_after_verification("synthetic Dockerfile", command);
+        });
+
+        assert!(
+            result.is_err(),
+            "Docker post-verification authority must be rejected: {command}"
+        );
+    }
+}
+
+/// Proves Dockerfile comments cannot impersonate the executable gateway build boundary.
+#[test]
+fn docker_build_detection_ignores_comments_and_normalizes_shell_words() {
+    for cargo_invocation in [
+        "cargo\tbuild --release --locked --bin pingora-gateway",
+        "car\"go\" build --release --locked --bin pingora-gateway",
+    ] {
+        let dockerfile = format!(
+            "FROM scratch AS builder\nRUN rustup toolchain install 1.98.1 --profile minimal && rustup default 1.98.1 && rustc --version --verbose | grep -Fx 'release: 1.98.1'\n# cargo build is documentation, not executable authority\nRUN RUSTUP_TOOLCHAIN+=1.98.0 {cargo_invocation}\n"
+        );
+        let result = std::panic::catch_unwind(|| {
+            assert_dockerfile_uses_fixed_compiler(&dockerfile);
+        });
+
+        assert!(
+            result.is_err(),
+            "comment text must not hide executable shell-normalized Cargo build: {cargo_invocation}"
+        );
+    }
+}
