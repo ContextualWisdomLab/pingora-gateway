@@ -12,7 +12,7 @@ const EXPECTED_GROUP_LINE: &str =
 const EXPECTED_CANCEL_LINE: &str =
     "  cancel-in-progress: ${{ github.event_name == 'pull_request' }}";
 const EXPECTED_PULL_REQUEST_TYPES_LINE: &str =
-    "    types: [opened, synchronize, reopened, ready_for_review]";
+    "    types: [opened, synchronize, reopened, converted_to_draft, ready_for_review]";
 const EXPECTED_ACTIVE_PR_JOB_LINE: &str =
     "    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false";
 
@@ -277,7 +277,7 @@ fn pull_request_workflows_use_pr_scoped_cancellation_identity() {
                 .filter(|line| **line == EXPECTED_PULL_REQUEST_TYPES_LINE)
                 .count(),
             1,
-            "{} must admit only useful pull-request lifecycle events",
+            "{} must admit active-work events plus draft conversion so queued PR work can be retracted before Ready re-admission",
             path.display()
         );
         assert_eq!(
