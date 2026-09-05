@@ -47,6 +47,8 @@ fn command_substitution_guard_allows_non_compiler_subshells() {
         "version=$(git rev-parse HEAD)",
         "artifact=$(cargo metadata --no-deps --format-version 1)",
         "printf '%s\\n' \"$(uname -m)\"",
+        "literal=$(printf '%s' \"(not syntax)\")",
+        "nested=$(printf '%s' \"$(uname -m)\")",
     ] {
         assert_no_hidden_compiler_authority("synthetic shell", shell);
     }
