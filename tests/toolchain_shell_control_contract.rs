@@ -354,6 +354,8 @@ fn fixed_toolchain_commands_quoted_text_and_comments_remain_allowed() {
         "command -v rustup",
         "command -V cargo",
         "env -i PATH=/usr/bin /usr/bin/printf ok",
+        "env -i /usr/bin/printf -S",
+        "command -p env -i /usr/bin/printf -S",
         "echo 'RUSTC=/tmp/rustc-1.98.0'",
         "printf '%s\\n' \"CARGO_BUILD_RUSTC=/tmp/rustc-1.98.0\"",
         "# RUSTUP_TOOLCHAIN=1.98.0 cargo build --release --locked\necho ok",
