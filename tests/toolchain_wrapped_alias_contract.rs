@@ -100,6 +100,16 @@ fn parameter_expansion_operator_cannot_hide_wrapped_cargo_toolchain_selector() {
 }
 
 #[test]
+fn alternate_value_expansion_is_not_misclassified_as_cargo_execution() {
+    for shell in [
+        "CARGO=cargo; command \"${CARGO:+printf}\" +nightly build --release --locked",
+        "CARGO=cargo; env -- \"${CARGO+printf}\" +1.98.0 build --release --locked",
+    ] {
+        assert_no_wrapped_cargo_toolchain_selector("synthetic shell", shell);
+    }
+}
+
+#[test]
 fn ordinary_alias_use_without_toolchain_selector_remains_admitted() {
     for shell in [
         "CARGO=cargo; \"$CARGO\" build --release --locked",
