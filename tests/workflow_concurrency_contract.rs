@@ -8,9 +8,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 const EXPECTED_GROUP_LINE: &str =
-    "  group: ${{ github.workflow }}-${{ github.repository }}-${{ github.event.pull_request.number || github.run_id }}";
+    "  group: ${{ github.workflow }}-${{ github.repository }}-${{ github.event_name == 'pull_request' && github.run_attempt == 1 && github.event.pull_request.number || github.run_id }}";
 const EXPECTED_CANCEL_LINE: &str =
     "  cancel-in-progress: ${{ github.event_name == 'pull_request' }}";
+const EXPECTED_PULL_REQUEST_TYPES_LINE: &str =
+    "    types: [opened, synchronize, reopened, ready_for_review]";
 
 /// Returns all repository-owned YAML workflows in deterministic path order.
 fn workflow_paths() -> Vec<PathBuf> {
@@ -254,6 +256,18 @@ fn pull_request_workflows_use_pr_scoped_cancellation_identity() {
         if event_block(&source, "pull_request").is_none() {
             continue;
         }
+
+        let pull_request = event_block(&source, "pull_request")
+            .expect("pull-request workflow must expose its event block");
+        assert_eq!(
+            pull_request
+                .iter()
+                .filter(|line| **line == EXPECTED_PULL_REQUEST_TYPES_LINE)
+                .count(),
+            1,
+            "{} must admit only useful pull-request lifecycle events",
+            path.display()
+        );
 
         let concurrency = concurrency_block(&source).unwrap_or_else(|| {
             panic!(
