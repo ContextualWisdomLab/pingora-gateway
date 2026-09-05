@@ -88,6 +88,79 @@ fn assignment_name(word: &str) -> Option<&str> {
     assignment_parts(word).map(|(name, _)| name)
 }
 
+/// Collects unquoted `NAME=$(` assignments whose closure is intentionally not partially parsed.
+///
+/// The bounded shell parser cannot safely decide whether arbitrary unquoted command-substitution
+/// syntax is assignment-only or command-local without implementing the full shell grammar. Such a
+/// name is therefore treated as ambiguous executable authority only if a later command word expands
+/// that same parameter. Quoted command-local assignments remain handled by normal segment parsing.
+fn unquoted_command_substitution_assignment_names(shell: &str) -> Vec<String> {
+    let bytes = shell.as_bytes();
+    let mut names = Vec::new();
+    let mut index = 0;
+    let mut single_quoted = false;
+    let mut double_quoted = false;
+    let mut escaped = false;
+
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if escaped {
+            escaped = false;
+            index += 1;
+            continue;
+        }
+        if byte == b'\\' && !single_quoted {
+            escaped = true;
+            index += 1;
+            continue;
+        }
+        if byte == b'\'' && !double_quoted {
+            single_quoted = !single_quoted;
+            index += 1;
+            continue;
+        }
+        if byte == b'"' && !single_quoted {
+            double_quoted = !double_quoted;
+            index += 1;
+            continue;
+        }
+
+        if !single_quoted
+            && !double_quoted
+            && byte == b'='
+            && bytes.get(index + 1) == Some(&b'$')
+            && bytes.get(index + 2) == Some(&b'(')
+        {
+            let mut name_start = index;
+            while name_start > 0
+                && (bytes[name_start - 1].is_ascii_alphanumeric() || bytes[name_start - 1] == b'_')
+            {
+                name_start -= 1;
+            }
+
+            let has_boundary = name_start == 0
+                || bytes[name_start - 1].is_ascii_whitespace()
+                || matches!(bytes[name_start - 1], b';' | b'|' | b'&' | b'(' | b')');
+            let name = &shell[name_start..index];
+            let valid_name = !name.is_empty()
+                && name
+                    .as_bytes()
+                    .first()
+                    .is_some_and(|first| first.is_ascii_alphabetic() || *first == b'_')
+                && name
+                    .bytes()
+                    .all(|candidate| candidate.is_ascii_alphanumeric() || candidate == b'_');
+
+            if has_boundary && valid_name && !names.iter().any(|known| known == name) {
+                names.push(name.to_owned());
+            }
+        }
+        index += 1;
+    }
+
+    names
+}
+
 /// Splits bounded shell text into command-position words while preserving `$NAME` command words.
 fn shell_command_segments(shell: &str) -> Vec<Vec<String>> {
     let normalized = shell.replace("\\\r\n", "").replace("\\\n", "");
@@ -196,6 +269,7 @@ fn apply_persistent_cargo_assignment(aliases: &mut Vec<String>, name: &str, valu
 
 /// Rejects Cargo executable indirection through persistent shell variables in command position.
 fn contains_variable_cargo_command(shell: &str) -> bool {
+    let ambiguous_dynamic_aliases = unquoted_command_substitution_assignment_names(shell);
     let mut aliases: Vec<String> = Vec::new();
 
     for segment in shell_command_segments(shell) {
@@ -241,9 +315,10 @@ fn contains_variable_cargo_command(shell: &str) -> bool {
 
         // Assignment prefixes on an ordinary command are command-local environment entries. They
         // must not be remembered as parent-shell aliases after that command returns.
-        if parameter_command_name(command)
-            .is_some_and(|name| aliases.iter().any(|alias| alias == name))
-        {
+        if parameter_command_name(command).is_some_and(|name| {
+            aliases.iter().any(|alias| alias == name)
+                || ambiguous_dynamic_aliases.iter().any(|alias| alias == name)
+        }) {
             return true;
         }
     }

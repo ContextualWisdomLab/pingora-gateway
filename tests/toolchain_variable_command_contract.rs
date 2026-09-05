@@ -30,6 +30,7 @@ fn command_substitution_cargo_alias_is_rejected() {
         "CARGO=\"$(command -v cargo)\"; \"$CARGO\" build --release --locked",
         "CARGO=\"$(printf /opt/rust-1.98.0/bin/cargo)\"; ${CARGO:?} build --release --locked",
         "export CARGO=\"$(printf /opt/rust-1.98.0/bin/cargo)\"; $CARGO build --release --locked",
+        "CARGO=$(command -v cargo); \"$CARGO\" build --release --locked",
     ] {
         let result = std::panic::catch_unwind(|| {
             assert_no_hidden_compiler_authority("synthetic shell", shell);
@@ -44,8 +45,10 @@ fn command_substitution_cargo_alias_is_rejected() {
 /// A command-local assignment prefix must not be remembered as parent-shell Cargo authority.
 #[test]
 fn command_local_cargo_assignment_does_not_persist() {
-    assert_no_hidden_compiler_authority(
-        "synthetic shell",
+    for shell in [
         "CARGO=cargo printf ok; \"$CARGO\" build --release --locked",
-    );
+        "CARGO=\"$(command -v cargo)\" printf ok; \"$CARGO\" build --release --locked",
+    ] {
+        assert_no_hidden_compiler_authority("synthetic shell", shell);
+    }
 }
