@@ -38,9 +38,13 @@ Promotion order is fixed: `#59 current exact review + hosted semantic RED → #6
 
 ### Rust 1.98.1 compiler prerequisite — #56 / #54
 
-Draft #56 current exact head is `1b77f38e33f1131bc58222ae838baae56a078651` on foundation #1. It moves release-producing paths to Rust 1.98.1, the 2026-09-03 repair release for the Rust 1.98.0 vtable-generation miscompilation. Predecessor `955b3e98e1f1bd945a05b8a7cdd5f16e75c99c77` proved exact checkout, Rust 1.98.1 selection, OCI and load execution; the remaining test failure was only rustfmt and was repaired forward. Current exact CI `33927504705` and Supply Chain `33927504718` must still produce terminal exact-head GREEN before compiler promotion.
+Draft #56 current exact head is `68fffc8a66a11b4657c259739ae1c3984f5818d7` on foundation #1, fresh compare **ahead 17 / behind 0** with the foundation as exact merge base. It moves release-producing paths to Rust 1.98.1, the 2026-09-03 repair release for the Rust 1.98.0 vtable-generation miscompilation. Predecessor `955b3e98e1f1bd945a05b8a7cdd5f16e75c99c77` proved exact checkout, Rust 1.98.1 selection, OCI and load execution; its remaining test failure was rustfmt and was repaired forward.
 
-Draft #54 current head `acb0368ac8efd0e4d1a75f56be391520d58a7edc` is a non-force child of #56 and intentionally requires committed `Cargo.lock` to contain no `derivative`. The supplier advisory `RUSTSEC-2024-0388` is an unmaintained-dependency finding with no patched release; CWL policy does not convert that into a blanket audit exception. The intended RED is valid only after the parent compiler/format path is independently GREEN.
+A later current-line review found a distinct compiler-authority fail-open: the contract rejected only the literal `cargo +`, so valid shell whitespace such as `cargo  +1.98.0 build` could bypass the alternate-toolchain guard after the verified Rust 1.98.1 setup. Commit `68fffc8...` replaces that literal check with line-continuation normalization and token-based `cargo` followed by non-empty `+<toolchain>` detection, with regressions for single/multiple spaces, tabs, continuation, and an explicit path ending in `/cargo`. The review thread re-verified the stated repair and is resolved. Current exact CI `33933024607` and Supply Chain `33933024567` supersede all predecessor execution and must still produce terminal exact-head GREEN before compiler promotion.
+
+Draft #54 current head `d082704637e4d6a77112e6449dcf0d141b166117` is a non-force child of current #56. Fresh compare against #56 is **ahead 20 / behind 0** with `68fffc8...` as exact merge base and an effective child delta of exactly four derivative-advisory evidence files. The parent repair was adopted in forward commit `6569eede3f0cdfb0096e7f257655bce6ef21ea53`, then ordinary two-parent merge `d082704...` recorded current #56 without rewriting history. Current CI `33933107776` and Supply Chain `33933107770` supersede earlier child evidence.
+
+#54 intentionally requires committed `Cargo.lock` to contain no `derivative`. The supplier advisory `RUSTSEC-2024-0388` is an unmaintained-dependency finding with no patched release; CWL policy does not convert that into a blanket audit exception. The intended RED is valid only after the parent compiler/format path is independently GREEN.
 
 ### Supplier and protocol prerequisites
 
@@ -93,7 +97,7 @@ No current consumer is marked migrated, shadowed, canaried, cut over, or legacy-
 ## Dependency-ordered next actions
 
 1. Obtain current exact review and hosted semantic RED for #59, then current exact review and unchanged-contract hosted GREEN for #60; adopt the policy into the foundation normally and repair descendant ancestry without force.
-2. Obtain exact-head GREEN for Rust 1.98.1 #56; only then execute #54's intentional `derivative` RED and drive #889 to a maintainer-integrated immutable supplier repair before a downstream lockfile GREEN.
+2. Obtain exact-head GREEN for Rust 1.98.1 #56 after the compiler-selector review repair; only then execute #54's intentional `derivative` RED and drive #889 to a maintainer-integrated immutable supplier repair before a downstream lockfile GREEN.
 3. Restore #53 to protocol-test-only scope, execute the real TLS/H2→H1 Cookie RED, adapt #901 to current supplier policy ownership, and require immutable supplier integration plus unchanged wire GREEN. Keep #936 as the distinct H1 body-framing prerequisite.
 4. Keep organization queue/admission RCA on the `.github` owner path. Pingora leaf heads wait/refetch without no-op churn when the only evidence is pre-checkout runner starvation.
 5. On the operations owner path, preserve #251's valid security delta but repair safe extraction, then complete #267's structural inventory and certificate/application boundary before any Nginx cutover work.
