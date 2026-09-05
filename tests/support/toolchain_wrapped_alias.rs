@@ -87,11 +87,9 @@ fn command_basename(word: &str) -> &str {
     word.rsplit('/').next().unwrap_or(word)
 }
 
-/// Returns the parameter identity from a complete command-position expansion.
-///
-/// `${NAME:?message}`, `${NAME:-fallback}` and the other shell parameter operators retain `NAME`
-/// as executable identity. The operator word is deliberately not evaluated here: this contract only
-/// needs to know whether a persistent Cargo alias owns the command position before `+toolchain`.
+/// Returns the persistent parameter identity only for complete command-position expansions whose
+/// set-value branch preserves that parameter value. Alternative-value (`+`/`:+`) and transforming
+/// expansions are not Cargo execution merely because their source parameter is a Cargo alias.
 fn parameter_name(word: &str) -> Option<&str> {
     if let Some(name) = word.strip_prefix('$') {
         if !name.starts_with('{')
@@ -104,17 +102,28 @@ fn parameter_name(word: &str) -> Option<&str> {
         }
     }
 
-    let expression = word.strip_prefix("${")?;
-    let closing = expression.rfind('}')?;
-    if closing + 1 != expression.len() {
-        return None;
-    }
-    let body = &expression[..closing];
-    let name_end = body
+    let expression = word.strip_prefix("${")?.strip_suffix('}')?;
+    let name_end = expression
         .bytes()
         .position(|byte| !(byte.is_ascii_alphanumeric() || byte == b'_'))
-        .unwrap_or(body.len());
-    (name_end > 0).then_some(&body[..name_end])
+        .unwrap_or(expression.len());
+    if name_end == 0 {
+        return None;
+    }
+
+    let operator = &expression[name_end..];
+    if operator.is_empty()
+        || operator.starts_with(":-")
+        || operator.starts_with('-')
+        || operator.starts_with(":=")
+        || operator.starts_with('=')
+        || operator.starts_with(":?")
+        || operator.starts_with('?')
+    {
+        Some(&expression[..name_end])
+    } else {
+        None
+    }
 }
 
 fn set_alias(aliases: &mut Vec<String>, name: &str, value: &str) {
