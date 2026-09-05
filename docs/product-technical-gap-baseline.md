@@ -16,15 +16,15 @@ Protected `main` remains exact `f8b4c99b8e5d3de79af1ff0c00c0c8fd63b52991`. GitHu
 
 ## Workflow-admission foundation promotion — #58 / #59 / #60
 
-Merged #57 had placed valid workflow-coalescing policy inside #53's H2→H1 Cookie lineage. The workflow delta was therefore promoted at the earliest workflow-owning foundation ancestor without closing or discarding dependent protocol work.
+Merged #57 had placed valid workflow-coalescing policy inside #53's H2→H1 Cookie protocol lineage. The workflow delta was therefore promoted at the earliest workflow-owning foundation ancestor without closing or discarding dependent protocol work.
 
-#59 exact RED predecessor `cb458621b5cfdcec35820083bb82e19e9dc627cf` is hosted semantic evidence. CI `33965929673` acquired real `ubuntu-24.04` runners and exact checkout: load-contract and OCI succeeded, while `cargo test --all-targets --locked` failed exactly two intended workflow-concurrency invariants. The workflow-concurrency binary was 11 passed / 2 failed: the foundation CI lacked the required PR admission/cancellation event contract and did not restrict duplicate push evidence to protected `main`.
+PR `#59` exact RED predecessor `cb458621b5cfdcec35820083bb82e19e9dc627cf` is hosted semantic evidence. CI `33965929673` acquired real `ubuntu-24.04` runners and exact checkout: load-contract and OCI succeeded, while `cargo test --all-targets --locked` failed exactly two intended workflow-concurrency invariants. The workflow-concurrency binary was 11 passed / 2 failed: the foundation CI lacked the required PR admission/cancellation event contract and did not restrict duplicate push evidence to protected `main`.
 
 GREEN child #60 exact `e2309106eba4f41f45c770676885b27bf73aa69b` retained exactly `.github/workflows/ci.yml` and `.github/workflows/supply-chain.yml` in its effective child range. CI `33966008873` and Supply Chain `33966008876` both completed success. Exact k6 artifact `9970973185` has digest `sha256:2f6e8b16813a58498a12df71bc38feae33e4a6193cc426b8351ad32185eba57d`; its 400 requests had zero failures, 400/400 HTTP-200 checks, 400/400 upstream-body checks and loopback p95 `1.56505725 ms`.
 
-#60 was normally merged into #59, producing combined exact `cf60f0bce57a8ac530e8fff52fa9ae00be232f07`. After Draft skip evidence, #59 was marked Ready to execute the unchanged tree. Combined-head CI `33971798747` and Supply Chain `33971798802` both reached terminal success; load, OCI, formatting, all Cargo tests, strict Clippy, rustdoc, owned-production coverage, dependency-lock evidence and supply-chain candidate evidence completed successfully. All returned review threads were resolved.
+PR `#60` was normally merged into #59, producing combined exact `cf60f0bce57a8ac530e8fff52fa9ae00be232f07`. After Draft skip evidence, #59 was marked Ready to execute the unchanged tree. Combined-head CI `33971798747` and Supply Chain `33971798802` both reached terminal success; load, OCI, formatting, all Cargo tests, strict Clippy, rustdoc, owned-production coverage, dependency-lock evidence and supply-chain candidate evidence completed successfully. All returned review threads were resolved.
 
-#59 was then normally merged into foundation #1 as exact `0da81a93f93e869c15bb7d34c55fc87479d16522`. No force update, destructive rebase, bypass, self-approval, or predecessor-success synthesis was used. Foundation now owns the repaired workflow semantics: `main`-only push, explicit PR lifecycle events, first-attempt PR coalescing with rerun isolation, PR-only cancellation, Draft job guards, and semantic regression contracts.
+PR `#59` was then normally merged into foundation #1 as exact `0da81a93f93e869c15bb7d34c55fc87479d16522`. No force update, destructive rebase, bypass, self-approval, or predecessor-success synthesis was used. Foundation now owns the repaired workflow semantics: `main`-only push, explicit PR lifecycle events, first-attempt PR coalescing with rerun isolation, PR-only cancellation, Draft job guards, and semantic regression contracts.
 
 PR #61 is a Draft documentation-only child of this foundation. Its effective child range remains six documents. Documentation evidence does not replace compiler/supplier execution gates.
 
@@ -46,7 +46,7 @@ Current exact #56 CI is `33977617896` and Supply Chain is `33977617965`. At the 
 
 Draft #54 was non-force restacked on current #56 by ordinary two-parent ancestry. Current exact head is `085bc64706c6a839b50677cf5a358a7b8d60caab`; current #56 is the exact merge base, ahead 61 / behind 0, and effective child delta remains exactly four files: `CHANGELOG.md`, `TEST_STRATEGY.md`, `docs/doctoring/TRACEABILITY.md`, and `tests/supply_chain_policy.rs`. The computed-alias repair is inherited, not copied into the child range.
 
-#54 intentionally requires committed `Cargo.lock` to contain no `derivative`. That assertion becomes semantic RED only after #56 independently proves compiler/bootstrap GREEN. Do not add an audit ignore, suppress OSV/RustSec, delete lock evidence, or pin mutable supplier source to manufacture GREEN. `RUSTSEC-2024-0388` remains an unmaintained advisory with no patched version; the release block is CWL supply-chain policy rather than a memory-safety-CVE claim.
+PR `#54` intentionally requires committed `Cargo.lock` to contain no `derivative`. That assertion becomes semantic RED only after #56 independently proves compiler/bootstrap GREEN. Do not add an audit ignore, suppress OSV/RustSec, delete lock evidence, or pin mutable supplier source to manufacture GREEN. `RUSTSEC-2024-0388` remains an unmaintained advisory with no patched version; the release block is CWL supply-chain policy rather than a memory-safety-CVE claim.
 
 ## Protocol / supplier path
 
