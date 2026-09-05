@@ -498,3 +498,47 @@ fn host_cargo_job_rejects_yaml_environment_compiler_override() {
         );
     }
 }
+
+/// Proves shell word quoting/escaping cannot hide direct compiler authority from the shared workflow/OCI guard.
+#[test]
+fn alternate_toolchain_guard_rejects_shell_normalized_authority_words() {
+    for command in [
+        "rustup\tdefault\t1.98.0",
+        "rust\"up\" default 1.98.0",
+        "rust\\up toolchain install 1.98.0",
+        "RUST\"C\"=/tmp/rustc-1.98.0 cargo build --release --locked",
+        "CARGO_BUILD_RUST\\C=/tmp/rustc-1.98.0 cargo build --release --locked",
+    ] {
+        let result = std::panic::catch_unwind(|| {
+            assert_no_alternate_toolchain_selector("synthetic compiler path", command);
+        });
+
+        assert!(
+            result.is_err(),
+            "normalized shell authority must be rejected: {command}"
+        );
+    }
+}
+
+/// Proves a valid Rust 1.98.1 verification cannot be followed by shell-obfuscated authority changes.
+#[test]
+fn host_cargo_job_rejects_shell_normalized_authority_after_verification() {
+    for bypass in [
+        "rustup\tdefault\t1.98.0",
+        "rust\"up\" default 1.98.0",
+        "RUST\"C\"=/tmp/rustc-1.98.0",
+        "CARGO_BUILD_RUST\\C=/tmp/rustc-1.98.0",
+    ] {
+        let workflow = format!(
+            "jobs:\n  build:\n    steps:\n      - run: |\n          rustup toolchain install 1.98.1 --profile minimal\n          rustup default 1.98.1\n          rustc --version --verbose | grep -Fx 'release: 1.98.1'\n          {bypass} cargo build --release --locked\n"
+        );
+        let result = std::panic::catch_unwind(|| {
+            assert_host_cargo_jobs_use_fixed_compiler("synthetic.yml", &workflow);
+        });
+
+        assert!(
+            result.is_err(),
+            "post-verification shell authority must be rejected: {bypass}"
+        );
+    }
+}
