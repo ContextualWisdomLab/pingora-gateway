@@ -79,7 +79,7 @@ fn docker_run_commands(source: &str) -> Vec<String> {
     commands
 }
 
-/// Production release workflows and the OCI build must not hide compiler selection inside `$(...)`.
+/// Production release workflows and the OCI build must not hide compiler selection inside shell substitution.
 #[test]
 fn release_paths_reject_hidden_compiler_authority_in_command_substitution() {
     for path in [
@@ -98,7 +98,7 @@ fn release_paths_reject_hidden_compiler_authority_in_command_substitution() {
     }
 }
 
-/// A verified default compiler must not be bypassable from an executable `$(...)` sub-shell.
+/// A verified default compiler must not be bypassable from executable command substitution.
 #[test]
 fn command_substitution_guard_rejects_alternate_compiler_authority() {
     for shell in [
@@ -107,6 +107,8 @@ fn command_substitution_guard_rejects_alternate_compiler_authority() {
         "echo $(CARGO_BUILD_RUSTC=/tmp/rustc-1.98.0 cargo build --release --locked)",
         "echo $(cargo +1.98.0 build --release --locked)",
         "echo $(rustup run 1.98.0 cargo build --release --locked)",
+        "echo `rustup default 1.98.0`",
+        "echo `cargo +1.98.0 build --release --locked`",
         "value=$(case x in x) RUSTUP_TOOLCHAIN=1.98.0 cargo build --release --locked;; esac)",
         "version=$(git rev-parse HEAD); CARGO=cargo; RUSTUP_TOOLCHAIN=1.98.0 \"$CARGO\" build --release --locked",
         "version=$(git rev-parse HEAD); CARGO=cargo; RUSTUP_TOOLCHAIN=1.98.0 \"${CARGO:?}\" build --release --locked",
@@ -132,6 +134,9 @@ fn command_substitution_guard_allows_non_compiler_subshells() {
         "printf '%s\\n' \"$(uname -m)\"",
         "literal=$(printf '%s' \"(not syntax)\")",
         "nested=$(printf '%s' \"$(uname -m)\")",
+        "legacy=`git rev-parse HEAD`",
+        "printf '%s\\n' '`rustup default 1.98.0`'",
+        "printf '%s\\n' \\`rustup default 1.98.0\\`",
         "printf '%s\\n' '$(RUSTUP_TOOLCHAIN=1.98.0 cargo build --release --locked)'",
         "printf '%s\\n' \\$(RUSTUP_TOOLCHAIN=1.98.0 cargo build --release --locked)",
         "version=$(git rev-parse HEAD); CARGO=cargo; RUSTUP_TOOLCHAIN=1.98.0 printf '%s\\n' '${CARGO:?}'",
