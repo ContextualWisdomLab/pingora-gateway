@@ -114,8 +114,111 @@ fn set_alias(aliases: &mut Vec<String>, name: &str, value: &str) {
     }
 }
 
+/// Resolves a command position through the POSIX `command` builtin and GNU `env` utility.
+/// Query-only `command -v/-V` and malformed/unknown wrapper options are non-executing for this
+/// contract and therefore return `None` instead of guessing a child command boundary.
+fn unwrap_command_position(segment: &[String], mut index: usize) -> Option<(&str, usize)> {
+    loop {
+        let command = command_basename(segment.get(index)?);
+        index += 1;
+
+        if command == "command" {
+            loop {
+                match segment.get(index).map(String::as_str) {
+                    Some("-p") => index += 1,
+                    Some("--") => {
+                        index += 1;
+                        break;
+                    }
+                    Some("-v" | "-V") => return None,
+                    Some(option) if option.starts_with('-') => return None,
+                    _ => break,
+                }
+            }
+            continue;
+        }
+
+        if command == "env" {
+            let mut options_active = true;
+            loop {
+                let argument = segment.get(index)?.as_str();
+                if options_active {
+                    if argument == "--" || argument == "-" {
+                        options_active = false;
+                        index += 1;
+                        continue;
+                    }
+
+                    if let Some(long_option) = argument.strip_prefix("--") {
+                        let (name, attached) = long_option
+                            .split_once('=')
+                            .map_or((long_option, false), |(name, _)| (name, true));
+                        match name {
+                            "null"
+                            | "ignore-environment"
+                            | "default-signal"
+                            | "ignore-signal"
+                            | "block-signal"
+                            | "list-signal-handling"
+                            | "debug" => {
+                                index += 1;
+                                continue;
+                            }
+                            "argv0" | "unset" | "chdir" => {
+                                index += 1;
+                                if !attached {
+                                    segment.get(index)?;
+                                    index += 1;
+                                }
+                                continue;
+                            }
+                            // `-S/--split-string` changes command tokenization and is governed by
+                            // the separate shell-control contract rather than approximated here.
+                            "split-string" | "help" | "version" => return None,
+                            _ => return None,
+                        }
+                    }
+
+                    if let Some(short_options) = argument.strip_prefix('-') {
+                        let mut consumes_next = false;
+                        for (offset, option) in short_options.char_indices() {
+                            match option {
+                                '0' | 'i' | 'v' => {}
+                                'a' | 'u' | 'C' => {
+                                    consumes_next =
+                                        offset + option.len_utf8() == short_options.len();
+                                    break;
+                                }
+                                'S' => return None,
+                                _ => return None,
+                            }
+                        }
+                        index += 1;
+                        if consumes_next {
+                            segment.get(index)?;
+                            index += 1;
+                        }
+                        continue;
+                    }
+
+                    options_active = false;
+                }
+
+                if assignment_parts(argument).is_some() {
+                    index += 1;
+                    continue;
+                }
+                break;
+            }
+            continue;
+        }
+
+        return Some((segment.get(index - 1)?.as_str(), index));
+    }
+}
+
 /// Reports explicit `cargo +toolchain` selection when Cargo is reached through a persistent shell
-/// variable. Wrapper utilities are handled by the GREEN repair after the RED contract proves them.
+/// variable, including execution through `command` and GNU `env` wrappers.
 pub fn has_wrapped_cargo_toolchain_selector(shell: &str) -> bool {
     let mut aliases = Vec::new();
 
@@ -156,12 +259,16 @@ pub fn has_wrapped_cargo_toolchain_selector(shell: &str) -> bool {
             continue;
         }
 
-        let Some(alias) = parameter_name(command) else {
+        let Some((resolved_command, argument_index)) = unwrap_command_position(&segment, index)
+        else {
+            continue;
+        };
+        let Some(alias) = parameter_name(resolved_command) else {
             continue;
         };
         if aliases.iter().any(|known| known == alias)
             && segment
-                .get(index + 1)
+                .get(argument_index)
                 .is_some_and(|argument| argument.starts_with('+') && argument.len() > 1)
         {
             return true;
