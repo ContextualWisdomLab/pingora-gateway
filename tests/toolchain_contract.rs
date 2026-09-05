@@ -287,6 +287,7 @@ fn cargo_toolchain_selector_detection_normalizes_shell_spacing() {
         "cargo  +1.98.0 build",
         "cargo\t+1.98.0 build",
         "cargo \\\n  +1.98.0 build",
+        "car\\\ngo +1.98.0 build",
         "/home/runner/.cargo/bin/cargo  +1.98.0 build",
     ] {
         assert!(contains_explicit_cargo_toolchain_selector(command));
@@ -308,5 +309,19 @@ fn host_cargo_job_detection_rejects_tab_separated_command_without_fixed_compiler
     assert!(
         result.is_err(),
         "tab-separated cargo command must still require the fixed compiler contract"
+    );
+}
+
+/// Proves YAML block-scalar indentation cannot hide a Cargo token split by shell continuation.
+#[test]
+fn host_cargo_job_detection_rejects_split_command_without_fixed_compiler() {
+    let workflow = "jobs:\n  build:\n    steps:\n      - run: |\n          car\\\n          go build --release --locked\n";
+    let result = std::panic::catch_unwind(|| {
+        assert_host_cargo_jobs_use_fixed_compiler("synthetic.yml", workflow);
+    });
+
+    assert!(
+        result.is_err(),
+        "Cargo split across a shell continuation must still require the fixed compiler contract"
     );
 }
