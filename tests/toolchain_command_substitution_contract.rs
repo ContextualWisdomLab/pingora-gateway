@@ -5,7 +5,71 @@ mod toolchain_command_substitution_support;
 
 use serde_yaml::Value;
 use std::fs;
-use toolchain_command_substitution_support::assert_no_hidden_compiler_authority;
+use toolchain_command_substitution_support::assert_no_hidden_compiler_authority as assert_no_hidden_dollar_compiler_authority;
+
+/// Returns every active legacy backquote command-substitution body outside single quotes.
+///
+/// Bash documents the first unescaped backquote as the terminator of the legacy form. Backquotes
+/// remain active inside double quotes, while single quotes and an outer backslash keep them literal.
+fn legacy_command_substitution_bodies(shell: &str) -> Vec<String> {
+    let mut bodies = Vec::new();
+    let mut current: Option<String> = None;
+    let mut single_quoted = false;
+    let mut escaped = false;
+
+    for character in shell.chars() {
+        if let Some(body) = current.as_mut() {
+            if escaped {
+                body.push(character);
+                escaped = false;
+                continue;
+            }
+            if character == '\\' {
+                body.push(character);
+                escaped = true;
+                continue;
+            }
+            if character == '`' {
+                bodies.push(current.take().expect("legacy command body must exist"));
+                continue;
+            }
+            body.push(character);
+            continue;
+        }
+
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if character == '\\' && !single_quoted {
+            escaped = true;
+            continue;
+        }
+        if character == '\'' {
+            single_quoted = !single_quoted;
+            continue;
+        }
+        if character == '`' && !single_quoted {
+            current = Some(String::new());
+        }
+    }
+
+    assert!(
+        current.is_none(),
+        "compiler-authority shell contract requires terminated legacy command substitution"
+    );
+    bodies
+}
+
+/// Applies the same compiler-authority analysis to POSIX `$()` and Bash's legacy backquote form.
+fn assert_no_hidden_compiler_authority(context: &str, shell: &str) {
+    assert_no_hidden_dollar_compiler_authority(context, shell);
+
+    for body in legacy_command_substitution_bodies(shell) {
+        let normalized = format!("$({body})");
+        assert_no_hidden_dollar_compiler_authority(context, &normalized);
+    }
+}
 
 /// Returns every shell script attached to a direct GitHub Actions step.
 fn workflow_run_scripts(path: &str) -> Vec<String> {
@@ -79,7 +143,7 @@ fn docker_run_commands(source: &str) -> Vec<String> {
     commands
 }
 
-/// Production release workflows and the OCI build must not hide compiler selection inside `$(...)`.
+/// Production release workflows and the OCI build must not hide compiler selection inside shell substitution.
 #[test]
 fn release_paths_reject_hidden_compiler_authority_in_command_substitution() {
     for path in [
@@ -98,7 +162,7 @@ fn release_paths_reject_hidden_compiler_authority_in_command_substitution() {
     }
 }
 
-/// A verified default compiler must not be bypassable from an executable `$(...)` sub-shell.
+/// A verified default compiler must not be bypassable from executable command substitution.
 #[test]
 fn command_substitution_guard_rejects_alternate_compiler_authority() {
     for shell in [
@@ -107,6 +171,8 @@ fn command_substitution_guard_rejects_alternate_compiler_authority() {
         "echo $(CARGO_BUILD_RUSTC=/tmp/rustc-1.98.0 cargo build --release --locked)",
         "echo $(cargo +1.98.0 build --release --locked)",
         "echo $(rustup run 1.98.0 cargo build --release --locked)",
+        "echo `rustup default 1.98.0`",
+        "echo `cargo +1.98.0 build --release --locked`",
         "value=$(case x in x) RUSTUP_TOOLCHAIN=1.98.0 cargo build --release --locked;; esac)",
         "version=$(git rev-parse HEAD); CARGO=cargo; RUSTUP_TOOLCHAIN=1.98.0 \"$CARGO\" build --release --locked",
         "version=$(git rev-parse HEAD); CARGO=cargo; RUSTUP_TOOLCHAIN=1.98.0 \"${CARGO:?}\" build --release --locked",
@@ -132,6 +198,9 @@ fn command_substitution_guard_allows_non_compiler_subshells() {
         "printf '%s\\n' \"$(uname -m)\"",
         "literal=$(printf '%s' \"(not syntax)\")",
         "nested=$(printf '%s' \"$(uname -m)\")",
+        "legacy=`git rev-parse HEAD`",
+        "printf '%s\\n' '`rustup default 1.98.0`'",
+        "printf '%s\\n' \\`rustup default 1.98.0\\`",
         "printf '%s\\n' '$(RUSTUP_TOOLCHAIN=1.98.0 cargo build --release --locked)'",
         "printf '%s\\n' \\$(RUSTUP_TOOLCHAIN=1.98.0 cargo build --release --locked)",
         "version=$(git rev-parse HEAD); CARGO=cargo; RUSTUP_TOOLCHAIN=1.98.0 printf '%s\\n' '${CARGO:?}'",
