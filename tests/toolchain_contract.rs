@@ -162,6 +162,8 @@ fn assert_no_alternate_toolchain_selector(context: &str, body: &str) {
     for line in body.lines() {
         let command = line.trim();
         for forbidden in [
+            "RUSTC=",
+            "CARGO_BUILD_RUSTC=",
             "RUSTUP_TOOLCHAIN",
             "rustup override",
             "rustup run",
@@ -254,6 +256,8 @@ fn assert_host_cargo_jobs_use_fixed_compiler(path: &str, workflow: &str) {
         for forbidden in [
             "rustup default ",
             "rustup toolchain install ",
+            "RUSTC=",
+            "CARGO_BUILD_RUSTC=",
             "RUSTUP_TOOLCHAIN",
             "rustup override",
             "rustup run",
@@ -412,5 +416,19 @@ fn host_cargo_job_detection_rejects_quoted_command_without_fixed_compiler() {
     assert!(
         result.is_err(),
         "quoted Cargo command token must still require the fixed compiler contract"
+    );
+}
+
+/// Proves a verified default cannot be bypassed by Cargo's direct `RUSTC` environment override.
+#[test]
+fn host_cargo_job_rejects_rustc_environment_override_after_verification() {
+    let workflow = "jobs:\n  build:\n    steps:\n      - run: |\n          rustup toolchain install 1.98.1 --profile minimal\n          rustup default 1.98.1\n          rustc --version --verbose | grep -Fx 'release: 1.98.1'\n          RUSTC=/tmp/rustc-1.98.0 cargo build --release --locked\n";
+    let result = std::panic::catch_unwind(|| {
+        assert_host_cargo_jobs_use_fixed_compiler("synthetic.yml", workflow);
+    });
+
+    assert!(
+        result.is_err(),
+        "Cargo's RUSTC environment authority must not bypass the verified Rust 1.98.1 compiler"
     );
 }
