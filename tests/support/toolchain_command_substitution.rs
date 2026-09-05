@@ -77,10 +77,31 @@ fn command_basename(word: &str) -> &str {
     word.rsplit('/').next().unwrap_or(word)
 }
 
+/// Splits a simple or Bash `+=` assignment into its variable name and assigned value.
+fn assignment_parts(word: &str) -> Option<(&str, &str)> {
+    let (name, value) = word.split_once('=')?;
+    Some((name.strip_suffix('+').unwrap_or(name), value))
+}
+
 /// Returns the environment-variable name for a simple or Bash `+=` assignment.
 fn assignment_name(word: &str) -> Option<&str> {
-    let (name, _) = word.split_once('=')?;
-    Some(name.strip_suffix('+').unwrap_or(name))
+    assignment_parts(word).map(|(name, _)| name)
+}
+
+/// Collects shell variables that are explicitly assigned a Cargo executable path.
+fn cargo_command_aliases(tokens: &[String]) -> Vec<String> {
+    tokens
+        .iter()
+        .filter_map(|token| {
+            let (name, value) = assignment_parts(token)?;
+            (command_basename(value) == "cargo").then(|| name.to_owned())
+        })
+        .collect()
+}
+
+/// Reports whether a normalized command token resolves directly or through a local alias to Cargo.
+fn is_cargo_command(token: &str, aliases: &[String]) -> bool {
+    command_basename(token) == "cargo" || aliases.iter().any(|alias| token == alias)
 }
 
 /// Detects compiler authority within one already-bounded executable shell step or Docker `RUN`.
@@ -90,9 +111,10 @@ fn shell_changes_compiler_authority(shell: &str) -> bool {
     }
 
     let tokens = security_tokens(shell);
+    let cargo_aliases = cargo_command_aliases(&tokens);
     let contains_cargo = tokens
         .iter()
-        .any(|token| command_basename(token) == "cargo");
+        .any(|token| is_cargo_command(token, &cargo_aliases));
 
     if contains_cargo
         && tokens.iter().any(|token| {
@@ -105,7 +127,7 @@ fn shell_changes_compiler_authority(shell: &str) -> bool {
     }
 
     if tokens.windows(2).any(|window| {
-        command_basename(&window[0]) == "cargo"
+        is_cargo_command(&window[0], &cargo_aliases)
             && window[1].starts_with('+')
             && window[1].len() > 1
     }) {
