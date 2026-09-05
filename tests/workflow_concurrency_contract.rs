@@ -151,7 +151,7 @@ fn event_block<'a>(source: &'a str, event: &str) -> Option<Vec<&'a str>> {
 }
 
 /// Returns the top-level concurrency mapping without accepting a job-local look-alike.
-fn concurrency_block<'a>(source: &'a str) -> Option<Vec<&'a str>> {
+fn concurrency_block(source: &str) -> Option<Vec<&str>> {
     let mut in_block = false;
     let mut block = Vec::new();
 
