@@ -48,7 +48,7 @@ A subsequent source review found a distinct lexical fail-open after that repair:
 
 Draft #54 current head `706a758868f6da71745587cb2028533ddc27ec2e` is a non-force child of current #56. Fresh compare against #56 is **ahead 25 / behind 0** with `d014fa3...` as exact merge base and an effective child delta of exactly four derivative-advisory evidence files. The child adopted the new parent-only test blob into its existing tree and ordinary two-parent merge `706a758...` recorded current #56 without rewriting history. Current CI `33937240420` and Supply Chain `33937240400` supersede earlier child evidence and are queued/pending.
 
-#54 intentionally requires committed `Cargo.lock` to contain no `derivative`. The supplier advisory `RUSTSEC-2024-0388` is an unmaintained-dependency finding with no patched release; CWL policy does not convert that into a blanket audit exception. The intended RED is valid only after the parent compiler/format path is independently GREEN.
+Issue `#54` intentionally requires committed `Cargo.lock` to contain no `derivative`. The supplier advisory `RUSTSEC-2024-0388` is an unmaintained-dependency finding with no patched release; CWL policy does not convert that into a blanket audit exception. The intended RED is valid only after the parent compiler/format path is independently GREEN.
 
 ### Supplier and protocol prerequisites
 
