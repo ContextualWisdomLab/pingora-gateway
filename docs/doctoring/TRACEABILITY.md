@@ -22,6 +22,7 @@ This file links material technical/security claims to primary standards or upstr
 | The pinned upstream head is seven commits after the prior security-resolution pin `6463ad6407a1d3fe256f1951dd0ecb054477e3f6`; the relevant retry/grace configuration remains unchanged at the new head | GitHub compare `6463ad6...09696b5` plus the exact `ServerConf` source at `09696b5` |
 | Rust 1.98.1 is the latest stable toolchain observed on 2026-09-04; it fixes a vtable-generation miscompilation introduced in 1.98.0 that could emit null function pointers in trait-object vtables and cause undefined behavior | Rust Release Team, Rust 1.98.1 announcement, 2026-09-03; release-producing gateway paths therefore select and verify 1.98.1 rather than compiling with 1.98.0 |
 | Cargo can replace the compiler executable or wrap compiler invocations through `RUSTC`, `RUSTC_WRAPPER`, `RUSTC_WORKSPACE_WRAPPER`, `CARGO_BUILD_RUSTC`, `CARGO_BUILD_RUSTC_WRAPPER`, and `CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER`; repository Cargo configuration can carry the corresponding `build.rustc`, `build.rustc-wrapper`, and `build.rustc-workspace-wrapper` authority | The Cargo Book, *Environment Variables* and *Configuration*; gateway release workflows therefore fail closed on these YAML/shell overrides and reject repository `.cargo/config.toml` / `.cargo/config` until separately governed |
+| Docker `ENV` persists environment variables into subsequent build instructions, while `ARG` values are passed to subsequent `RUN` instructions as build-time environment variables; either can therefore carry Cargo compiler-wrapper authority into an OCI release build even after an earlier standalone `rustc` verification | Docker Docs, *Dockerfile reference* and *Build variables*; the gateway compiler-wrapper contract rejects all governed compiler variables in Docker `ENV`, `ARG`, shell-form `RUN`, and JSON-form `RUN` instructions before release compilation |
 | OCI runtime-spec 1.3.0 is the latest released runtime specification observed on 2026-09-04 | Open Container Initiative runtime-spec v1.3.0 release notice, 2025-11-04; runtime hardening claims still require executable container evidence |
 | `lru` versions before 0.18.2 are affected by RUSTSEC-2026-0253 | RustSec advisory RUSTSEC-2026-0253; the upstream pin includes the first-fixed `lru` dependency change, but release must use a committed audited lock |
 
@@ -44,6 +45,10 @@ Cloudflare. (2026). *HTTP request smuggling via premature upgrade* (GHSA-xq2h-p2
 Cloudflare. (2026). *HTTP request smuggling via HTTP/1.0 and Transfer-Encoding misparsing* (GHSA-hj7x-879w-vrp7). GitHub Security Advisories. https://github.com/cloudflare/pingora/security/advisories/GHSA-hj7x-879w-vrp7
 
 Cloudflare. (2026). *Cache key poisoning advisory* (GHSA-f93w-pcj3-rggc). GitHub Security Advisories. https://github.com/cloudflare/pingora/security/advisories/GHSA-f93w-pcj3-rggc
+
+Docker, Inc. (n.d.). *Build variables*. Docker Docs. https://docs.docker.com/build/building/variables/
+
+Docker, Inc. (n.d.). *Dockerfile reference*. Docker Docs. https://docs.docker.com/reference/dockerfile/
 
 Fielding, R., Nottingham, M., & Reschke, J. (2022). *HTTP semantics* (RFC 9110). RFC Editor. https://www.rfc-editor.org/rfc/rfc9110
 
