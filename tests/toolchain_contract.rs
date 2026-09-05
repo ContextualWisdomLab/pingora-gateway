@@ -83,6 +83,60 @@ fn workflow_job_run_scripts(workflow: &str) -> Vec<(String, String)> {
         .collect()
 }
 
+/// Rejects compiler selectors provided through GitHub Actions YAML environment mappings.
+fn assert_environment_mapping_has_no_compiler_authority(
+    context: &str,
+    scope: &str,
+    environment: Option<&Value>,
+) {
+    let Some(environment) = environment.and_then(Value::as_mapping) else {
+        return;
+    };
+
+    for forbidden in ["RUSTC", "CARGO_BUILD_RUSTC"] {
+        assert!(
+            !environment
+                .keys()
+                .any(|key| key.as_str() == Some(forbidden)),
+            "{context} must not set Cargo compiler authority {forbidden} in {scope} env"
+        );
+    }
+}
+
+/// Checks workflow-, job-, and step-level YAML env scopes for Cargo compiler overrides.
+fn assert_no_yaml_compiler_environment(context: &str, workflow: &str, job_name: &str) {
+    let document: Value = serde_yaml::from_str(workflow).unwrap_or_else(|error| {
+        panic!("workflow YAML must parse before compiler environment validation: {error}")
+    });
+    assert_environment_mapping_has_no_compiler_authority(
+        context,
+        "workflow",
+        document.get("env"),
+    );
+
+    let job = document
+        .get("jobs")
+        .and_then(Value::as_mapping)
+        .and_then(|jobs| {
+            jobs.iter()
+                .find(|(name, _)| name.as_str() == Some(job_name))
+                .map(|(_, job)| job)
+        })
+        .unwrap_or_else(|| panic!("{context} must exist in the semantic workflow jobs mapping"));
+    assert_environment_mapping_has_no_compiler_authority(context, "job", job.get("env"));
+
+    if let Some(steps) = job.get("steps").and_then(Value::as_sequence) {
+        for (index, step) in steps.iter().enumerate() {
+            let scope = format!("step {index}");
+            assert_environment_mapping_has_no_compiler_authority(
+                context,
+                &scope,
+                step.get("env"),
+            );
+        }
+    }
+}
+
 /// Mirrors the shell's removal of an unquoted backslash-newline pair before tokenization.
 fn normalize_shell_continuations(script: &str) -> String {
     script.replace("\\\r\n", "").replace("\\\n", "")
@@ -210,6 +264,7 @@ fn assert_host_cargo_jobs_use_fixed_compiler(path: &str, workflow: &str) {
             .map(|(_, body)| body)
             .unwrap_or_else(|| panic!("{context} must use a canonical block-style job mapping"));
 
+        assert_no_yaml_compiler_environment(&context, workflow, &job_name);
         assert_eq!(
             normalized_scripts.matches(FIXED_INSTALL).count(),
             1,
@@ -431,4 +486,23 @@ fn host_cargo_job_rejects_rustc_environment_override_after_verification() {
         result.is_err(),
         "Cargo's RUSTC environment authority must not bypass the verified Rust 1.98.1 compiler"
     );
+}
+
+/// Proves GitHub Actions YAML env scopes cannot rebind Cargo after standalone compiler verification.
+#[test]
+fn host_cargo_job_rejects_yaml_environment_compiler_override() {
+    for workflow in [
+        "env:\n  RUSTC: /tmp/rustc-1.98.0\njobs:\n  build:\n    steps:\n      - run: |\n          rustup toolchain install 1.98.1 --profile minimal\n          rustup default 1.98.1\n          rustc --version --verbose | grep -Fx 'release: 1.98.1'\n          cargo build --release --locked\n",
+        "jobs:\n  build:\n    env:\n      CARGO_BUILD_RUSTC: /tmp/rustc-1.98.0\n    steps:\n      - run: |\n          rustup toolchain install 1.98.1 --profile minimal\n          rustup default 1.98.1\n          rustc --version --verbose | grep -Fx 'release: 1.98.1'\n          cargo build --release --locked\n",
+        "jobs:\n  build:\n    steps:\n      - env:\n          RUSTC: /tmp/rustc-1.98.0\n        run: |\n          rustup toolchain install 1.98.1 --profile minimal\n          rustup default 1.98.1\n          rustc --version --verbose | grep -Fx 'release: 1.98.1'\n          cargo build --release --locked\n",
+    ] {
+        let result = std::panic::catch_unwind(|| {
+            assert_host_cargo_jobs_use_fixed_compiler("synthetic.yml", workflow);
+        });
+
+        assert!(
+            result.is_err(),
+            "workflow/job/step YAML compiler authority must not bypass the verified Rust 1.98.1 compiler"
+        );
+    }
 }
