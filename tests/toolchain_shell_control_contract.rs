@@ -354,6 +354,7 @@ fn shell_control_operator_cannot_hide_compiler_assignment() {
         "command -p env RUSTC=/tmp/rustc-1.98.0 cargo build --release --locked",
         "command -p env CARGO_BUILD_RUSTC=/tmp/rustc-1.98.0 cargo build --release --locked",
         "command -p env RUSTUP_TOOLCHAIN=1.98.0 cargo build --release --locked",
+        "echo `RUSTUP_TOOLCHAIN=1.98.0 cargo build --release --locked`",
     ] {
         let result = std::panic::catch_unwind(|| {
             assert_no_hidden_compiler_authority("synthetic shell", script);
