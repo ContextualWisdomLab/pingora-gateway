@@ -432,3 +432,17 @@ fn host_cargo_job_rejects_rustc_environment_override_after_verification() {
         "Cargo's RUSTC environment authority must not bypass the verified Rust 1.98.1 compiler"
     );
 }
+
+/// Proves GitHub Actions YAML `env` cannot rebind Cargo after standalone compiler verification.
+#[test]
+fn host_cargo_job_rejects_yaml_environment_compiler_override() {
+    let workflow = "jobs:\n  build:\n    env:\n      RUSTC: /tmp/rustc-1.98.0\n    steps:\n      - run: |\n          rustup toolchain install 1.98.1 --profile minimal\n          rustup default 1.98.1\n          rustc --version --verbose | grep -Fx 'release: 1.98.1'\n          cargo build --release --locked\n";
+    let result = std::panic::catch_unwind(|| {
+        assert_host_cargo_jobs_use_fixed_compiler("synthetic.yml", workflow);
+    });
+
+    assert!(
+        result.is_err(),
+        "job-level YAML RUSTC authority must not bypass the verified Rust 1.98.1 compiler"
+    );
+}
