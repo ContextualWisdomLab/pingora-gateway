@@ -81,12 +81,12 @@ fn command_substitution_body(shell: &str, body_start: usize) -> (usize, &str) {
             index += 2;
             continue;
         }
-        if byte == b'(' {
+        if !double_quoted && byte == b'(' {
             depth += 1;
             index += 1;
             continue;
         }
-        if byte == b')' {
+        if !double_quoted && byte == b')' {
             depth -= 1;
             if depth == 0 {
                 return (index, &shell[body_start..index]);
@@ -115,7 +115,9 @@ fn security_tokens(shell: &str) -> Vec<String> {
         }
         match character {
             '\'' | '"' => {}
-            '(' | ')' | '{' | '}' | ';' | '|' | '&' | '\n' | '\r' | '\t' => normalized.push(' '),
+            '(' | ')' | '{' | '}' | ';' | '|' | '&' | '\n' | '\r' | '\t' => {
+                normalized.push(' ');
+            }
             _ => normalized.push(character),
         }
     }
