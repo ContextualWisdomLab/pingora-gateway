@@ -295,9 +295,10 @@ fn contains_variable_cargo_command(shell: &str) -> bool {
         };
         let command_basename = command_basename(command);
 
-        if matches!(command_basename, "export" | "readonly") {
-            // POSIX `export` and `readonly` are special builtins, so assignment prefixes and
-            // assignment operands affect the current shell rather than only a child command.
+        if matches!(command_basename, "export" | "readonly" | "declare" | "typeset") {
+            // These shell builtins persist assignment operands in the current Bash workflow step.
+            // `export` and `readonly` are POSIX special builtins; `declare`/`typeset` are Bash
+            // declaration builtins used by GitHub-hosted Linux `run` steps.
             for (name, value) in assignment_prefix {
                 apply_persistent_cargo_assignment(&mut aliases, name, value);
             }
