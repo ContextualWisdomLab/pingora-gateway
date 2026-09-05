@@ -31,6 +31,7 @@ fn command_substitution_cargo_alias_is_rejected() {
         "CARGO=\"$(printf /opt/rust-1.98.0/bin/cargo)\"; ${CARGO:?} build --release --locked",
         "export CARGO=\"$(printf /opt/rust-1.98.0/bin/cargo)\"; $CARGO build --release --locked",
         "CARGO=$(command -v cargo); \"$CARGO\" build --release --locked",
+        "CARGO+=$(command -v cargo); \"$CARGO\" build --release --locked",
     ] {
         let result = std::panic::catch_unwind(|| {
             assert_no_hidden_compiler_authority("synthetic shell", shell);
