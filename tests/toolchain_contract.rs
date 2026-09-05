@@ -162,6 +162,8 @@ fn assert_no_alternate_toolchain_selector(context: &str, body: &str) {
     for line in body.lines() {
         let command = line.trim();
         for forbidden in [
+            "RUSTC=",
+            "CARGO_BUILD_RUSTC=",
             "RUSTUP_TOOLCHAIN",
             "rustup override",
             "rustup run",
@@ -254,6 +256,8 @@ fn assert_host_cargo_jobs_use_fixed_compiler(path: &str, workflow: &str) {
         for forbidden in [
             "rustup default ",
             "rustup toolchain install ",
+            "RUSTC=",
+            "CARGO_BUILD_RUSTC=",
             "RUSTUP_TOOLCHAIN",
             "rustup override",
             "rustup run",
