@@ -16,9 +16,13 @@ This file links material technical/security claims to primary standards or upstr
 | HTTP/3 semantics over QUIC | RFC 9114; HTTP/3 is not claimed implemented by this v1 candidate until executable listener/interoperability evidence exists |
 | Current TLS 1.3 protocol semantics and application identity-verification responsibility | RFC 9846, published July 2026, which obsoletes RFC 8446 and points applications to RFC 9525 for identity verification |
 | New protocols using TLS must require TLS 1.3 | RFC 9852, BCP 195, July 2026; this gateway is not claiming a new application protocol and still requires explicit migration-time protocol compatibility evidence |
+| GitHub Actions concurrency permits `cancel-in-progress` to be a conditional expression; group names should include workflow identity to prevent cross-workflow cancellation; event-specific properties may use `github.run_id` as a guaranteed unique fallback | GitHub Docs, *Control the concurrency of workflows and jobs*, revalidated 2026-09-05 |
+| With the default single pending slot, a newly queued run in the same concurrency group replaces an existing pending run even when `cancel-in-progress` is false | GitHub Docs, *Control the concurrency of workflows and jobs*; CWL rerun isolation therefore avoids placing historical reruns in the same first-attempt PR group |
+| Pull-request workflow activity can explicitly include `ready_for_review`, and job-level `if` conditions are evaluated before a job is routed to a runner | GitHub Docs, *Events that trigger workflows* and *Contexts reference*, revalidated 2026-09-05; this supports draft job rejection plus Ready re-admission without runner-side filtering |
+| Re-running a workflow uses the same original `GITHUB_SHA` and `GITHUB_REF` | GitHub Docs, *Re-running workflows and jobs*; rerun evidence is historical execution of the same triggered revision, not a new source revision |
 | Cargo can select a compiler executable independently of a prior standalone `rustc` verification through `RUSTC` or the `CARGO_BUILD_RUSTC` configuration environment variable (`build.rustc`) | The Cargo Book, *Environment Variables*; release-path acceptance therefore rejects those secondary compiler authorities after selecting/verifying Rust 1.98.1 |
 | March 2026 Pingora request-smuggling/cache-key advisories are patched in 0.8.0 | GitHub Security Advisories GHSA-xq2h-p299-vjwv, GHSA-hj7x-879w-vrp7, GHSA-f93w-pcj3-rggc |
-| Pingora 0.8.1 is the latest public GitHub Release observed on 2026-09-05 and bounds default HTTP/2 server limits | Cloudflare Pingora GitHub Releases, 0.8.1, 2026-06-04 |
+| Pingora 0.8.1 is the latest public GitHub Release observed on 2026-09-05 and bounds default HTTP/2 server limits | Cloudflare Pingora GitHub Releases, 0.8.1, 2026-06-04; the observed GitHub release object is not marked immutable |
 | The pinned upstream head is seven commits after the prior security-resolution pin `6463ad6407a1d3fe256f1951dd0ecb054477e3f6`; the relevant retry/grace configuration remains unchanged at the new head | GitHub compare `6463ad6...09696b5` plus the exact `ServerConf` source at `09696b5` |
 | Rust 1.98.1 is the latest stable toolchain observed on 2026-09-05; it repairs a Rust 1.98.0 vtable-generation miscompilation that can emit a null pointer where a trait-object function pointer should be | Rust Release Team, Rust 1.98.1 announcement and release notes, 2026-09-03. The current foundation manifest remains 1.98.0; Draft #56 is the separately gated release-path repair and must not be treated as inherited before integration |
 | OCI runtime-spec 1.3.0 is the latest released runtime specification observed on 2026-09-05 | Open Container Initiative runtime-spec v1.3.0 release notice and release list; runtime hardening claims still require executable container evidence |
@@ -58,6 +62,14 @@ Rescorla, E. (2026). *The Transport Layer Security (TLS) Protocol Version 1.3* (
 Salz, R., & Aviram, N. (2026). *New protocols using TLS must require TLS 1.3* (RFC 9852, BCP 195). RFC Editor. https://www.rfc-editor.org/rfc/rfc9852
 
 Petersson, A., & Nilsson, M. (2014). *Forwarded HTTP extension* (RFC 7239). RFC Editor. https://www.rfc-editor.org/rfc/rfc7239
+
+GitHub. (n.d.). *Control the concurrency of workflows and jobs*. GitHub Docs. https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency
+
+GitHub. (n.d.). *Events that trigger workflows*. GitHub Docs. https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows
+
+GitHub. (n.d.). *Contexts reference*. GitHub Docs. https://docs.github.com/en/actions/reference/workflows-and-actions/contexts
+
+GitHub. (n.d.). *Re-running workflows and jobs*. GitHub Docs. https://docs.github.com/en/actions/how-tos/manage-workflow-runs/re-run-workflows-and-jobs
 
 Open Container Initiative. (2025, November 4). *OCI runtime-spec v1.3.0 release notice*. https://opencontainers.org/release-notices/v1-3-0-runtime-spec/
 
