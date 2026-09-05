@@ -23,6 +23,24 @@ fn variable_cargo_command_is_rejected_without_command_substitution() {
     }
 }
 
+/// A dynamically computed persistent executable must fail closed when later used as a command.
+#[test]
+fn command_substitution_cargo_alias_is_rejected() {
+    for shell in [
+        "CARGO=\"$(command -v cargo)\"; \"$CARGO\" build --release --locked",
+        "CARGO=\"$(printf /opt/rust-1.98.0/bin/cargo)\"; ${CARGO:?} build --release --locked",
+        "export CARGO=\"$(printf /opt/rust-1.98.0/bin/cargo)\"; $CARGO build --release --locked",
+    ] {
+        let result = std::panic::catch_unwind(|| {
+            assert_no_hidden_compiler_authority("synthetic shell", shell);
+        });
+        assert!(
+            result.is_err(),
+            "command-substitution Cargo alias must not hide executable authority: {shell}"
+        );
+    }
+}
+
 /// A command-local assignment prefix must not be remembered as parent-shell Cargo authority.
 #[test]
 fn command_local_cargo_assignment_does_not_persist() {
