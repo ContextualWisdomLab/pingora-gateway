@@ -15,6 +15,7 @@ fn legacy_command_substitution_bodies(shell: &str) -> Vec<String> {
     let mut bodies = Vec::new();
     let mut current: Option<String> = None;
     let mut single_quoted = false;
+    let mut double_quoted = false;
     let mut escaped = false;
 
     for character in shell.chars() {
@@ -45,8 +46,12 @@ fn legacy_command_substitution_bodies(shell: &str) -> Vec<String> {
             escaped = true;
             continue;
         }
-        if character == '\'' {
+        if character == '\'' && !double_quoted {
             single_quoted = !single_quoted;
+            continue;
+        }
+        if character == '"' && !single_quoted {
+            double_quoted = !double_quoted;
             continue;
         }
         if character == '`' && !single_quoted {
@@ -173,6 +178,8 @@ fn command_substitution_guard_rejects_alternate_compiler_authority() {
         "echo $(rustup run 1.98.0 cargo build --release --locked)",
         "echo `rustup default 1.98.0`",
         "echo `cargo +1.98.0 build --release --locked`",
+        "printf '%s\\n' \"prefix '`rustup default 1.98.0`' suffix\"",
+        "printf '%s\\n' \"prefix '`cargo +1.98.0 build --release --locked`' suffix\"",
         "value=$(case x in x) RUSTUP_TOOLCHAIN=1.98.0 cargo build --release --locked;; esac)",
         "version=$(git rev-parse HEAD); CARGO=cargo; RUSTUP_TOOLCHAIN=1.98.0 \"$CARGO\" build --release --locked",
         "version=$(git rev-parse HEAD); CARGO=cargo; RUSTUP_TOOLCHAIN=1.98.0 \"${CARGO:?}\" build --release --locked",
