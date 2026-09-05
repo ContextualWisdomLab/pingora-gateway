@@ -233,6 +233,9 @@ fn shell_control_operator_cannot_hide_compiler_assignment() {
         "printf ok|RUSTC=/tmp/rustc-1.98.0 cargo build --release --locked",
         "command env RUSTUP_TOOLCHAIN=1.98.0 cargo build --release --locked",
         "export CARGO_BUILD_RUSTC=/tmp/rustc-1.98.0; cargo build --release --locked",
+        "command -p env RUSTC=/tmp/rustc-1.98.0 cargo build --release --locked",
+        "command -p env CARGO_BUILD_RUSTC=/tmp/rustc-1.98.0 cargo build --release --locked",
+        "command -p env RUSTUP_TOOLCHAIN=1.98.0 cargo build --release --locked",
     ] {
         let result = std::panic::catch_unwind(|| {
             assert_no_hidden_compiler_authority("synthetic shell", script);
@@ -253,6 +256,9 @@ fn shell_control_operator_cannot_hide_toolchain_command_authority() {
         "printf ok|rustup toolchain install 1.98.0 --profile minimal",
         "command cargo +nightly build --release --locked",
         "command rustup run 1.98.0 cargo build --release --locked",
+        "command -p cargo +1.98.0 build --release --locked",
+        "command -p rustup default 1.98.0",
+        "command -p -- cargo +nightly build --release --locked",
     ] {
         let result = std::panic::catch_unwind(|| {
             assert_no_hidden_compiler_authority("synthetic shell", script);
