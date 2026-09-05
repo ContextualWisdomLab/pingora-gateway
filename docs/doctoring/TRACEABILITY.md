@@ -16,6 +16,7 @@ This file links material technical/security claims to primary standards or upstr
 | HTTP/3 semantics over QUIC | RFC 9114; HTTP/3 is not claimed implemented by this v1 candidate until executable listener/interoperability evidence exists |
 | Current TLS 1.3 protocol semantics and application identity-verification responsibility | RFC 9846, published July 2026, which obsoletes RFC 8446 and points applications to RFC 9525 for identity verification |
 | New protocols using TLS must require TLS 1.3 | RFC 9852, BCP 195, July 2026; this gateway is not claiming a new application protocol and still requires explicit migration-time protocol compatibility evidence |
+| Cargo can select a compiler executable independently of a prior standalone `rustc` verification through `RUSTC` or the `CARGO_BUILD_RUSTC` configuration environment variable (`build.rustc`) | The Cargo Book, *Environment Variables*; release-path acceptance therefore rejects those secondary compiler authorities after selecting/verifying Rust 1.98.1 |
 | March 2026 Pingora request-smuggling/cache-key advisories are patched in 0.8.0 | GitHub Security Advisories GHSA-xq2h-p299-vjwv, GHSA-hj7x-879w-vrp7, GHSA-f93w-pcj3-rggc |
 | Pingora 0.8.1 is the latest public GitHub Release observed on 2026-09-05 and bounds default HTTP/2 server limits | Cloudflare Pingora GitHub Releases, 0.8.1, 2026-06-04 |
 | The pinned upstream head is seven commits after the prior security-resolution pin `6463ad6407a1d3fe256f1951dd0ecb054477e3f6`; the relevant retry/grace configuration remains unchanged at the new head | GitHub compare `6463ad6...09696b5` plus the exact `ServerConf` source at `09696b5` |
@@ -59,6 +60,8 @@ Salz, R., & Aviram, N. (2026). *New protocols using TLS must require TLS 1.3* (R
 Petersson, A., & Nilsson, M. (2014). *Forwarded HTTP extension* (RFC 7239). RFC Editor. https://www.rfc-editor.org/rfc/rfc7239
 
 Open Container Initiative. (2025, November 4). *OCI runtime-spec v1.3.0 release notice*. https://opencontainers.org/release-notices/v1-3-0-runtime-spec/
+
+Rust Project Developers. (n.d.). *Environment variables*. The Cargo Book. https://doc.rust-lang.org/cargo/reference/environment-variables.html
 
 Rust Release Team. (2026, September 3). *Announcing Rust 1.98.1*. Rust Blog. https://blog.rust-lang.org/2026/09/03/Rust-1.98.1/
 
