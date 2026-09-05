@@ -1,6 +1,14 @@
 # syntax=docker/dockerfile:1.7
 FROM rust:1.98.0-bookworm@sha256:82150a52ec202c1b14d7817e14516c392bb7f5cfebd88f1ed531cb37ebd39922 AS builder
 
+# Rust 1.98.1 fixes a vtable-generation miscompilation in 1.98.0. Docker Official Image metadata
+# does not yet publish a 1.98.1-bookworm tag, so keep the already-reviewed immutable image only
+# as a bootstrap environment and select the fixed point release before any gateway compilation.
+# Remove this bridge when an official 1.98.1 image is available and its exact digest is reviewed.
+RUN rustup toolchain install 1.98.1 --profile minimal \
+    && rustup default 1.98.1 \
+    && rustc --version --verbose | grep -Fx 'release: 1.98.1'
+
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates cmake libssl-dev pkg-config \
     && rm -rf /var/lib/apt/lists/*
