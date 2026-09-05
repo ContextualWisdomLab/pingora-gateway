@@ -99,27 +99,65 @@ fn cargo_command_aliases(tokens: &[String]) -> Vec<String> {
         .collect()
 }
 
-/// Reports whether a normalized token can be a parameter expansion of the given command alias.
+/// Reports whether a shell parameter expansion actively references a recorded Cargo command alias.
 ///
-/// Braces and `$` are deliberately removed by `security_tokens`; the remaining suffix therefore
-/// starts with the POSIX default/error/alternate-value operator when forms such as `${CARGO:?}` or
-/// `${CARGO:-cargo}` were used. Plain `=` is intentionally excluded because `CARGO=cargo` is an
-/// assignment token, not by itself a command invocation.
-fn is_parameter_expansion_of_alias(token: &str, alias: &str) -> bool {
-    let Some(suffix) = token.strip_prefix(alias) else {
-        return false;
-    };
-    [":-", ":=", ":?", ":+", "-", "?", "+"]
-        .iter()
-        .any(|operator| suffix.starts_with(operator))
+/// This scanner only identifies the parameter name at an unescaped `${...}` introducer outside
+/// single quotes. It does not parse the expansion word or closing brace, so forms such as
+/// `${CARGO:?}`, `${CARGO:-cargo}`, and `${CARGO=cargo}` share one fail-closed identity rule without
+/// confusing the simple assignment token `CARGO=cargo` with a command invocation.
+fn contains_active_cargo_parameter_expansion(shell: &str, aliases: &[String]) -> bool {
+    let bytes = shell.as_bytes();
+    let mut index = 0;
+    let mut single_quoted = false;
+    let mut double_quoted = false;
+    let mut escaped = false;
+
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if escaped {
+            escaped = false;
+            index += 1;
+            continue;
+        }
+        if byte == b'\\' && !single_quoted {
+            escaped = true;
+            index += 1;
+            continue;
+        }
+        if byte == b'\'' && !double_quoted {
+            single_quoted = !single_quoted;
+            index += 1;
+            continue;
+        }
+        if byte == b'"' && !single_quoted {
+            double_quoted = !double_quoted;
+            index += 1;
+            continue;
+        }
+        if !single_quoted && byte == b'$' && bytes.get(index + 1) == Some(&b'{') {
+            let name_start = index + 2;
+            let mut name_end = name_start;
+            while bytes.get(name_end).is_some_and(|candidate| {
+                candidate.is_ascii_alphanumeric() || *candidate == b'_'
+            }) {
+                name_end += 1;
+            }
+            if name_end > name_start {
+                let name = &shell[name_start..name_end];
+                if aliases.iter().any(|alias| alias == name) {
+                    return true;
+                }
+            }
+        }
+        index += 1;
+    }
+
+    false
 }
 
 /// Reports whether a normalized command token resolves directly or through a local alias to Cargo.
 fn is_cargo_command(token: &str, aliases: &[String]) -> bool {
-    command_basename(token) == "cargo"
-        || aliases.iter().any(|alias| {
-            token == alias || is_parameter_expansion_of_alias(token, alias)
-        })
+    command_basename(token) == "cargo" || aliases.iter().any(|alias| token == alias)
 }
 
 /// Detects compiler authority within one already-bounded executable shell step or Docker `RUN`.
@@ -132,7 +170,8 @@ fn shell_changes_compiler_authority(shell: &str) -> bool {
     let cargo_aliases = cargo_command_aliases(&tokens);
     let contains_cargo = tokens
         .iter()
-        .any(|token| is_cargo_command(token, &cargo_aliases));
+        .any(|token| is_cargo_command(token, &cargo_aliases))
+        || contains_active_cargo_parameter_expansion(shell, &cargo_aliases);
 
     if contains_cargo
         && tokens.iter().any(|token| {

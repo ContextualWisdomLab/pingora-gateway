@@ -112,6 +112,7 @@ fn command_substitution_guard_rejects_alternate_compiler_authority() {
         "version=$(git rev-parse HEAD); CARGO=cargo; RUSTUP_TOOLCHAIN=1.98.0 \"$CARGO\" build --release --locked",
         "version=$(git rev-parse HEAD); CARGO=cargo; RUSTUP_TOOLCHAIN=1.98.0 \"${CARGO:?}\" build --release --locked",
         "version=$(git rev-parse HEAD); CARGO=cargo; RUSTUP_TOOLCHAIN=1.98.0 \"${CARGO:-cargo}\" build --release --locked",
+        "version=$(git rev-parse HEAD); RUSTUP_TOOLCHAIN=1.98.0 \"${CARGO=cargo}\" build --release --locked",
     ] {
         let result = std::panic::catch_unwind(|| {
             assert_no_hidden_compiler_authority("synthetic shell", shell);
@@ -134,6 +135,8 @@ fn command_substitution_guard_allows_non_compiler_subshells() {
         "nested=$(printf '%s' \"$(uname -m)\")",
         "printf '%s\\n' '$(RUSTUP_TOOLCHAIN=1.98.0 cargo build --release --locked)'",
         "printf '%s\\n' \\$(RUSTUP_TOOLCHAIN=1.98.0 cargo build --release --locked)",
+        "version=$(git rev-parse HEAD); CARGO=cargo; RUSTUP_TOOLCHAIN=1.98.0 printf '%s\\n' '${CARGO:?}'",
+        "version=$(git rev-parse HEAD); CARGO=cargo; RUSTUP_TOOLCHAIN=1.98.0 printf '%s\\n' \\${CARGO:?}",
     ] {
         assert_no_hidden_compiler_authority("synthetic shell", shell);
     }
