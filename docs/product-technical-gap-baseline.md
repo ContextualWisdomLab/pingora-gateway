@@ -20,25 +20,29 @@ Merged #57 placed valid workflow-coalescing policy inside #53's H2→H1 Cookie l
 
 Draft #59 is based on foundation #1 `5a62e2fa56fdaa6f97c0518932711739e347c04a`, exact head `8893ab433a06bf25b63385689118d60861fe6a78`, with exactly three Rust workflow contracts in its effective range.
 
-The current head has direct runtime RED for Draft admission. While #59 is Draft, CI `33946975892` materialized `oci-runtime 101254743610`, `load-contract 101254743748`, and `test 101254743868` as queued `ubuntu-24.04` jobs with `steps=[]` and no runner identity; Supply Chain `33946975863` likewise materialized candidate work. The invariant is violated at admission, before checkout, so terminal Cargo execution is not required for this current-head RED.
+The current head has direct runtime RED for Draft admission. While #59 is Draft, CI `33946975892` and Supply Chain `33946975863` materialized runner-facing work under the foundation workflows. The invariant is violated at admission, before checkout, so terminal Cargo execution is not required for this current-head RED.
 
 Historical predecessor `8eaccce7251b4eb8666212b57207da31c0146b9d` remains independent semantic evidence: OCI/load/Supply Chain were GREEN and CI reached Cargo tests before failing the then-current concurrency/protected-main contracts. It is not transferred as current-head credit.
 
-### Exact current Draft-admission GREEN — #60
+Fresh CodeRabbit exact-range review of `5a62e2fa56fdaa6f97c0518932711739e347c04a...8893ab433a06bf25b63385689118d60861fe6a78` reported no new findings. The review verified the three-contract-only scope, fail-closed trigger syntax, top-level event boundary, exact `[main]` combined-event push scope, per-direct-job Draft guard enforcement, semantic scalar/sequence/mapping PR trigger detection, semantic tag-filter normalization, and exclusion of push-only release/tag workflows. The review sandbox did not execute Rust tests, so hosted execution remains the runtime authority.
 
-#60 is Draft while #59 remains unresolved. Exact head is `f1b09eb0a669a6f9f439daf250b1c7d0d95b6c1a`; effective child delta is exactly `.github/workflows/ci.yml` and `.github/workflows/supply-chain.yml`.
+### Exact current GREEN candidate — #60
 
-The repaired workflows limit duplicate push evidence to `main`, coalesce first-attempt PR work, isolate reruns with `github.run_id`, cancel only PR runs, listen for Ready/Draft state changes, and guard every direct PR job against Draft execution.
+#60 is Ready on exact #59 head `8893ab433a06bf25b63385689118d60861fe6a78`; exact head is `f1b09eb0a669a6f9f439daf250b1c7d0d95b6c1a`, and the effective child delta is exactly `.github/workflows/ci.yml` plus `.github/workflows/supply-chain.yml`.
 
-Converting unchanged #60 from Ready to Draft produced CI `33951166913` and Supply Chain `33951166945`; both completed `skipped`. CI jobs `101266101595`, `101266116987`, `101266122403` and Supply Chain job `101266102071` all completed skipped with `steps=[]` and no runner assignment. This is exact runtime GREEN for Draft admission/retraction and directly contrasts with Draft #59's queued jobs.
+The repaired workflows limit duplicate push evidence to protected `main`, coalesce first-attempt PR work by workflow/repository/PR identity, isolate reruns with `github.run_id`, cancel only PR runs, listen for Ready/Draft state changes, and guard every direct PR job against Draft execution.
 
-Older Ready-state runs `33947016327` / `33947016368` were cancelled by the Draft transition and are not all-gates GREEN. Promotion still requires current independent review and later Ready-state all-gates hosted GREEN on the unchanged candidate.
+Converting the unchanged candidate from Ready to Draft produced CI `33951166913` and Supply Chain `33951166945`; both completed `skipped`, and all direct jobs completed skipped with `steps=[]` and no runner assignment. This is exact runtime GREEN for Draft admission/retraction and directly contrasts with Draft #59's admitted work.
+
+After #59's current exact review completed clean, the unchanged #60 candidate was returned to Ready. The `ready_for_review` transition emitted current Ready-state CI `33952390050` and Supply Chain `33952390006`. They are queued at the latest verified read and are the authority for all-gates hosted GREEN; older Ready-state runs `33947016327` / `33947016368` were cancelled by the Draft transition and do not transfer.
+
+CodeRabbit also reported no static findings for the exact range `8893ab433a06bf25b63385689118d60861fe6a78...f1b09eb0a669a6f9f439daf250b1c7d0d95b6c1a`: the base is an ancestor, only the two workflow files change, the parent contract is byte-identical, and `git diff --check` passed. Runtime promotion still requires the current Ready-state all-gates hosted GREEN.
 
 ### Documentation projection — #61
 
-#61 is a Draft documentation-only child of #60. This file remains one of exactly six effective documentation files; no production Rust, workflow, or test delta belongs in the range. The Draft/synchronize path on the documentation child also completed CI and Supply Chain as skipped without runner work, confirming the inherited admission policy but not replacing #60 Ready-state all-gates evidence.
+#61 is a Draft documentation-only child of #60. This file remains one of exactly six effective documentation files; no production Rust, workflow, or test delta belongs in the range. Draft synchronize runs on the documentation child complete skipped without runner work under the inherited admission policy; this is descendant parity evidence, not a substitute for #60 Ready-state all-gates GREEN.
 
-Promotion order is `#59 exact Draft-admission RED + current review → #60 exact Draft-admission GREEN + current review → #60 Ready-state all-gates GREEN → ordinary foundation adoption → descendant ancestry repair`.
+Promotion order is `#60 current Ready-state all-gates GREEN → ordinary foundation adoption → descendant ancestry repair`. The RED parent and both current exact static reviews are already established and must not be re-opened by predecessor evidence transfer.
 
 ## Compiler and supply-chain roots — #56 / #54
 
@@ -46,7 +50,7 @@ Concurrent work advanced Draft #56 to exact `50b1f8c4b645622f61dfa25f74ac2bb8296
 
 Current #56 exact runs are CI `33950593604` (queued at the latest read) and Supply Chain `33950593607` (pending). Current-head compiler/bootstrap GREEN is therefore absent; predecessor terminal evidence does not transfer.
 
-Concurrent work also restacked Draft #54 onto current #56. Its live PR metadata now reports base `50b1f8c4...`, exact head `3d65b786ec19f8c139b575117115767de3ac90be`, and four effective files. Commit `3d65b786...` is the ordinary restack carrying the current compiler-authority repair while preserving the derivative-advisory RED lane. Current #54 runs are CI `33950645350` and Supply Chain `33950645363`, both pending at the latest read. The intended RUSTSEC-2024-0388 `derivative` RED may promote only after #56 independently proves compiler/bootstrap GREEN; audit ignores or mutable supplier pins are not closure.
+Concurrent work also restacked Draft #54 onto current #56. Its live PR metadata now reports base `50b1f8c4...`, exact head `3d65b786ec19f8c139b575117115767de3ac90be`, and four effective files. Commit `3d65b786...` is the ordinary restack carrying the current compiler-authority repair while preserving the derivative-advisory RED lane. The intended RUSTSEC-2024-0388 `derivative` RED may promote only after #56 independently proves compiler/bootstrap GREEN; audit ignores or mutable supplier pins are not closure.
 
 ## Protocol / supplier path
 
@@ -56,7 +60,7 @@ Protected public `cloudflare/pingora/main` remains `09696b51bc59315353d966863558
 
 ## Organization Actions owner-plane
 
-Organization-wide Actions authority remains in `ContextualWisdomLab/.github`. Protected `.github/main` is `6d7fbebec8aec31d88a30a36e71ca5b3925d241d` at the latest verified owner sweep. Queue-health #1150 has been reconciled by its dedicated owner to head `e6622a428060194b558929ad651d5b4ae3a9840f` on that base; the previous 180-behind state is historical. Pingora reports exact specimens to #712 but does not mutate `.github` source/refs/PR state while its dedicated writer is active.
+Organization-wide Actions authority remains in `ContextualWisdomLab/.github`. Protected `.github/main` is `6d7fbebec8aec31d88a30a36e71ca5b3925d241d` at the latest verified owner sweep. Queue-health #1150 has been reconciled by its dedicated owner to head `e6622a428060194b558929ad651d5b4ae3a9840f` on that base; its PR description still contains predecessor-base prose, so live base/head metadata rather than stale narrative is authority. Pingora reports exact specimens to #712 but does not mutate `.github` source/refs/PR state while its dedicated writer is active.
 
 The current Pingora specimen distinguishes three states that must not be normalized together: correct Draft-policy `skipped` jobs with zero steps; leaf-workflow defects that admit Draft jobs into the runner queue; and Ready/non-gated current jobs that materialize but remain unassigned because of owner-plane queue conditions.
 
