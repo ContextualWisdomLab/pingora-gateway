@@ -24,37 +24,43 @@ Foundation now owns `main`-only push scope, explicit PR lifecycle events, first-
 
 ## Compiler root — #56
 
-Compiler repair #56 is current exact `8ade8894330b896cb4d5bf46ee6b8be22b2cc6ab`, Ready/open, based on foundation `0da81a93f93e869c15bb7d34c55fc87479d16522`.
+Compiler repair #56 is current exact `bb07c623763da3417cfe144af508d1036c2a4054`, Ready/open, based on foundation `0da81a93f93e869c15bb7d34c55fc87479d16522`.
 
 Rust 1.98.1 remains the required release compiler because the Rust Release Team published it on 2026-09-03 to repair the vtable-generation miscompilation introduced in 1.98.0. Release-producing CI, Supply Chain, and OCI paths install/select/verify Rust 1.98.1 before Cargo. The compiler-authority contracts reject alternate authority through YAML environment scopes, explicit Cargo toolchain selectors, shell control operators and command indirection, GNU `env` variants, command substitution, persistent Cargo aliases, Cargo compiler-wrapper variables, repository Cargo configuration, and Docker `ENV`/`ARG`/`RUN` paths.
 
-The wrapper/Docker findings are source acceptance-gap repairs rather than hosted RED because live release paths did not contain wrapper overrides. Prior exact CodeRabbit review of `0da81a93...5e66e334` reported no new compiler-authority finding and confirmed the Docker repair closed the earlier wrapper-authority gap.
+The official Rust Docker source still declares Rust `1.98.0` in `rust-lang/docker-rust/master/versions.toml`; no reviewed official `1.98.1-bookworm` image authority is available. The digest-pinned 1.98.0 builder therefore remains bootstrap-only, explicitly installs/selects 1.98.1 and verifies `release: 1.98.1` before compilation. Remove that bridge only after an official 1.98.1 image is published, its exact digest is reviewed/pinned, and exact-head OCI/Supply Chain evidence is reacquired.
 
 ### Hosted formatter RED and repair
 
-Exact predecessor `5e66e334695697cee8469442161f0bfbe8368249` eventually acquired hosted runners in CI `33982856368`. This resolved the earlier classification ambiguity between pre-checkout queue delay and leaf source failure:
+Exact predecessor `5e66e334695697cee8469442161f0bfbe8368249` acquired hosted runners in CI `33982856368`:
 
-- `load-contract 101351075777` completed success after exact checkout, Rust 1.98.1 installation, gateway candidate build, concurrent loopback traffic and evidence upload.
-- `test 101351075934` failed at the first gate, `cargo fmt --all -- --check`, before compile/test, Clippy, rustdoc, coverage or dependency-lock evidence.
-- `oci-runtime 101351075955` had acquired a runner and entered candidate image build.
+- `load-contract 101351075777` completed success after exact checkout, Rust 1.98.1 installation, gateway candidate build and concurrent loopback traffic;
+- `test 101351075934` failed at the first gate, `cargo fmt --all -- --check`, before compile/test, strict Clippy, rustdoc, coverage or dependency-lock evidence;
+- `oci-runtime 101351075955` acquired a runner and entered candidate image build.
 
-The formatter output named exactly five Rust test/support files. #56 repaired only those rustfmt layouts with ordinary fast-forward commits and no workflow, production source, manifest, Dockerfile, policy, or intended semantic change. Fresh compare from hosted RED `5e66e334...` to current `8ade889...` uses the RED head as exact merge base and changes only:
+The formatter output named exactly five Rust test/support files. #56 repaired only those rustfmt layouts with ordinary fast-forward commits, reaching `8ade8894330b896cb4d5bf46ee6b8be22b2cc6ab`. Fresh CodeRabbit review of exact `0da81a93...8ade889` reported no new issue and confirmed the formatter-only subrange.
 
-- `tests/compiler_wrapper_authority_contract.rs`
-- `tests/support/toolchain_command_substitution.rs`
-- `tests/toolchain_command_substitution_contract.rs`
-- `tests/toolchain_contract.rs`
-- `tests/toolchain_shell_control_contract.rs`
+### Wrapped Cargo-alias authority RED → GREEN
 
-Current exact validation runs are CI `33987097739` and Supply Chain `33987097697`. At the latest read their jobs are materialized but still pre-checkout queued with `steps=[]` and `runner_id=0`; current exact-head GREEN is therefore not credited. A fresh CodeRabbit exact-head review was requested for `0da81a93...8ade889`, explicitly separating the formatter-only range `5e66e334...8ade889` from predecessor review credit.
+Fresh source review after the formatter repair found a separate acceptance-oracle gap. Persistent Cargo aliases such as `CARGO=cargo` were guarded when invoked directly as `"$CARGO" +nightly ...`, but an explicit selector could be hidden one executable layer deeper as `command "$CARGO" +nightly ...` or `env "$CARGO" +nightly ...`. Existing contracts understood direct `command cargo`, GNU `env` compiler-variable prefixes, and direct aliases independently but did not compose those paths.
 
-Do not merge #56 until the current unchanged head proves formatting, compile/test, strict Clippy, rustdoc, owned-production coverage, dependency-lock evidence, load, OCI and Supply Chain together with then-live governance.
+This is a source acceptance gap, not an observed release-workflow bypass: the hostile wrapper form is absent from the current release workflows.
+
+- `6d6ea939648d20af60a8f5cb3d0b84b55f3982b8` scaffolds persistent Cargo-alias tracking without wrapper resolution.
+- RED `052ce9c4c164b770da1063d23c95bf0effd2b9b2` requires `command`/`command -p --` and GNU `env`/`env --`/`env -i` wrapper paths, including `export` and `readonly` persistence, to reject alias-based explicit `+toolchain` selectors while admitting ordinary alias execution without a selector.
+- GREEN `bb07c623763da3417cfe144af508d1036c2a4054` resolves the executable command position through bounded POSIX `command` and GNU `env` option/assignment prefixes before applying the persistent-alias selector rule. Query-only or grammar-changing/unknown wrapper options are not guessed; `env -S/--split-string` and compiler-variable prefixes remain owned by the existing dedicated contracts.
+
+The new repair adds only `tests/support/toolchain_wrapped_alias.rs` and `tests/toolchain_wrapped_alias_contract.rs` after `8ade889...`; no workflow, production gateway source, Cargo manifest, Dockerfile, selected compiler version, routing, TLS, auth or business logic changed.
+
+Current exact validation runs are CI `33988252682` and Supply Chain `33988252648`. At the latest read `load-contract 101365687112`, `test 101365687225`, `oci-runtime 101365687231`, and `candidate-evidence 101365687345` are materialized but pre-checkout queued with `steps=[]` and `runner_id=0`; current exact-head GREEN is not credited. Fresh CodeRabbit exact-range review was requested for `bb07c623...`; predecessor review does not transfer.
+
+Do not merge #56 until the current unchanged head proves formatting, compile/test, strict Clippy, rustdoc, owned-production coverage, dependency-lock evidence, load, OCI, Supply Chain, current technical review, and then-live governance.
 
 ## Supply-chain RED child — #54
 
-Draft #54 is current exact `fd3761af34f51ff625bec79cfa9b1604ca3b76da`, based on current #56 `8ade8894330b896cb4d5bf46ee6b8be22b2cc6ab`.
+Draft #54 is current exact `073f59e24bae3a21fae8ba90924d185c00808fc7`, based on current #56 `bb07c623763da3417cfe144af508d1036c2a4054`.
 
-When #56 advanced through the formatter repair, #54 was not rebased or force-pushed. An ordinary two-parent adoption preserved predecessor #54 and current #56, then the branch ref advanced with `force=false`. Fresh compare uses current #56 as exact merge base, ahead 68 / behind 0. Effective child delta remains exactly four files: `CHANGELOG.md`, `TEST_STRATEGY.md`, `docs/doctoring/TRACEABILITY.md`, and `tests/supply_chain_policy.rs`. The parent formatter repair is inherited and does not appear in the child range.
+When #56 advanced through the wrapped-alias repair, #54 was not rebased or force-pushed. Ordinary two-parent adoption preserved predecessor #54 `fd3761af34f51ff625bec79cfa9b1604ca3b76da` and current #56, then the branch ref advanced with `force=false`. Fresh compare uses current #56 as exact merge base, ahead 69 / behind 0. Effective child delta remains exactly four files: `CHANGELOG.md`, `TEST_STRATEGY.md`, `docs/doctoring/TRACEABILITY.md`, and `tests/supply_chain_policy.rs`. Parent compiler-authority repairs are inherited and do not appear in the child range.
 
 `#54` intentionally requires committed `Cargo.lock` to contain no package named `derivative`. That assertion becomes semantic RED only after #56 independently reaches exact-head compiler/bootstrap GREEN. Do not add an audit ignore, suppress OSV/RustSec, remove lock evidence, or consume a mutable supplier PR to manufacture GREEN. `RUSTSEC-2024-0388` is an unmaintained advisory with no patched version; the release block is CWL supply-chain policy rather than a memory-safety-CVE claim.
 
@@ -62,9 +68,9 @@ Required supplier order remains `#56 exact GREEN → #54 Ready without source ch
 
 ## Protocol / supplier path
 
-Draft #53 remains a protocol test lineage that must be ancestry-repaired now that workflow policy is canonical in foundation. Its H2→H1 Cookie real-wire fixture must become the effective protocol-only child delta before supplier RED/GREEN, merge, or release credit. Foundation workflow files must not remain as accidental protocol ownership.
+Draft #53 remains a protocol-test lineage that must be ancestry-repaired only after the compiler/supply-chain dependency root reaches its required state. Its H2→H1 Cookie real-wire fixture must become the effective protocol-only child delta before supplier RED/GREEN, merge, or release credit. Foundation workflow files must not remain as accidental protocol ownership.
 
-Protected public `cloudflare/pingora/main` was `09696b51bc59315353d96686355861604d0bb48c` at the last verified sweep. Cookie repair #901 remained open/unmerged and dirty against a stale base, so it is not dependency authority. Body-framing #936 remained open/unmerged. Supplier issue #889 remained open and continued to track removal of unmaintained `derivative 2.2.0`. Mutable supplier work is not consumed as dependency authority.
+Protected public `cloudflare/pingora/main` and the exact state of Cookie #901, body-framing #936, and derivative owner issue #889 must be freshly read before supplier claims. Mutable supplier work is evidence, not dependency authority.
 
 After the supply-chain root is repaired, protocol order is `#52/#53 non-force ancestry repair → protocol-only H2→H1 Cookie RED → current-main supplier repair/integration → immutable supplier identity → gateway bump → exact traffic GREEN`.
 
@@ -72,9 +78,9 @@ After the supply-chain root is repaired, protocol order is `#52/#53 non-force an
 
 Organization-wide Actions authority remains in `ContextualWisdomLab/.github`; its dedicated writer owns source/refs/PR state. Pingora only sends exact evidence through the owner path while that writer is active.
 
-Runner delay and semantic failure are distinct states. The #56 predecessor proved this boundary directly: jobs first remained materialized with no runner/steps, then later acquired hosted runners, after which the leaf `cargo fmt --check` failure became observable. Current exact #56 reruns are again pre-checkout queued, so no no-op source churn or runner-selector change is justified solely to retrigger them.
+Runner delay and semantic failure are distinct states. The #56 predecessor proved this boundary directly: jobs first remained materialized with no runner/steps, then later acquired hosted runners, after which the leaf `cargo fmt --check` failure became observable. Current exact #56 runs are again pre-checkout queued, so no no-op source churn or runner-selector change is justified solely to retrigger them.
 
-Evidence classification therefore distinguishes startup failure with zero jobs, materialized pre-checkout jobs with no runner/steps, Draft-policy skips, source-level RED, hosted semantic RED, and terminal hosted GREEN.
+Evidence classification distinguishes startup failure with zero jobs, materialized pre-checkout jobs with no runner/steps, Draft-policy skips, source-level acceptance RED, hosted semantic RED, and terminal hosted GREEN.
 
 ## Legacy migration / release gate
 
