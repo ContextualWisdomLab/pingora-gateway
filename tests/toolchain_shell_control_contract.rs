@@ -166,6 +166,16 @@ fn unwrap_command_builtin<'a>(
     Some((command, index + 1))
 }
 
+/// Rejects GNU `env` split-string because it introduces a second command parser hidden from this shell contract.
+fn env_uses_split_string(arguments: &[String]) -> bool {
+    arguments.iter().any(|argument| {
+        argument == "-S"
+            || argument.starts_with("-S") && argument.len() > 2
+            || argument == "--split-string"
+            || argument.starts_with("--split-string=")
+    })
+}
+
 /// Detects alternate compiler authority in assignment prefixes or explicit selector commands.
 fn segment_has_alternate_compiler_authority(segment: &[String]) -> bool {
     let mut index = 0;
@@ -187,6 +197,10 @@ fn segment_has_alternate_compiler_authority(segment: &[String]) -> bool {
     let Some((command, index)) = unwrap_command_builtin(segment, index, command) else {
         return false;
     };
+
+    if command == "env" && env_uses_split_string(&segment[index..]) {
+        return true;
+    }
 
     if matches!(command, "env" | "export")
         && segment[index..].iter().any(|word| {
