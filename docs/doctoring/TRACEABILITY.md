@@ -16,6 +16,7 @@ This file links material technical/security claims to primary standards or upstr
 | HTTP/3 semantics over QUIC | RFC 9114; HTTP/3 is not claimed implemented by this v1 candidate until executable listener/interoperability evidence exists |
 | Current TLS 1.3 protocol semantics and application identity-verification responsibility | RFC 9846, published July 2026, which obsoletes RFC 8446 and points applications to RFC 9525 for identity verification |
 | New protocols using TLS must require TLS 1.3 | RFC 9852, BCP 195, July 2026; this gateway is not claiming a new application protocol and still requires explicit migration-time protocol compatibility evidence |
+| POSIX shell backquoted text is executable command substitution, not inert word text; a security oracle that does not recursively parse its legacy grammar must reject active backquotes rather than treat them as ordinary characters | The Open Group Base Specifications Issue 8 / POSIX.1-2024, Shell Command Language §2.6.3, which specifies both `$(commands)` and the backquoted form as command substitution executed in a subshell environment |
 | March 2026 Pingora request-smuggling/cache-key advisories are patched in 0.8.0 | GitHub Security Advisories GHSA-xq2h-p299-vjwv, GHSA-hj7x-879w-vrp7, GHSA-f93w-pcj3-rggc |
 | Pingora 0.8.1 is the latest release observed on 2026-09-04 and bounds default HTTP/2 server limits | Cloudflare Pingora GitHub Releases, 0.8.1, 2026-06-04 |
 | The pinned upstream head is seven commits after the prior security-resolution pin `6463ad6407a1d3fe256f1951dd0ecb054477e3f6`; the relevant retry/grace configuration remains unchanged at the new head | GitHub compare `6463ad6...09696b5` plus the exact `ServerConf` source at `09696b5` |
@@ -56,6 +57,8 @@ Rescorla, E. (2026). *The Transport Layer Security (TLS) Protocol Version 1.3* (
 Salz, R., & Aviram, N. (2026). *New protocols using TLS must require TLS 1.3* (RFC 9852, BCP 195). RFC Editor. https://www.rfc-editor.org/rfc/rfc9852
 
 Petersson, A., & Nilsson, M. (2014). *Forwarded HTTP extension* (RFC 7239). RFC Editor. https://www.rfc-editor.org/rfc/rfc7239
+
+The Open Group. (2024). *Shell Command Language §2.6.3: Command Substitution*. *The Open Group Base Specifications, Issue 8 (POSIX.1-2024).* https://pubs.opengroup.org/onlinepubs/9799919799/utilities/V3_chap02.html#tag_19_06_03
 
 Open Container Initiative. (2025, November 4). *OCI runtime-spec v1.3.0 release notice*. https://opencontainers.org/release-notices/v1-3-0-runtime-spec/
 
