@@ -1,8 +1,8 @@
 //! Semantic regression contract for pull-request job admission in GitHub Actions YAML.
 //!
 //! The lexical concurrency oracle intentionally requires a narrow repository style, while this
-//! companion contract parses YAML semantics so presentation-only comments on `jobs:` cannot hide
-//! a direct job from the Draft admission invariant.
+//! companion contract parses YAML semantics so presentation-only syntax cannot hide a PR trigger
+//! or a direct job from the Draft admission invariant.
 
 use serde_yaml::Value;
 use std::fs;
@@ -37,6 +37,21 @@ fn read_workflow(path: &Path) -> String {
     })
 }
 
+/// Reports whether a semantic GitHub Actions `on` value includes one event.
+fn trigger_includes(on: &Value, event: &str) -> bool {
+    match on {
+        Value::String(trigger) => trigger == event,
+        Value::Sequence(triggers) => triggers.iter().any(|trigger| {
+            trigger
+                .as_str()
+                .unwrap_or_else(|| panic!("workflow trigger sequence entries must be strings"))
+                == event
+        }),
+        Value::Mapping(triggers) => triggers.contains_key(Value::String(event.to_owned())),
+        _ => panic!("workflow top-level `on` must be a string, sequence, or mapping"),
+    }
+}
+
 /// Returns direct PR job identities whose semantic `if` guard does not exclude Draft PRs.
 fn pull_request_jobs_without_draft_guard(source: &str) -> Option<Vec<String>> {
     let document: Value = serde_yaml::from_str(source).unwrap_or_else(|error| {
@@ -45,7 +60,7 @@ fn pull_request_jobs_without_draft_guard(source: &str) -> Option<Vec<String>> {
     let Some(on) = document.get("on") else {
         return None;
     };
-    if on.get("pull_request").is_none() {
+    if !trigger_includes(on, "pull_request") {
         return None;
     }
 
@@ -112,5 +127,25 @@ fn inline_comment_on_jobs_mapping_still_sees_all_guarded_jobs() {
     assert_eq!(
         pull_request_jobs_without_draft_guard(&source),
         Some(Vec::new())
+    );
+}
+
+#[test]
+fn scalar_pull_request_trigger_cannot_hide_an_unguarded_direct_job() {
+    let source = "on: pull_request\njobs:\n  build:\n    runs-on: ubuntu-24.04\n";
+
+    assert_eq!(
+        pull_request_jobs_without_draft_guard(source),
+        Some(vec!["build".to_owned()])
+    );
+}
+
+#[test]
+fn sequence_pull_request_trigger_cannot_hide_an_unguarded_direct_job() {
+    let source = "on: [push, pull_request]\njobs:\n  build:\n    runs-on: ubuntu-24.04\n";
+
+    assert_eq!(
+        pull_request_jobs_without_draft_guard(source),
+        Some(vec!["build".to_owned()])
     );
 }
