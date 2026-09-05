@@ -57,9 +57,7 @@ fn pull_request_jobs_without_draft_guard(source: &str) -> Option<Vec<String>> {
     let document: Value = serde_yaml::from_str(source).unwrap_or_else(|error| {
         panic!("workflow YAML should parse before admission validation: {error}")
     });
-    let Some(on) = document.get("on") else {
-        return None;
-    };
+    let on = document.get("on")?;
     if !trigger_includes(on, "pull_request") {
         return None;
     }
