@@ -77,8 +77,8 @@ fn command_substitution_body(shell: &str, body_start: usize) -> (usize, &str) {
             continue;
         }
         if byte == b'$' && bytes.get(index + 1) == Some(&b'(') {
-            depth += 1;
-            index += 2;
+            let (nested_end, _) = command_substitution_body(shell, index + 2);
+            index = nested_end + 1;
             continue;
         }
         if !double_quoted && byte == b'(' {
