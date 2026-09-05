@@ -21,6 +21,7 @@ This file links material technical/security claims to primary standards or upstr
 | Pull-request workflow activity can explicitly include both `converted_to_draft` and `ready_for_review`, and job-level `if` conditions are evaluated before a job is routed to a runner | GitHub Docs, *Events that trigger workflows* and *Contexts reference*, revalidated 2026-09-05; CWL uses the draft-conversion event in the same PR concurrency group to retract superseded Ready work while direct jobs skip, then uses Ready re-admission to restore normal checks |
 | Re-running a workflow uses the same original `GITHUB_SHA` and `GITHUB_REF` | GitHub Docs, *Re-running workflows and jobs*; rerun evidence is historical execution of the same triggered revision, not a new source revision |
 | Cargo can select a compiler executable independently of a prior standalone `rustc` verification through `RUSTC` or the `CARGO_BUILD_RUSTC` configuration environment variable (`build.rustc`) | The Cargo Book, *Environment Variables*; release-path acceptance therefore rejects those secondary compiler authorities after selecting/verifying Rust 1.98.1 |
+| GNU Coreutils `env -S` / `--split-string=STRING` splits one argument into multiple arguments before running the selected command | GNU Coreutils manual, *env invocation*, `-S/--split-string usage in scripts`; the gateway release-path oracle therefore fails closed on split-string rather than duplicating a second command parser that could conceal `RUSTC`, `CARGO_BUILD_RUSTC`, `RUSTUP_TOOLCHAIN`, Cargo `+<toolchain>`, or rustup selectors |
 | March 2026 Pingora request-smuggling/cache-key advisories are patched in 0.8.0 | GitHub Security Advisories GHSA-xq2h-p299-vjwv, GHSA-hj7x-879w-vrp7, GHSA-f93w-pcj3-rggc |
 | Pingora 0.8.1 is the latest public GitHub Release observed on 2026-09-05 and bounds default HTTP/2 server limits | Cloudflare Pingora GitHub Releases, 0.8.1, 2026-06-04; the observed GitHub release object is not marked immutable |
 | The pinned upstream head is seven commits after the prior security-resolution pin `6463ad6407a1d3fe256f1951dd0ecb054477e3f6`; the relevant retry/grace configuration remains unchanged at the new head | GitHub compare `6463ad6...09696b5` plus the exact `ServerConf` source at `09696b5` |
@@ -70,6 +71,8 @@ GitHub. (n.d.). *Events that trigger workflows*. GitHub Docs. https://docs.githu
 GitHub. (n.d.). *Contexts reference*. GitHub Docs. https://docs.github.com/en/actions/reference/workflows-and-actions/contexts
 
 GitHub. (n.d.). *Re-running workflows and jobs*. GitHub Docs. https://docs.github.com/en/actions/how-tos/manage-workflow-runs/re-run-workflows-and-jobs
+
+Free Software Foundation. (n.d.). *env invocation*. GNU Coreutils manual. https://www.gnu.org/software/coreutils/manual/html_node/env-invocation.html
 
 Open Container Initiative. (2025, November 4). *OCI runtime-spec v1.3.0 release notice*. https://opencontainers.org/release-notices/v1-3-0-runtime-spec/
 
