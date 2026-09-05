@@ -94,6 +94,9 @@ fn command_segments(script: &str) -> Vec<Vec<String>> {
             escaped = true;
             continue;
         }
+        if !single_quoted && character == '`' {
+            panic!("shell authority contract does not admit legacy backtick command substitution");
+        }
         if !double_quoted && character == '\'' {
             single_quoted = !single_quoted;
             continue;
@@ -354,6 +357,7 @@ fn shell_control_operator_cannot_hide_compiler_assignment() {
         "command -p env RUSTC=/tmp/rustc-1.98.0 cargo build --release --locked",
         "command -p env CARGO_BUILD_RUSTC=/tmp/rustc-1.98.0 cargo build --release --locked",
         "command -p env RUSTUP_TOOLCHAIN=1.98.0 cargo build --release --locked",
+        "echo `RUSTUP_TOOLCHAIN=1.98.0 cargo build --release --locked`",
     ] {
         let result = std::panic::catch_unwind(|| {
             assert_no_hidden_compiler_authority("synthetic shell", script);
@@ -455,6 +459,7 @@ fn fixed_toolchain_commands_quoted_text_and_comments_remain_allowed() {
         "command -p env -i /usr/bin/printf RUSTC=/tmp/rustc-1.98.0",
         "env -- /usr/bin/printf RUSTUP_TOOLCHAIN=1.98.0",
         "echo 'RUSTC=/tmp/rustc-1.98.0'",
+        "echo '`literal`'",
         "printf '%s\\n' \"CARGO_BUILD_RUSTC=/tmp/rustc-1.98.0\"",
         "# RUSTUP_TOOLCHAIN=1.98.0 cargo build --release --locked\necho ok",
     ] {
