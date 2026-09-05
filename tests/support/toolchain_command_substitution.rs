@@ -295,9 +295,9 @@ fn contains_variable_cargo_command(shell: &str) -> bool {
         };
         let command_basename = command_basename(command);
 
-        if command_basename == "export" {
-            // POSIX `export` is a special builtin, so its assignment prefix and assignment operands
-            // affect the current shell rather than merely the child-command environment.
+        if matches!(command_basename, "export" | "readonly") {
+            // POSIX `export` and `readonly` are special builtins, so assignment prefixes and
+            // assignment operands affect the current shell rather than only a child command.
             for (name, value) in assignment_prefix {
                 apply_persistent_cargo_assignment(&mut aliases, name, value);
             }
