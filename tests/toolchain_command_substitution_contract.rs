@@ -15,6 +15,7 @@ fn legacy_command_substitution_bodies(shell: &str) -> Vec<String> {
     let mut bodies = Vec::new();
     let mut current: Option<String> = None;
     let mut single_quoted = false;
+    let mut double_quoted = false;
     let mut escaped = false;
 
     for character in shell.chars() {
@@ -45,8 +46,12 @@ fn legacy_command_substitution_bodies(shell: &str) -> Vec<String> {
             escaped = true;
             continue;
         }
-        if character == '\'' {
+        if character == '\'' && !double_quoted {
             single_quoted = !single_quoted;
+            continue;
+        }
+        if character == '"' && !single_quoted {
+            double_quoted = !double_quoted;
             continue;
         }
         if character == '`' && !single_quoted {
