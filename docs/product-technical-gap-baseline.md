@@ -24,7 +24,7 @@ Foundation now owns `main`-only push scope, explicit PR lifecycle events, first-
 
 ## Compiler root — #56
 
-Compiler repair #56 is current exact `c9b770b7ce8e24fc77e4d1692dd7da0ee044189f`, Ready/open, based on foundation `0da81a93f93e869c15bb7d34c55fc87479d16522`.
+Compiler repair #56 is current exact `18fb38b1ba70c4bf222642ef347f3d57a98379a2`, Ready/open, based on foundation `0da81a93f93e869c15bb7d34c55fc87479d16522`.
 
 Rust 1.98.1 remains the required release compiler. Release-producing CI, Supply Chain, and OCI paths install/select/verify Rust 1.98.1 before Cargo. Compiler-authority contracts reject alternate authority through YAML environment scopes, explicit Cargo toolchain selectors, shell control operators and command indirection, GNU `env` variants, command substitution, persistent Cargo aliases, Cargo compiler-wrapper variables, repository Cargo configuration, and Docker `ENV`/`ARG`/`RUN` paths.
 
@@ -46,26 +46,30 @@ Fresh exact review of `9598c654...` found a valid Medium false positive. `${CARG
 
 ### Legacy command-substitution companion consistency
 
-Fresh review then compared the command-substitution companion with Bash semantics. Bash supports both `$(command)` and the legacy backquote form. The repository-wide release shell contract already fails closed on active legacy backquotes, so this was **not** a newly demonstrated release-path or production bypass. The narrower inconsistency was that `tests/toolchain_command_substitution_contract.rs` analyzed `$()` but did not apply the same compiler-authority semantics to the legacy form.
+The first legacy-substitution repair compared the command-substitution companion with Bash semantics. Bash supports both `$(command)` and the legacy backquote form. The repository-wide release shell contract already fails closed on active legacy backquotes, so this was not a newly demonstrated release-path or production bypass. The narrower inconsistency was that `tests/toolchain_command_substitution_contract.rs` analyzed `$()` but did not apply the same compiler-authority semantics to the legacy form.
 
-The repair remains acceptance-oracle-only and test-first:
+Source RED `c3504a67af695980e373f18cd50f5ae74d42cd85` added hostile legacy bodies plus benign/literal controls. GREEN `c9b770b7ce8e24fc77e4d1692dd7da0ee044189f` extracted active legacy bodies outside single quotes and reused the existing `$()` analyzer.
 
-- source RED `c3504a67af695980e373f18cd50f5ae74d42cd85` adds hostile legacy bodies (`rustup default 1.98.0`, `cargo +1.98.0 ...`) together with benign and literal controls; against the predecessor companion helper, those hostile legacy cases are not classified;
-- GREEN implementation/current `c9b770b7ce8e24fc77e4d1692dd7da0ee044189f` extracts active legacy backquote bodies outside single quotes, keeps escaped/single-quoted literals and benign legacy substitutions admitted in this companion, normalizes active bodies into the existing `$()` compiler-authority analyzer, and therefore reuses one policy rather than cloning a second compiler-authority implementation.
+Fresh source verification then found a second, narrower quote-semantics inconsistency. In Bash, backquote command substitution remains active inside double quotes, while a single-quote character occurring inside double quotes is literal. The `c9b770b7...` companion helper tracked only `single_quoted`, so source such as `"prefix '`rustup default 1.98.0`' suffix"` could toggle a false single-quoted state and skip executable backquotes in that companion.
 
-Fresh compare `42810ff1...c9b770b7` is ahead 2 / behind 0 with exact merge base and changes only `tests/toolchain_command_substitution_contract.rs`. No workflow, production gateway source, Cargo manifest, Dockerfile, selected compiler version, routing, TLS, auth or business logic changed.
+The repair is again acceptance-oracle-only and test-first:
 
-Current exact validation runs are CI `33989871892` and Supply Chain `33989871741`. At the latest read `test 101370078723`, `load-contract 101370078861`, `oci-runtime 101370078872`, and `candidate-evidence 101370077802` are materialized but nonterminal/pre-checkout queued. Current exact-head hosted GREEN is not credited. Fresh CodeRabbit exact-range review was requested for `42810ff1...c9b770b7`; predecessor review does not transfer.
+- source RED `6adc4c890a835d445305415ed554c2df3c1eedef` adds hostile double-quoted legacy bodies containing `rustup default 1.98.0` and `cargo +1.98.0 ...`;
+- GREEN/current `18fb38b1ba70c4bf222642ef347f3d57a98379a2` adds double-quote state to the legacy scanner, so `'` toggles single-quote state only outside double quotes and active backquotes remain analyzed inside double quotes.
+
+Fresh compare `c9b770b7...18fb38b1` is ahead 2 / behind 0 with exact merge base and changes only `tests/toolchain_command_substitution_contract.rs` (+8/-1). No workflow, production gateway source, Cargo manifest, Dockerfile, selected compiler version, routing, TLS, auth or business logic changed.
+
+Current exact validation runs are CI `33992794787` and Supply Chain `33992794799`. At the latest read `oci-runtime 101377894560`, `load-contract 101377894692`, `test 101377894722`, and `candidate-evidence 101377894065` are pre-checkout queued with `steps=[]`, `runner_id=0`, and no runner identity. Current exact-head hosted GREEN is not credited. Fresh exact-range technical review is required for the current head; predecessor review does not transfer.
 
 Do not merge #56 until the current unchanged head proves formatting, compile/test, strict Clippy, rustdoc, owned-production coverage, dependency-lock evidence, load, OCI, Supply Chain, current technical review, and then-live governance.
 
 ## Supply-chain RED child — #54
 
-Draft #54 is current exact `12bb14ae174f7abed550b07bd990e765596275b6`, based on current #56 `c9b770b7ce8e24fc77e4d1692dd7da0ee044189f`.
+Draft #54 is current exact `50b0516a9249c4066e3a0f305dbf2759eae3ae06`, based on current #56 `18fb38b1ba70c4bf222642ef347f3d57a98379a2`.
 
-When #56 advanced from `42810ff1...` to current, #54 was not rebased or force-pushed. Ordinary two-parent adoption preserved predecessor child `960ca23bf046b0d1991a1459e30d01bb79d6e667` and current #56, then advanced the branch with `force=false`. Fresh compare uses current #56 as exact merge base, ahead 74 / behind 0. Effective child delta remains exactly four files: `CHANGELOG.md`, `TEST_STRATEGY.md`, `docs/doctoring/TRACEABILITY.md`, and `tests/supply_chain_policy.rs`; no parent compiler-oracle delta is duplicated or reverted.
+When #56 advanced from `c9b770b7...` to current, #54 was not rebased or force-pushed. Ordinary two-parent adoption preserved predecessor child `12bb14ae174f7abed550b07bd990e765596275b6` as first parent and current #56 as second parent, then advanced with `force=false`. Fresh compare uses current #56 as exact merge base, ahead 75 / behind 0. Effective child delta remains exactly four files: `CHANGELOG.md`, `TEST_STRATEGY.md`, `docs/doctoring/TRACEABILITY.md`, and `tests/supply_chain_policy.rs`; no parent compiler-oracle delta is duplicated or reverted.
 
-`#54` intentionally requires committed `Cargo.lock` to contain no package named `derivative`. That assertion becomes semantic RED only after #56 independently reaches exact-head compiler/bootstrap GREEN. Do not add an audit ignore, suppress OSV/RustSec, remove lock evidence, or consume a mutable supplier PR to manufacture GREEN. `RUSTSEC-2024-0388` is an unmaintained advisory with no patched version; the release block is CWL supply-chain policy rather than a memory-safety-CVE claim.
+#54 intentionally requires committed `Cargo.lock` to contain no package named `derivative`. That assertion becomes semantic RED only after #56 independently reaches exact-head compiler/bootstrap GREEN. Do not add an audit ignore, suppress OSV/RustSec, remove lock evidence, or consume a mutable supplier PR to manufacture GREEN. `RUSTSEC-2024-0388` is an unmaintained advisory with no patched version; the release block is CWL supply-chain policy rather than a memory-safety-CVE claim.
 
 Required supplier order remains `#56 exact GREEN → #54 Ready without source churn → derivative semantic RED → immutable supplier repair/release → gateway dependency bump → unchanged supply-chain GREEN`.
 
