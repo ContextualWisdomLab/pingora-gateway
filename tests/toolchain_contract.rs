@@ -93,7 +93,7 @@ fn assert_environment_mapping_has_no_compiler_authority(
         return;
     };
 
-    for forbidden in ["RUSTC", "CARGO_BUILD_RUSTC"] {
+    for forbidden in ["RUSTC", "CARGO_BUILD_RUSTC", "RUSTUP_TOOLCHAIN"] {
         assert!(
             !environment
                 .keys()
@@ -533,6 +533,7 @@ fn host_cargo_job_rejects_yaml_environment_compiler_override() {
         "env:\n  RUSTC: /tmp/rustc-1.98.0\njobs:\n  build:\n    steps:\n      - run: |\n          rustup toolchain install 1.98.1 --profile minimal\n          rustup default 1.98.1\n          rustc --version --verbose | grep -Fx 'release: 1.98.1'\n          cargo build --release --locked\n",
         "jobs:\n  build:\n    env:\n      CARGO_BUILD_RUSTC: /tmp/rustc-1.98.0\n    steps:\n      - run: |\n          rustup toolchain install 1.98.1 --profile minimal\n          rustup default 1.98.1\n          rustc --version --verbose | grep -Fx 'release: 1.98.1'\n          cargo build --release --locked\n",
         "jobs:\n  build:\n    steps:\n      - env:\n          RUSTC: /tmp/rustc-1.98.0\n        run: |\n          rustup toolchain install 1.98.1 --profile minimal\n          rustup default 1.98.1\n          rustc --version --verbose | grep -Fx 'release: 1.98.1'\n          cargo build --release --locked\n",
+        "jobs:\n  build:\n    steps:\n      - env:\n          RUSTUP_TOOLCHAIN: 1.98.0\n        run: |\n          rustup toolchain install 1.98.1 --profile minimal\n          rustup default 1.98.1\n          rustc --version --verbose | grep -Fx 'release: 1.98.1'\n          cargo build --release --locked\n",
     ] {
         let result = std::panic::catch_unwind(|| {
             assert_host_cargo_jobs_use_fixed_compiler("synthetic.yml", workflow);
