@@ -139,6 +139,33 @@ fn command_basename(word: &str) -> &str {
     word.rsplit('/').next().unwrap_or(word)
 }
 
+/// Resolves an executable after the shell `command` builtin without mistaking its options for the command.
+fn unwrap_command_builtin<'a>(
+    segment: &'a [String],
+    mut index: usize,
+    command: &'a str,
+) -> Option<(&'a str, usize)> {
+    if command != "command" {
+        return Some((command, index));
+    }
+
+    loop {
+        match segment.get(index).map(String::as_str) {
+            Some("-p") => index += 1,
+            Some("--") => {
+                index += 1;
+                break;
+            }
+            Some("-v" | "-V") => return None,
+            Some(option) if option.starts_with('-') => return None,
+            _ => break,
+        }
+    }
+
+    let command = command_basename(segment.get(index)?);
+    Some((command, index + 1))
+}
+
 /// Detects alternate compiler authority in assignment prefixes or explicit selector commands.
 fn segment_has_alternate_compiler_authority(segment: &[String]) -> bool {
     let mut index = 0;
@@ -155,16 +182,11 @@ fn segment_has_alternate_compiler_authority(segment: &[String]) -> bool {
     let Some(command) = segment.get(index) else {
         return false;
     };
-    let mut command = command_basename(command);
+    let command = command_basename(command);
     index += 1;
-
-    if command == "command" {
-        let Some(next) = segment.get(index) else {
-            return false;
-        };
-        command = command_basename(next);
-        index += 1;
-    }
+    let Some((command, index)) = unwrap_command_builtin(segment, index, command) else {
+        return false;
+    };
 
     if matches!(command, "env" | "export")
         && segment[index..].iter().any(|word| {
@@ -233,6 +255,9 @@ fn shell_control_operator_cannot_hide_compiler_assignment() {
         "printf ok|RUSTC=/tmp/rustc-1.98.0 cargo build --release --locked",
         "command env RUSTUP_TOOLCHAIN=1.98.0 cargo build --release --locked",
         "export CARGO_BUILD_RUSTC=/tmp/rustc-1.98.0; cargo build --release --locked",
+        "command -p env RUSTC=/tmp/rustc-1.98.0 cargo build --release --locked",
+        "command -p env CARGO_BUILD_RUSTC=/tmp/rustc-1.98.0 cargo build --release --locked",
+        "command -p env RUSTUP_TOOLCHAIN=1.98.0 cargo build --release --locked",
     ] {
         let result = std::panic::catch_unwind(|| {
             assert_no_hidden_compiler_authority("synthetic shell", script);
@@ -253,6 +278,9 @@ fn shell_control_operator_cannot_hide_toolchain_command_authority() {
         "printf ok|rustup toolchain install 1.98.0 --profile minimal",
         "command cargo +nightly build --release --locked",
         "command rustup run 1.98.0 cargo build --release --locked",
+        "command -p cargo +1.98.0 build --release --locked",
+        "command -p rustup default 1.98.0",
+        "command -p -- cargo +nightly build --release --locked",
     ] {
         let result = std::panic::catch_unwind(|| {
             assert_no_hidden_compiler_authority("synthetic shell", script);
@@ -268,6 +296,9 @@ fn shell_control_operator_cannot_hide_toolchain_command_authority() {
 fn fixed_toolchain_commands_quoted_text_and_comments_remain_allowed() {
     for script in [
         "rustup toolchain install 1.98.1 --profile minimal; rustup default 1.98.1",
+        "command -p rustup default 1.98.1",
+        "command -v rustup",
+        "command -V cargo",
         "echo 'RUSTC=/tmp/rustc-1.98.0'",
         "printf '%s\\n' \"CARGO_BUILD_RUSTC=/tmp/rustc-1.98.0\"",
         "# RUSTUP_TOOLCHAIN=1.98.0 cargo build --release --locked\necho ok",
