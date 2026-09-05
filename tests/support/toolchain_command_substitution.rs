@@ -99,9 +99,27 @@ fn cargo_command_aliases(tokens: &[String]) -> Vec<String> {
         .collect()
 }
 
+/// Reports whether a normalized token can be a parameter expansion of the given command alias.
+///
+/// Braces and `$` are deliberately removed by `security_tokens`; the remaining suffix therefore
+/// starts with the POSIX default/error/alternate-value operator when forms such as `${CARGO:?}` or
+/// `${CARGO:-cargo}` were used. Plain `=` is intentionally excluded because `CARGO=cargo` is an
+/// assignment token, not by itself a command invocation.
+fn is_parameter_expansion_of_alias(token: &str, alias: &str) -> bool {
+    let Some(suffix) = token.strip_prefix(alias) else {
+        return false;
+    };
+    [":-", ":=", ":?", ":+", "-", "?", "+"]
+        .iter()
+        .any(|operator| suffix.starts_with(operator))
+}
+
 /// Reports whether a normalized command token resolves directly or through a local alias to Cargo.
 fn is_cargo_command(token: &str, aliases: &[String]) -> bool {
-    command_basename(token) == "cargo" || aliases.iter().any(|alias| token == alias)
+    command_basename(token) == "cargo"
+        || aliases.iter().any(|alias| {
+            token == alias || is_parameter_expansion_of_alias(token, alias)
+        })
 }
 
 /// Detects compiler authority within one already-bounded executable shell step or Docker `RUN`.
