@@ -110,6 +110,8 @@ fn command_substitution_guard_rejects_alternate_compiler_authority() {
         "echo $(rustup run 1.98.0 cargo build --release --locked)",
         "value=$(case x in x) RUSTUP_TOOLCHAIN=1.98.0 cargo build --release --locked;; esac)",
         "version=$(git rev-parse HEAD); CARGO=cargo; RUSTUP_TOOLCHAIN=1.98.0 \"$CARGO\" build --release --locked",
+        "version=$(git rev-parse HEAD); CARGO=cargo; RUSTUP_TOOLCHAIN=1.98.0 \"${CARGO:?}\" build --release --locked",
+        "version=$(git rev-parse HEAD); CARGO=cargo; RUSTUP_TOOLCHAIN=1.98.0 \"${CARGO:-cargo}\" build --release --locked",
     ] {
         let result = std::panic::catch_unwind(|| {
             assert_no_hidden_compiler_authority("synthetic shell", shell);
