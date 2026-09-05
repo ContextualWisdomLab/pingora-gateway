@@ -49,9 +49,9 @@ Predecessor execution already proved the former contract passed the complete Car
 
 ### Documentation projection — #61
 
-#61 is a documentation-only child of current #60. Current exact base is `318c9d3...`. The branch was non-force restacked after the RED/GREEN ownership correction and retains exactly six documentation files as its effective range.
+#61 is a documentation-only child of current #60 and must keep exactly six documentation files in its effective range. Its own exact head is intentionally not frozen into this baseline because changing this file creates a new documentation head; the live PR is the authority for its current head, compare, checks, and review state.
 
-Current-head admission itself produced useful evidence. While #61 was Draft, CI `33941828678` and Supply Chain `33941828695` both completed `skipped`; this is expected under the new direct-job draft guard, not a missing-run condition. #61 was then moved to Ready, and the unchanged head generated fresh `ready_for_review` runs CI `33941894186` and Supply Chain `33941894196`, both queued at the latest sweep. A fresh review is required after the parent/head movement.
+The admission policy nevertheless has stable predecessor evidence. While predecessor `14ce12b95005f464c2b883ae9289569f7e127b77` was Draft, CI `33941828678` and Supply Chain `33941828695` both completed `skipped`; this is expected under the direct-job draft guard, not a missing-run condition. Marking the same head Ready materialized `ready_for_review` runs, proving re-admission without changing source identity. Subsequent documentation-only commits make those run IDs historical execution evidence rather than current-head gate credit. Re-read #61 directly for its current exact runs and review before any merge.
 
 Promotion order is fixed: `#59 exact terminal RED + current review → #60 exact all-gates GREEN + current review → ordinary foundation adoption → descendant ancestry repair`. Scheduler admission, skipped Draft evidence, bot/static review, Cargo semantic execution and final all-gates execution are distinct evidence classes.
 
@@ -89,7 +89,7 @@ Issue #267 remains open with `status: blocked`. It correctly separates certifica
 | --- | --- | --- | --- |
 | Workflow policy landed in Cookie lineage | Preserve both valid deltas; no close/rebase/force-push | Promote policy to foundation and restack descendants | #59 `e7778c...` RED oracle; #60 `318c9d3...` workflow-only GREEN; await terminal runs and fresh reviews. |
 | GREEN lane had test-oracle delta | RED must own the acceptance contract | Moved strengthened test blob to #59, ordinary two-parent restack | Fresh #59→#60 compare is exactly two workflow files. |
-| Draft PRs consumed runner admission | Do not weaken required checks for Ready PRs | Skip every direct job while draft; reacquire on `ready_for_review` | #61 Draft runs `33941828678/33941828695` skipped; Ready runs `33941894186/33941894196` materialized. |
+| Draft PRs consumed runner admission | Do not weaken required checks for Ready PRs | Skip every direct job while draft; reacquire on `ready_for_review` | #61 predecessor `14ce12b...` Draft runs skipped; Ready event materialized new runs on the same source head. |
 | Rust 1.98.0 compiler risk | Release-producing path must use repaired compiler authority | #56 moves release path to 1.98.1 and forbids alternate compiler authority | #56 `3b70ba...`; current exact runs still outstanding. |
 | `derivative` unmaintained | No audit-ignore manufactured GREEN | Keep intentional lock RED after compiler parent GREEN | #54 `02a739c...`; Cloudflare #889 remains open. |
 | H2 Cookie downgrade | No CWL shim or mutable supplier pin | Real-wire oracle, then current-main supplier repair | #53 blocked by ancestry; Cloudflare #901 remains mutable. |
@@ -98,7 +98,7 @@ Issue #267 remains open with `status: blocked`. It correctly separates certifica
 
 ## Release and cutover gate
 
-Commercial release credit is forbidden until the exact protected release candidate has version and CHANGELOG alignment, immutable tag/package/image, SBOM, provenance, reproducibility evidence, rollback artifact/runbook, and all then-live governance checks. Consumer migration then requires parity → shadow/canary → observed rollback path → cutover → verified legacy Nginx/OpenResty removal. A source merge, queued check, mutable supplier PR, local p95 result, or documentation-only PR is not equivalent to a shipped edge.
+Commercial release credit is forbidden until the exact protected release candidate has version and CHANGELOG alignment, immutable tag/package/image, SBOM, provenance, reproducibility evidence, rollback artifact/runbook, and all then-live governance checks. The active organization ruleset on the default branch additionally requires an approving review, resolution of review threads, organization-required workflows, and blocks deletion/non-fast-forward updates; administrative bypass is not an acceptance path. Consumer migration then requires parity → shadow/canary → observed rollback path → cutover → verified legacy Nginx/OpenResty removal. A source merge, queued check, mutable supplier PR, local p95 result, or documentation-only PR is not equivalent to a shipped edge.
 
 At this snapshot protected `pingora-gateway/main` remains `f8b4c99b8e5d3de79af1ff0c00c0c8fd63b52991` and GitHub Releases are empty. Therefore immutable release, canary, cutover and legacy-removal counts remain zero.
 
