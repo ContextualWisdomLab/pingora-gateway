@@ -166,6 +166,16 @@ fn unwrap_command_builtin<'a>(
     Some((command, index + 1))
 }
 
+/// Rejects GNU `env` split-string because it introduces a second command parser hidden from this shell contract.
+fn env_uses_split_string(arguments: &[String]) -> bool {
+    arguments.iter().any(|argument| {
+        argument == "-S"
+            || argument.starts_with("-S") && argument.len() > 2
+            || argument == "--split-string"
+            || argument.starts_with("--split-string=")
+    })
+}
+
 /// Detects alternate compiler authority in assignment prefixes or explicit selector commands.
 fn segment_has_alternate_compiler_authority(segment: &[String]) -> bool {
     let mut index = 0;
@@ -187,6 +197,10 @@ fn segment_has_alternate_compiler_authority(segment: &[String]) -> bool {
     let Some((command, index)) = unwrap_command_builtin(segment, index, command) else {
         return false;
     };
+
+    if command == "env" && env_uses_split_string(&segment[index..]) {
+        return true;
+    }
 
     if matches!(command, "env" | "export")
         && segment[index..].iter().any(|word| {
@@ -288,6 +302,22 @@ fn shell_control_operator_cannot_hide_toolchain_command_authority() {
         assert!(
             result.is_err(),
             "control operator must not hide toolchain command authority: {script}"
+        );
+    }
+}
+
+#[test]
+fn env_split_string_cannot_hide_compiler_authority() {
+    for script in [
+        "env --split-string='RUSTUP_TOOLCHAIN=1.98.0 cargo build --release --locked'",
+        "command -p env --split-string='RUSTC=/tmp/rustc-1.98.0 cargo build --release --locked'",
+    ] {
+        let result = std::panic::catch_unwind(|| {
+            assert_no_hidden_compiler_authority("synthetic shell", script);
+        });
+        assert!(
+            result.is_err(),
+            "env split-string must not hide compiler authority: {script}"
         );
     }
 }
