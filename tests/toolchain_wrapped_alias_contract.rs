@@ -82,11 +82,31 @@ fn persistent_cargo_alias_cannot_select_toolchain_through_command_or_env() {
 }
 
 #[test]
+fn parameter_expansion_operator_cannot_hide_wrapped_cargo_toolchain_selector() {
+    for shell in [
+        "CARGO=cargo; command \"${CARGO:?}\" +1.98.0 build --release --locked",
+        "CARGO=cargo; env -- \"${CARGO:?cargo required}\" +nightly build --release --locked",
+        "CARGO=/usr/local/bin/cargo; command -p -- \"${CARGO:-cargo}\" +1.98.0 build --release --locked",
+        "CARGO=/usr/local/bin/cargo; env \"${CARGO:-cargo}\" +nightly build --release --locked",
+    ] {
+        let result = std::panic::catch_unwind(|| {
+            assert_no_wrapped_cargo_toolchain_selector("synthetic shell", shell);
+        });
+        assert!(
+            result.is_err(),
+            "parameter-expansion operator must not hide wrapped Cargo +toolchain authority: {shell}"
+        );
+    }
+}
+
+#[test]
 fn ordinary_alias_use_without_toolchain_selector_remains_admitted() {
     for shell in [
         "CARGO=cargo; \"$CARGO\" build --release --locked",
         "CARGO=cargo; command \"$CARGO\" build --release --locked",
         "CARGO=/usr/local/bin/cargo; env -- \"${CARGO}\" build --release --locked",
+        "CARGO=cargo; command \"${CARGO:?}\" build --release --locked",
+        "CARGO=/usr/local/bin/cargo; env -- \"${CARGO:-cargo}\" build --release --locked",
         "CARGO=cargo; unset CARGO; command \"$CARGO\" +nightly build --release --locked",
     ] {
         assert_no_wrapped_cargo_toolchain_selector("synthetic shell", shell);
