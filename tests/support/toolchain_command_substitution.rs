@@ -244,7 +244,9 @@ fn parameter_command_name(word: &str) -> Option<&str> {
     if let Some(name) = word.strip_prefix('$') {
         if !name.starts_with('{')
             && !name.is_empty()
-            && name.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+            && name
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
         {
             return Some(name);
         }
@@ -295,7 +297,10 @@ fn contains_variable_cargo_command(shell: &str) -> bool {
         };
         let command_basename = command_basename(command);
 
-        if matches!(command_basename, "export" | "readonly" | "declare" | "typeset") {
+        if matches!(
+            command_basename,
+            "export" | "readonly" | "declare" | "typeset"
+        ) {
             // These shell builtins persist assignment operands in the current Bash workflow step.
             // `export` and `readonly` are POSIX special builtins; `declare`/`typeset` are Bash
             // declaration builtins used by GitHub-hosted Linux `run` steps.
@@ -380,9 +385,10 @@ fn contains_active_cargo_parameter_expansion(shell: &str, aliases: &[String]) ->
         if !single_quoted && byte == b'$' && bytes.get(index + 1) == Some(&b'{') {
             let name_start = index + 2;
             let mut name_end = name_start;
-            while bytes.get(name_end).is_some_and(|candidate| {
-                candidate.is_ascii_alphanumeric() || *candidate == b'_'
-            }) {
+            while bytes
+                .get(name_end)
+                .is_some_and(|candidate| candidate.is_ascii_alphanumeric() || *candidate == b'_')
+            {
                 name_end += 1;
             }
             if name_end > name_start {
