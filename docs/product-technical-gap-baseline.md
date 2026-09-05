@@ -59,9 +59,9 @@ The repair is again acceptance-oracle-only and test-first:
 
 Fresh compare `c9b770b7...18fb38b1` is ahead 2 / behind 0 with exact merge base and changes only `tests/toolchain_command_substitution_contract.rs` (+8/-1). No workflow, production gateway source, Cargo manifest, Dockerfile, selected compiler version, routing, TLS, auth or business logic changed.
 
-Current exact validation runs are CI `33992794787` and Supply Chain `33992794799`. At the latest read `oci-runtime 101377894560`, `load-contract 101377894692`, `test 101377894722`, and `candidate-evidence 101377894065` are pre-checkout queued with `steps=[]`, `runner_id=0`, and no runner identity. Current exact-head hosted GREEN is not credited. Fresh exact-range technical review is required for the current head; predecessor review does not transfer.
+Current exact validation runs are CI `33992794787` and Supply Chain `33992794799`. Two fresh reads in this loop still show `oci-runtime 101377894560`, `load-contract 101377894692`, `test 101377894722`, and `candidate-evidence 101377894065` pre-checkout queued with `steps=[]`, `runner_id=0`, and no runner identity. Current exact-head hosted GREEN is not credited.
 
-Do not merge #56 until the current unchanged head proves formatting, compile/test, strict Clippy, rustdoc, owned-production coverage, dependency-lock evidence, load, OCI, Supply Chain, current technical review, and then-live governance.
+CodeRabbit has now reviewed the exact current subrange `c9b770b7...18fb38b1` without predecessor credit and reported no new issue; the returned inline review threads are resolved/outdated. This technical review does not satisfy the organization ruleset's required approving review. Do not merge #56 until the current unchanged head proves formatting, compile/test, strict Clippy, rustdoc, owned-production coverage, dependency-lock evidence, load, OCI, Supply Chain, central required workflows, and the required independent approval.
 
 ## Supply-chain RED child — #54
 
@@ -69,7 +69,7 @@ Draft #54 is current exact `50b0516a9249c4066e3a0f305dbf2759eae3ae06`, based on 
 
 When #56 advanced from `c9b770b7...` to current, #54 was not rebased or force-pushed. Ordinary two-parent adoption preserved predecessor child `12bb14ae174f7abed550b07bd990e765596275b6` as first parent and current #56 as second parent, then advanced with `force=false`. Fresh compare uses current #56 as exact merge base, ahead 75 / behind 0. Effective child delta remains exactly four files: `CHANGELOG.md`, `TEST_STRATEGY.md`, `docs/doctoring/TRACEABILITY.md`, and `tests/supply_chain_policy.rs`; no parent compiler-oracle delta is duplicated or reverted.
 
-#54 intentionally requires committed `Cargo.lock` to contain no package named `derivative`. That assertion becomes semantic RED only after #56 independently reaches exact-head compiler/bootstrap GREEN. Do not add an audit ignore, suppress OSV/RustSec, remove lock evidence, or consume a mutable supplier PR to manufacture GREEN. `RUSTSEC-2024-0388` is an unmaintained advisory with no patched version; the release block is CWL supply-chain policy rather than a memory-safety-CVE claim.
+`#54` intentionally requires committed `Cargo.lock` to contain no package named `derivative`. That assertion becomes semantic RED only after #56 independently reaches exact-head compiler/bootstrap GREEN. Do not add an audit ignore, suppress OSV/RustSec, remove lock evidence, or consume a mutable supplier PR to manufacture GREEN. `RUSTSEC-2024-0388` is an unmaintained advisory with no patched version; the release block is CWL supply-chain policy rather than a memory-safety-CVE claim.
 
 Required supplier order remains `#56 exact GREEN → #54 Ready without source churn → derivative semantic RED → immutable supplier repair/release → gateway dependency bump → unchanged supply-chain GREEN`.
 
@@ -85,7 +85,7 @@ After the supply-chain root is repaired, protocol order is `#52/#53 non-force an
 
 Organization-wide Actions authority remains in `ContextualWisdomLab/.github`; its dedicated writer owns source/refs/PR state. Pingora only sends exact evidence through the owner path while that writer is active.
 
-Protected `.github/main` is current `f2f91b806122ed233e3a0e2a325246077c2e15e4`. Queue-health #1150 remains `e6622a428060194b558929ad651d5b4ae3a9840f`; fresh compare against protected main is diverged, ahead 69 / behind 19, merge base `6d7fbebec8aec31d88a30a36e71ca5b3925d241d`, while its PR body still describes older reconciliation authority. The existing `.github#712` Pingora specimen is updated in place; this lane does not mutate `.github` source/refs/PR state.
+Protected `.github/main` is current `fe827e133e7d867015d088777553e22736344c55` after #1944. That change adds Noema failure artifact evidence and is not itself a Pingora runner-admission repair. Queue-health #1150 remains `e6622a428060194b558929ad651d5b4ae3a9840f`; fresh compare against protected main is diverged, ahead 69 / behind 22, merge base `6d7fbebec8aec31d88a30a36e71ca5b3925d241d`, while its PR body still describes older reconciliation authority. The existing `.github#712` Pingora specimen is updated in place; this lane does not mutate `.github` source/refs/PR state.
 
 Runner delay and semantic failure are distinct states. The #56 predecessor proved this directly: jobs first remained materialized with no runner/steps, then later acquired hosted runners, after which the leaf `cargo fmt --check` failure became observable. Current exact #56 runs are again pre-checkout queued, so no no-op source churn or runner-selector change is justified solely to retrigger them.
 
