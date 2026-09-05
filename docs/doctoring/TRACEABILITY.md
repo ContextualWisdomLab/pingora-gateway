@@ -21,6 +21,7 @@ This file links material technical/security claims to primary standards or upstr
 | Pingora 0.8.1 is the latest release observed on 2026-09-04 and bounds default HTTP/2 server limits | Cloudflare Pingora GitHub Releases, 0.8.1, 2026-06-04 |
 | The pinned upstream head is seven commits after the prior security-resolution pin `6463ad6407a1d3fe256f1951dd0ecb054477e3f6`; the relevant retry/grace configuration remains unchanged at the new head | GitHub compare `6463ad6...09696b5` plus the exact `ServerConf` source at `09696b5` |
 | Rust 1.98.1 is the latest stable toolchain observed on 2026-09-04; it fixes a vtable-generation miscompilation introduced in 1.98.0 that could emit null function pointers in trait-object vtables and cause undefined behavior | Rust Release Team, Rust 1.98.1 announcement, 2026-09-03; release-producing gateway paths therefore select and verify 1.98.1 rather than compiling with 1.98.0 |
+| Cargo can replace the compiler executable or wrap compiler invocations through `RUSTC`, `RUSTC_WRAPPER`, `RUSTC_WORKSPACE_WRAPPER`, `CARGO_BUILD_RUSTC`, `CARGO_BUILD_RUSTC_WRAPPER`, and `CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER`; repository Cargo configuration can carry the corresponding `build.rustc`, `build.rustc-wrapper`, and `build.rustc-workspace-wrapper` authority | The Cargo Book, *Environment Variables* and *Configuration*; gateway release workflows therefore fail closed on these YAML/shell overrides and reject repository `.cargo/config.toml` / `.cargo/config` until separately governed |
 | OCI runtime-spec 1.3.0 is the latest released runtime specification observed on 2026-09-04 | Open Container Initiative runtime-spec v1.3.0 release notice, 2025-11-04; runtime hardening claims still require executable container evidence |
 | `lru` versions before 0.18.2 are affected by RUSTSEC-2026-0253 | RustSec advisory RUSTSEC-2026-0253; the upstream pin includes the first-fixed `lru` dependency change, but release must use a committed audited lock |
 | `derivative` is classified as INFO Unmaintained and has no patched versions; the current committed Pingora graph resolves `derivative 2.2.0` | RustSec advisory RUSTSEC-2024-0388, issued 2024-11-10, plus exact committed `Cargo.lock`; upstream ownership is tracked in `cloudflare/pingora#889` |
@@ -64,6 +65,10 @@ The Open Group. (2024). *Shell Command Language §2.6.3: Command Substitution*. 
 Open Container Initiative. (2025, November 4). *OCI runtime-spec v1.3.0 release notice*. https://opencontainers.org/release-notices/v1-3-0-runtime-spec/
 
 Rust Release Team. (2026, September 3). *Announcing Rust 1.98.1*. Rust Blog. https://blog.rust-lang.org/2026/09/03/Rust-1.98.1/
+
+The Rust Project Developers. (n.d.). *Configuration*. *The Cargo Book*. https://doc.rust-lang.org/cargo/reference/config.html
+
+The Rust Project Developers. (n.d.). *Environment variables*. *The Cargo Book*. https://doc.rust-lang.org/cargo/reference/environment-variables.html
 
 Rust Secure Code Working Group. (2024, November 10). *RUSTSEC-2024-0388: derivative—`derivative` is unmaintained; consider using an alternative*. RustSec Advisory Database. https://rustsec.org/advisories/RUSTSEC-2024-0388.html
 
