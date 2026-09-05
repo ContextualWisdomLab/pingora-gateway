@@ -52,15 +52,33 @@ fn workflow_jobs(workflow: &str) -> Vec<(String, String)> {
     jobs
 }
 
+/// Detects Cargo's explicit `+<toolchain>` selector across shell whitespace and line continuations.
+fn contains_explicit_cargo_toolchain_selector(body: &str) -> bool {
+    let normalized = body.replace("\\\n", " ");
+
+    normalized.lines().any(|line| {
+        let tokens: Vec<_> = line.split_whitespace().collect();
+        tokens.windows(2).any(|window| {
+            let command = window[0].trim_matches(|character| character == '\'' || character == '"');
+            let command = command.rsplit('/').next().unwrap_or(command);
+            command == "cargo" && window[1].starts_with('+') && window[1].len() > 1
+        })
+    })
+}
+
 /// Rejects secondary toolchain authorities that could bypass the verified default compiler.
 fn assert_no_alternate_toolchain_selector(context: &str, body: &str) {
+    assert!(
+        !contains_explicit_cargo_toolchain_selector(body),
+        "{context} must not select a compiler with cargo +<toolchain>"
+    );
+
     for line in body.lines() {
         let command = line.trim();
         for forbidden in [
             "RUSTUP_TOOLCHAIN",
             "rustup override",
             "rustup run",
-            "cargo +",
             "dtolnay/rust-toolchain",
             "actions-rust-lang/setup-rust-toolchain",
         ] {
@@ -135,13 +153,16 @@ fn assert_host_cargo_jobs_use_fixed_compiler(path: &str, workflow: &str) {
 
         assert_no_alternate_toolchain_selector(&context, &job);
         let after_verify = &job[verify_position + FIXED_VERIFY.len()..];
+        assert!(
+            !contains_explicit_cargo_toolchain_selector(after_verify),
+            "{context} must not select a cargo toolchain after compiler verification"
+        );
         for forbidden in [
             "rustup default ",
             "rustup toolchain install ",
             "RUSTUP_TOOLCHAIN",
             "rustup override",
             "rustup run",
-            "cargo +",
             "dtolnay/rust-toolchain",
             "actions-rust-lang/setup-rust-toolchain",
         ] {
@@ -213,7 +234,6 @@ fn image_build_selects_fixed_compiler_before_gateway_compilation() {
         "RUSTUP_TOOLCHAIN",
         "rustup override",
         "rustup run",
-        "cargo +",
     ] {
         assert!(
             !after_verify.contains(forbidden),
@@ -231,4 +251,22 @@ fn crate_requires_fixed_rust_point_release() {
         manifest.contains("rust-version = \"1.98.1\""),
         "Cargo metadata must reject Rust 1.98.0 for this production candidate"
     );
+}
+
+/// Keeps Cargo's explicit toolchain shorthand fail-closed under valid shell whitespace variants.
+#[test]
+fn cargo_toolchain_selector_detection_normalizes_shell_spacing() {
+    for command in [
+        "cargo +1.98.0 build",
+        "cargo  +1.98.0 build",
+        "cargo\t+1.98.0 build",
+        "cargo \\\n  +1.98.0 build",
+        "/home/runner/.cargo/bin/cargo  +1.98.0 build",
+    ] {
+        assert!(contains_explicit_cargo_toolchain_selector(command));
+    }
+
+    assert!(!contains_explicit_cargo_toolchain_selector(
+        "cargo build --release --locked"
+    ));
 }
