@@ -334,6 +334,11 @@ fn cargo_toolchain_selector_detection_normalizes_shell_spacing() {
         "cargo \\\n  +1.98.0 build",
         "car\\\ngo +1.98.0 build",
         "/home/runner/.cargo/bin/cargo  +1.98.0 build",
+        "cargo '+1.98.0' build",
+        "cargo \"+1.98.0\" build",
+        "cargo \\+1.98.0 build",
+        "cargo \"+\"1.98.0 build",
+        "\"/home/runner/.cargo/bin/cargo\" '+1.98.0' build",
     ] {
         assert!(contains_explicit_cargo_toolchain_selector(command));
     }
@@ -368,5 +373,19 @@ fn host_cargo_job_detection_rejects_split_command_without_fixed_compiler() {
     assert!(
         result.is_err(),
         "Cargo split across a shell continuation must still require the fixed compiler contract"
+    );
+}
+
+/// Proves shell word quoting cannot hide a Cargo command from job-scoped compiler admission.
+#[test]
+fn host_cargo_job_detection_rejects_quoted_command_without_fixed_compiler() {
+    let workflow = "jobs:\n  build:\n    steps:\n      - run: car\"go\" build --release --locked\n";
+    let result = std::panic::catch_unwind(|| {
+        assert_host_cargo_jobs_use_fixed_compiler("synthetic.yml", workflow);
+    });
+
+    assert!(
+        result.is_err(),
+        "quoted Cargo command token must still require the fixed compiler contract"
     );
 }
