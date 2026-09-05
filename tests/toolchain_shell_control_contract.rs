@@ -169,8 +169,12 @@ fn unwrap_command_builtin<'a>(
 /// Rejects GNU `env` split-string because it introduces a second command parser hidden from this shell contract.
 fn env_uses_split_string(arguments: &[String]) -> bool {
     arguments.iter().any(|argument| {
-        argument == "-S"
-            || argument.starts_with("-S") && argument.len() > 2
+        let bundled_short_split = argument
+            .strip_prefix('-')
+            .filter(|options| !options.starts_with('-'))
+            .is_some_and(|options| options.contains('S'));
+
+        bundled_short_split
             || argument == "--split-string"
             || argument.starts_with("--split-string=")
     })
@@ -349,6 +353,7 @@ fn fixed_toolchain_commands_quoted_text_and_comments_remain_allowed() {
         "command -p rustup default 1.98.1",
         "command -v rustup",
         "command -V cargo",
+        "env -i PATH=/usr/bin /usr/bin/printf ok",
         "echo 'RUSTC=/tmp/rustc-1.98.0'",
         "printf '%s\\n' \"CARGO_BUILD_RUSTC=/tmp/rustc-1.98.0\"",
         "# RUSTUP_TOOLCHAIN=1.98.0 cargo build --release --locked\necho ok",
