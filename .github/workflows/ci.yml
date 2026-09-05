@@ -2,24 +2,20 @@ name: CI
 
 on:
   push:
-    branches:
-      - main
   pull_request:
-    types: [opened, synchronize, reopened, converted_to_draft, ready_for_review]
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.repository }}-${{ github.event_name == 'pull_request' && github.run_attempt == 1 && github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 env:
   EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
 
 jobs:
   test:
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout exact revision
@@ -73,7 +69,6 @@ jobs:
           retention-days: 1
 
   load-contract:
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -132,8 +127,6 @@ jobs:
 
           target/release/cwl-pingora-gateway --config /tmp/gateway-load.yaml >/tmp/gateway-load.log 2>&1 &
           gateway_pid=$!
-          # Invoked indirectly by the EXIT trap.
-          # shellcheck disable=SC2329
           cleanup() {
             status=$?
             kill "$gateway_pid" "$upstream_pid" >/dev/null 2>&1 || true
@@ -171,7 +164,6 @@ jobs:
           retention-days: 7
 
   oci-runtime:
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout exact revision
@@ -200,7 +192,11 @@ jobs:
             --mount "type=bind,src=${PWD}/examples/gateway.yaml,dst=/etc/cwl/gateway.yaml,readonly" \
             "${image}" \
             --config /etc/cwl/gateway.yaml)"
-          trap 'docker logs "${cid}" || true; docker rm --force "${cid}" >/dev/null 2>&1 || true' EXIT
+          cleanup() {
+            docker logs "${cid}" || true
+            docker rm --force "${cid}" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
 
           test "$(docker inspect "${cid}" --format '{{.HostConfig.ReadonlyRootfs}}')" = "true"
           test "$(docker inspect "${cid}" --format '{{json .HostConfig.CapDrop}}')" = '["ALL"]'

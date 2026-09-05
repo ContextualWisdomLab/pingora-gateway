@@ -179,14 +179,51 @@ fn concurrency_block(source: &str) -> Option<Vec<&str>> {
     in_block.then_some(block)
 }
 
-/// Counts jobs nested directly under the top-level jobs mapping.
+/// Counts canonical jobs nested directly under the top-level jobs mapping.
 fn direct_job_count(source: &str) -> usize {
-    source
-        .lines()
-        .skip_while(|line| *line != "jobs:")
-        .skip(1)
-        .filter(|line| indentation(line) == 2 && line.trim_end().ends_with(':'))
-        .count()
+    let mut in_jobs = false;
+    let mut count = 0;
+
+    for line in source.lines() {
+        let trimmed = line.trim();
+        let ignorable = trimmed.is_empty() || trimmed.starts_with('#');
+
+        if !in_jobs {
+            if line == "jobs:" {
+                in_jobs = true;
+            }
+            continue;
+        }
+
+        if !ignorable && indentation(line) == 0 {
+            break;
+        }
+        if ignorable || indentation(line) != 2 {
+            continue;
+        }
+
+        let direct_child = line
+            .strip_prefix("  ")
+            .expect("two-space indentation must have a two-space prefix");
+        let declaration = direct_child
+            .split_once('#')
+            .map_or(direct_child, |(before_comment, _)| before_comment)
+            .trim_end();
+        let canonical_job_key = declaration.strip_suffix(':').is_some_and(|job_id| {
+            !job_id.is_empty()
+                && job_id
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+        });
+
+        assert!(
+            canonical_job_key,
+            "direct children of `jobs:` must be canonical job mapping keys"
+        );
+        count += 1;
+    }
+
+    count
 }
 
 /// Extracts the exact branch allow-list from a block-style `push` event.
@@ -250,6 +287,13 @@ fn assert_protected_main_only_push(path: &Path, source: &str) {
         "{} must not combine protected-main duplicate evidence with `tags` or `tags-ignore` filters",
         path.display()
     );
+}
+
+#[test]
+fn direct_job_parser_counts_inline_comment_keys_and_stops_at_next_top_level_mapping() {
+    let source = "jobs:\n  build: # runner-facing job\n    runs-on: ubuntu-24.04\n  test:\n    runs-on: ubuntu-24.04\n\npermissions:\n  contents: read\n";
+
+    assert_eq!(direct_job_count(source), 2);
 }
 
 #[test]
