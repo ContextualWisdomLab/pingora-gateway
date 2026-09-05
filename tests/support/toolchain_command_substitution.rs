@@ -88,6 +88,147 @@ fn assignment_name(word: &str) -> Option<&str> {
     assignment_parts(word).map(|(name, _)| name)
 }
 
+/// Splits bounded shell text into command-position words while preserving `$NAME` command words.
+fn shell_command_segments(shell: &str) -> Vec<Vec<String>> {
+    let normalized = shell.replace("\\\r\n", "").replace("\\\n", "");
+    let mut segments = Vec::new();
+    let mut segment = Vec::new();
+    let mut word = String::new();
+    let mut single_quoted = false;
+    let mut double_quoted = false;
+    let mut escaped = false;
+    let mut comment = false;
+
+    let flush_word = |word: &mut String, segment: &mut Vec<String>| {
+        if !word.is_empty() {
+            segment.push(std::mem::take(word));
+        }
+    };
+    let flush_segment = |segment: &mut Vec<String>, segments: &mut Vec<Vec<String>>| {
+        if !segment.is_empty() {
+            segments.push(std::mem::take(segment));
+        }
+    };
+
+    for character in normalized.chars() {
+        if comment {
+            if character == '\n' {
+                comment = false;
+                flush_word(&mut word, &mut segment);
+                flush_segment(&mut segment, &mut segments);
+            }
+            continue;
+        }
+        if escaped {
+            word.push(character);
+            escaped = false;
+            continue;
+        }
+        if !single_quoted && character == '\\' {
+            escaped = true;
+            continue;
+        }
+        if !double_quoted && character == '\'' {
+            single_quoted = !single_quoted;
+            continue;
+        }
+        if !single_quoted && character == '"' {
+            double_quoted = !double_quoted;
+            continue;
+        }
+        if !single_quoted && !double_quoted {
+            if character == '#' && word.is_empty() {
+                comment = true;
+                continue;
+            }
+            if character.is_whitespace() {
+                flush_word(&mut word, &mut segment);
+                if character == '\n' {
+                    flush_segment(&mut segment, &mut segments);
+                }
+                continue;
+            }
+            if matches!(character, ';' | '|' | '&' | '(' | ')') {
+                flush_word(&mut word, &mut segment);
+                flush_segment(&mut segment, &mut segments);
+                continue;
+            }
+        }
+        word.push(character);
+    }
+
+    flush_word(&mut word, &mut segment);
+    flush_segment(&mut segment, &mut segments);
+    segments
+}
+
+/// Returns a simple shell parameter name when the complete command word is `$NAME` or `${NAME...}`.
+fn parameter_command_name(word: &str) -> Option<&str> {
+    if let Some(name) = word.strip_prefix('$') {
+        if !name.starts_with('{')
+            && !name.is_empty()
+            && name.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+        {
+            return Some(name);
+        }
+    }
+
+    let expression = word.strip_prefix("${")?;
+    let closing = expression.rfind('}')?;
+    if closing + 1 != expression.len() {
+        return None;
+    }
+    let body = &expression[..closing];
+    let name_end = body
+        .bytes()
+        .position(|byte| !(byte.is_ascii_alphanumeric() || byte == b'_'))
+        .unwrap_or(body.len());
+    (name_end > 0).then_some(&body[..name_end])
+}
+
+/// Rejects Cargo executable indirection through shell variables in release-producing command position.
+fn contains_variable_cargo_command(shell: &str) -> bool {
+    let mut aliases: Vec<String> = Vec::new();
+
+    for segment in shell_command_segments(shell) {
+        let mut index = 0;
+        while let Some(word) = segment.get(index) {
+            let Some((name, value)) = assignment_parts(word) else {
+                break;
+            };
+            aliases.retain(|alias| alias != name);
+            if command_basename(value) == "cargo" {
+                aliases.push(name.to_owned());
+            }
+            index += 1;
+        }
+
+        let Some(command) = segment.get(index) else {
+            continue;
+        };
+        if command_basename(command) == "export" {
+            for word in &segment[index + 1..] {
+                let Some((name, value)) = assignment_parts(word) else {
+                    continue;
+                };
+                aliases.retain(|alias| alias != name);
+                if command_basename(value) == "cargo" {
+                    aliases.push(name.to_owned());
+                }
+            }
+            continue;
+        }
+
+        if parameter_command_name(command)
+            .is_some_and(|name| aliases.iter().any(|alias| alias == name))
+        {
+            return true;
+        }
+    }
+
+    false
+}
+
 /// Collects shell variables that are explicitly assigned a Cargo executable path.
 fn cargo_command_aliases(tokens: &[String]) -> Vec<String> {
     tokens
@@ -162,6 +303,9 @@ fn is_cargo_command(token: &str, aliases: &[String]) -> bool {
 
 /// Detects compiler authority within one already-bounded executable shell step or Docker `RUN`.
 fn shell_changes_compiler_authority(shell: &str) -> bool {
+    if contains_variable_cargo_command(shell) {
+        return true;
+    }
     if !contains_active_command_substitution(shell) {
         return false;
     }
@@ -203,10 +347,10 @@ fn shell_changes_compiler_authority(shell: &str) -> bool {
     })
 }
 
-/// Fails closed when an active `$()` shares a bounded shell step with alternate compiler authority.
+/// Fails closed when shell indirection can hide alternate Cargo compiler authority.
 pub fn assert_no_hidden_compiler_authority(context: &str, shell: &str) {
     assert!(
         !shell_changes_compiler_authority(shell),
-        "{context} must not combine active command substitution with alternate Cargo compiler authority"
+        "{context} must not hide alternate Cargo compiler authority behind shell indirection"
     );
 }
