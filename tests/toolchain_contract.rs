@@ -200,6 +200,61 @@ fn cargo_command_positions(script: &str) -> (String, Vec<usize>) {
     (normalized, positions)
 }
 
+/// Extracts executable Dockerfile shell-form `RUN` bodies and excludes Dockerfile comments/metadata.
+fn docker_run_scripts(dockerfile: &str) -> String {
+    let normalized = normalize_shell_continuations(dockerfile);
+    let mut scripts = String::new();
+
+    for line in normalized.lines() {
+        let trimmed = line.trim_start();
+        let Some(boundary) = trimmed.find(|character: char| character.is_ascii_whitespace()) else {
+            continue;
+        };
+        let instruction = &trimmed[..boundary];
+        if !instruction.eq_ignore_ascii_case("RUN") {
+            continue;
+        }
+
+        scripts.push_str(trimmed[boundary..].trim_start());
+        scripts.push('\n');
+    }
+
+    scripts
+}
+
+/// Finds executable `cargo build` commands after shell word normalization.
+fn cargo_build_command_positions(script: &str) -> Vec<usize> {
+    let mut positions = Vec::new();
+    let mut body_offset = 0;
+
+    for line in script.split_inclusive('\n') {
+        let content = line.strip_suffix('\n').unwrap_or(line);
+        let raw_tokens: Vec<_> = content.split_whitespace().collect();
+        let normalized_tokens: Vec<_> = raw_tokens
+            .iter()
+            .map(|token| normalize_security_sensitive_shell_word(token))
+            .collect();
+        let mut search_start = 0;
+
+        for (index, token) in raw_tokens.iter().enumerate() {
+            let relative = content[search_start..]
+                .find(token)
+                .expect("split token must exist in its source line");
+            let token_start = search_start + relative;
+            if command_basename(&normalized_tokens[index]) == "cargo"
+                && normalized_tokens.get(index + 1).map(String::as_str) == Some("build")
+            {
+                positions.push(body_offset + token_start);
+            }
+            search_start = token_start + token.len();
+        }
+
+        body_offset += line.len();
+    }
+
+    positions
+}
+
 /// Detects Cargo's explicit `+<toolchain>` selector across shell whitespace, continuations, and word quoting.
 fn contains_explicit_cargo_toolchain_selector(script: &str) -> bool {
     let normalized = normalize_shell_continuations(script);
@@ -377,6 +432,40 @@ fn assert_host_cargo_jobs_use_fixed_compiler(path: &str, workflow: &str) {
     }
 }
 
+/// Requires executable Docker build commands to use the verified Rust 1.98.1 compiler authority.
+fn assert_dockerfile_uses_fixed_compiler(dockerfile: &str) {
+    let scripts = docker_run_scripts(dockerfile);
+    let install_position = scripts
+        .find(FIXED_INSTALL)
+        .expect("Dockerfile RUN scripts must install Rust 1.98.1 before building the gateway");
+    let select_position = scripts
+        .find(FIXED_SELECT)
+        .expect("Dockerfile RUN scripts must select Rust 1.98.1 before building the gateway");
+    let verify_position = scripts
+        .find(FIXED_VERIFY)
+        .expect("Dockerfile RUN scripts must verify Rust 1.98.1 before building the gateway");
+    let build_positions = cargo_build_command_positions(&scripts);
+
+    assert_eq!(
+        build_positions.len(),
+        1,
+        "Dockerfile must keep exactly one executable gateway cargo build authority"
+    );
+    assert!(
+        install_position < select_position && select_position < verify_position,
+        "Dockerfile must install, select, then verify Rust 1.98.1 in that order"
+    );
+    assert!(
+        verify_position < build_positions[0],
+        "Dockerfile must verify Rust 1.98.1 before gateway compilation"
+    );
+
+    let compiler_to_build = &scripts[install_position..build_positions[0]];
+    assert_no_alternate_toolchain_selector("Dockerfile compiler-to-build path", compiler_to_build);
+    let after_verify = &scripts[verify_position + FIXED_VERIFY.len()..build_positions[0]];
+    assert_no_toolchain_authority_after_verification("Dockerfile", after_verify);
+}
+
 /// Requires every hosted host-Cargo build/evidence job to select and verify the fixed point release.
 #[test]
 fn hosted_release_paths_select_rust_1_98_1_per_job() {
@@ -396,42 +485,11 @@ fn hosted_release_paths_select_rust_1_98_1_per_job() {
     }
 }
 
-/// Requires the OCI release binary to select the fixed compiler before any `cargo build` runs.
+/// Requires the OCI release binary to select the fixed compiler before executable `cargo build` runs.
 #[test]
 fn image_build_selects_fixed_compiler_before_gateway_compilation() {
     let dockerfile = read_repository_file("Dockerfile");
-    let install_position = dockerfile
-        .find(FIXED_INSTALL)
-        .expect("Dockerfile must install Rust 1.98.1 before building the gateway");
-    let select_position = dockerfile
-        .find(FIXED_SELECT)
-        .expect("Dockerfile must select Rust 1.98.1 before building the gateway");
-    let verify_position = dockerfile
-        .find(FIXED_VERIFY)
-        .expect("Dockerfile must verify Rust 1.98.1 before building the gateway");
-    let build_positions: Vec<_> = dockerfile
-        .match_indices("cargo build")
-        .map(|(index, _)| index)
-        .collect();
-
-    assert_eq!(
-        build_positions.len(),
-        1,
-        "Dockerfile must keep exactly one gateway cargo build authority"
-    );
-    assert!(
-        install_position < select_position && select_position < verify_position,
-        "Dockerfile must install, select, then verify Rust 1.98.1 in that order"
-    );
-    assert!(
-        verify_position < build_positions[0],
-        "Dockerfile must verify Rust 1.98.1 before gateway compilation"
-    );
-
-    let compiler_to_build = &dockerfile[install_position..build_positions[0]];
-    assert_no_alternate_toolchain_selector("Dockerfile compiler-to-build path", compiler_to_build);
-    let after_verify = &dockerfile[verify_position + FIXED_VERIFY.len()..build_positions[0]];
-    assert_no_toolchain_authority_after_verification("Dockerfile", after_verify);
+    assert_dockerfile_uses_fixed_compiler(&dockerfile);
 }
 
 /// Rejects metadata that still permits the compiler release carrying the vtable miscompilation.
@@ -617,6 +675,27 @@ fn docker_post_verification_guard_rejects_shell_normalized_authority() {
         assert!(
             result.is_err(),
             "Docker post-verification authority must be rejected: {command}"
+        );
+    }
+}
+
+/// Proves Dockerfile comments cannot impersonate the executable gateway build boundary.
+#[test]
+fn docker_build_detection_ignores_comments_and_normalizes_shell_words() {
+    for cargo_invocation in [
+        "cargo\tbuild --release --locked --bin pingora-gateway",
+        "car\"go\" build --release --locked --bin pingora-gateway",
+    ] {
+        let dockerfile = format!(
+            "FROM scratch AS builder\nRUN rustup toolchain install 1.98.1 --profile minimal && rustup default 1.98.1 && rustc --version --verbose | grep -Fx 'release: 1.98.1'\n# cargo build is documentation, not executable authority\nRUN RUSTUP_TOOLCHAIN+=1.98.0 {cargo_invocation}\n"
+        );
+        let result = std::panic::catch_unwind(|| {
+            assert_dockerfile_uses_fixed_compiler(&dockerfile);
+        });
+
+        assert!(
+            result.is_err(),
+            "comment text must not hide executable shell-normalized Cargo build: {cargo_invocation}"
         );
     }
 }
