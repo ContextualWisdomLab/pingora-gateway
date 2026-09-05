@@ -1,5 +1,6 @@
 //! Fail-closed acceptance for the compiler used by release-producing paths.
 
+use serde_yaml::Value;
 use std::{fs, path::Path};
 
 const FIXED_INSTALL: &str = "rustup toolchain install 1.98.1 --profile minimal";
@@ -52,9 +53,44 @@ fn workflow_jobs(workflow: &str) -> Vec<(String, String)> {
     jobs
 }
 
-/// Returns byte positions for Cargo command tokens after normalizing shell line continuations.
-fn cargo_command_positions(body: &str) -> (String, Vec<usize>) {
-    let normalized = body.replace("\\\n", " ");
+/// Extracts shell scripts from each semantic YAML job so block indentation is not treated as shell text.
+fn workflow_job_run_scripts(workflow: &str) -> Vec<(String, String)> {
+    let document: Value = serde_yaml::from_str(workflow).unwrap_or_else(|error| {
+        panic!("workflow YAML must parse before toolchain validation: {error}")
+    });
+    let jobs = document
+        .get("jobs")
+        .and_then(Value::as_mapping)
+        .expect("workflow must contain a jobs mapping");
+
+    jobs.iter()
+        .map(|(name, job)| {
+            let name = name
+                .as_str()
+                .expect("workflow job names must be strings")
+                .to_owned();
+            let mut scripts = String::new();
+            if let Some(steps) = job.get("steps").and_then(Value::as_sequence) {
+                for step in steps {
+                    if let Some(run) = step.get("run").and_then(Value::as_str) {
+                        scripts.push_str(run);
+                        scripts.push('\n');
+                    }
+                }
+            }
+            (name, scripts)
+        })
+        .collect()
+}
+
+/// Mirrors the shell's removal of an unquoted backslash-newline pair before tokenization.
+fn normalize_shell_continuations(script: &str) -> String {
+    script.replace("\\\r\n", "").replace("\\\n", "")
+}
+
+/// Returns byte positions for Cargo command tokens after shell-continuation normalization.
+fn cargo_command_positions(script: &str) -> (String, Vec<usize>) {
+    let normalized = normalize_shell_continuations(script);
     let mut positions = Vec::new();
     let mut body_offset = 0;
 
@@ -79,9 +115,9 @@ fn cargo_command_positions(body: &str) -> (String, Vec<usize>) {
     (normalized, positions)
 }
 
-/// Detects Cargo's explicit `+<toolchain>` selector across shell whitespace and line continuations.
-fn contains_explicit_cargo_toolchain_selector(body: &str) -> bool {
-    let normalized = body.replace("\\\n", " ");
+/// Detects Cargo's explicit `+<toolchain>` selector across shell whitespace and continuations.
+fn contains_explicit_cargo_toolchain_selector(script: &str) -> bool {
+    let normalized = normalize_shell_continuations(script);
 
     normalized.lines().any(|line| {
         let tokens: Vec<_> = line.split_whitespace().collect();
@@ -134,36 +170,44 @@ fn assert_no_alternate_toolchain_selector(context: &str, body: &str) {
 
 /// Requires every workflow job that executes host `cargo` to bind that job to Rust 1.98.1.
 fn assert_host_cargo_jobs_use_fixed_compiler(path: &str, workflow: &str) {
-    for (job_name, job) in workflow_jobs(workflow) {
-        let (normalized_job, cargo_positions) = cargo_command_positions(&job);
+    let raw_jobs = workflow_jobs(workflow);
+
+    for (job_name, scripts) in workflow_job_run_scripts(workflow) {
+        let (normalized_scripts, cargo_positions) = cargo_command_positions(&scripts);
         if cargo_positions.is_empty() {
             continue;
         }
 
         let context = format!("{path} job {job_name}");
+        let raw_job = raw_jobs
+            .iter()
+            .find(|(name, _)| name == &job_name)
+            .map(|(_, body)| body)
+            .unwrap_or_else(|| panic!("{context} must use a canonical block-style job mapping"));
+
         assert_eq!(
-            normalized_job.matches(FIXED_INSTALL).count(),
+            normalized_scripts.matches(FIXED_INSTALL).count(),
             1,
             "{context} must install Rust 1.98.1 exactly once"
         );
         assert_eq!(
-            normalized_job.matches(FIXED_SELECT).count(),
+            normalized_scripts.matches(FIXED_SELECT).count(),
             1,
             "{context} must select Rust 1.98.1 exactly once"
         );
         assert_eq!(
-            normalized_job.matches(FIXED_VERIFY).count(),
+            normalized_scripts.matches(FIXED_VERIFY).count(),
             1,
             "{context} must verify Rust 1.98.1 exactly once"
         );
 
-        let install_position = normalized_job
+        let install_position = normalized_scripts
             .find(FIXED_INSTALL)
             .expect("installation count was checked");
-        let select_position = normalized_job
+        let select_position = normalized_scripts
             .find(FIXED_SELECT)
             .expect("selection count was checked");
-        let verify_position = normalized_job
+        let verify_position = normalized_scripts
             .find(FIXED_VERIFY)
             .expect("verification count was checked");
         assert!(
@@ -177,8 +221,9 @@ fn assert_host_cargo_jobs_use_fixed_compiler(path: &str, workflow: &str) {
             );
         }
 
-        assert_no_alternate_toolchain_selector(&context, &normalized_job);
-        let after_verify = &normalized_job[verify_position + FIXED_VERIFY.len()..];
+        assert_no_alternate_toolchain_selector(&context, &normalized_scripts);
+        assert_no_alternate_toolchain_selector(&context, raw_job);
+        let after_verify = &normalized_scripts[verify_position + FIXED_VERIFY.len()..];
         assert!(
             !contains_explicit_cargo_toolchain_selector(after_verify),
             "{context} must not select a cargo toolchain after compiler verification"
@@ -287,6 +332,7 @@ fn cargo_toolchain_selector_detection_normalizes_shell_spacing() {
         "cargo  +1.98.0 build",
         "cargo\t+1.98.0 build",
         "cargo \\\n  +1.98.0 build",
+        "car\\\ngo +1.98.0 build",
         "/home/runner/.cargo/bin/cargo  +1.98.0 build",
     ] {
         assert!(contains_explicit_cargo_toolchain_selector(command));
@@ -308,5 +354,19 @@ fn host_cargo_job_detection_rejects_tab_separated_command_without_fixed_compiler
     assert!(
         result.is_err(),
         "tab-separated cargo command must still require the fixed compiler contract"
+    );
+}
+
+/// Proves YAML block-scalar indentation cannot hide a Cargo token split by shell continuation.
+#[test]
+fn host_cargo_job_detection_rejects_split_command_without_fixed_compiler() {
+    let workflow = "jobs:\n  build:\n    steps:\n      - run: |\n          car\\\n          go build --release --locked\n";
+    let result = std::panic::catch_unwind(|| {
+        assert_host_cargo_jobs_use_fixed_compiler("synthetic.yml", workflow);
+    });
+
+    assert!(
+        result.is_err(),
+        "Cargo split across a shell continuation must still require the fixed compiler contract"
     );
 }
