@@ -73,6 +73,7 @@ jobs:
           retention-days: 1
 
   load-contract:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -170,6 +171,7 @@ jobs:
           retention-days: 7
 
   oci-runtime:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout exact revision

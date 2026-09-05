@@ -13,6 +13,8 @@ const EXPECTED_CANCEL_LINE: &str =
     "  cancel-in-progress: ${{ github.event_name == 'pull_request' }}";
 const EXPECTED_PULL_REQUEST_TYPES_LINE: &str =
     "    types: [opened, synchronize, reopened, ready_for_review]";
+const EXPECTED_ACTIVE_PR_JOB_LINE: &str =
+    "    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false";
 
 /// Returns all repository-owned YAML workflows in deterministic path order.
 fn workflow_paths() -> Vec<PathBuf> {
@@ -177,6 +179,16 @@ fn concurrency_block(source: &str) -> Option<Vec<&str>> {
     in_block.then_some(block)
 }
 
+/// Counts jobs nested directly under the top-level jobs mapping.
+fn direct_job_count(source: &str) -> usize {
+    source
+        .lines()
+        .skip_while(|line| *line != "jobs:")
+        .skip(1)
+        .filter(|line| indentation(line) == 2 && line.trim_end().ends_with(':'))
+        .count()
+}
+
 /// Extracts the exact branch allow-list from a block-style `push` event.
 fn push_branches(source: &str) -> Option<Vec<String>> {
     let block = event_block(source, "push")?;
@@ -266,6 +278,15 @@ fn pull_request_workflows_use_pr_scoped_cancellation_identity() {
                 .count(),
             1,
             "{} must admit only useful pull-request lifecycle events",
+            path.display()
+        );
+        assert_eq!(
+            source
+                .lines()
+                .filter(|line| *line == EXPECTED_ACTIVE_PR_JOB_LINE)
+                .count(),
+            direct_job_count(&source),
+            "{} must keep every pull-request job out of the runner queue while draft",
             path.display()
         );
 
