@@ -323,6 +323,26 @@ fn env_split_string_cannot_hide_compiler_authority() {
 }
 
 #[test]
+fn bundled_env_split_string_cannot_hide_compiler_authority() {
+    for script in [
+        "env -iS 'RUSTC=/tmp/rustc-1.98.0 cargo build --release --locked'",
+        "env -iS 'CARGO_BUILD_RUSTC=/tmp/rustc-1.98.0 cargo build --release --locked'",
+        "env -iS 'RUSTUP_TOOLCHAIN=1.98.0 cargo build --release --locked'",
+        "command -p env -iS 'RUSTC=/tmp/rustc-1.98.0 cargo build --release --locked'",
+        "command -p env -iS 'CARGO_BUILD_RUSTC=/tmp/rustc-1.98.0 cargo build --release --locked'",
+        "command -p env -iS 'RUSTUP_TOOLCHAIN=1.98.0 cargo build --release --locked'",
+    ] {
+        let result = std::panic::catch_unwind(|| {
+            assert_no_hidden_compiler_authority("synthetic shell", script);
+        });
+        assert!(
+            result.is_err(),
+            "bundled env split-string must not hide compiler authority: {script}"
+        );
+    }
+}
+
+#[test]
 fn fixed_toolchain_commands_quoted_text_and_comments_remain_allowed() {
     for script in [
         "rustup toolchain install 1.98.1 --profile minimal; rustup default 1.98.1",
