@@ -205,6 +205,24 @@ fn shell_control_operator_cannot_hide_compiler_assignment() {
 }
 
 #[test]
+fn shell_control_operator_cannot_hide_toolchain_command_authority() {
+    for script in [
+        "true;cargo +1.98.0 build --release --locked",
+        "true&&rustup default 1.98.0",
+        "false||rustup override set 1.98.0",
+        "printf ok|rustup toolchain install 1.98.0 --profile minimal",
+    ] {
+        let result = std::panic::catch_unwind(|| {
+            assert_no_hidden_compiler_authority("synthetic shell", script);
+        });
+        assert!(
+            result.is_err(),
+            "control operator must not hide toolchain command authority: {script}"
+        );
+    }
+}
+
+#[test]
 fn quoted_text_and_comments_do_not_create_compiler_authority() {
     for script in [
         "echo 'RUSTC=/tmp/rustc-1.98.0'",
