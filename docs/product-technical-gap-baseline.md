@@ -94,6 +94,14 @@ Do not add an audit ignore, suppress OSV/RustSec, delete lock evidence, suppress
 
 Required supplier order is now `hosted derivative RED (proven) → maintainer-integrated immutable supplier repair/release → gateway dependency bump → regenerate committed lock without derivative → unchanged semantic test GREEN → exact CI/Supply Chain/security/runtime GREEN`.
 
+## Supplier replacement characterization — #62
+
+Parallel Ready #62 is based directly on #56 and does not carry #54's intentionally failing dependency-absence oracle. Its source slice adds `tests/pingora_supplier_semantics_contract.rs`, which characterizes the current public `PeerOptions` Debug boundary before upstream `derivative` removal: the type remains structurally debuggable, a representative ordinary field remains present so the omission check cannot pass vacuously, and callback/TLS hook field names remain omitted. `TEST_STRATEGY.md` records the same acceptance boundary.
+
+This lane does not change the pinned Pingora revision, production gateway Rust, config, routing, TLS policy, authentication/business logic, or consumer state. It also deliberately does not enable Pingora's optional load-balancing feature solely to instantiate `Backend`; generic v1 does not consume that bounded capability. `Backend` address+weight equality/hash/order with opaque `Extensions` excluded therefore remains an upstream-owner acceptance criterion on `cloudflare/pingora#889`, not a reason to widen the gateway dependency graph for a test.
+
+#62 is characterization evidence, not the supplier fix. It must acquire exact-head CI/Supply Chain and current review evidence, and its valid contract must be adopted by the eventual immutable supplier-repair successor before GREEN is credited.
+
 ## Protocol / supplier path
 
 Draft #53 remains a protocol-test lineage that must be ancestry-repaired only after the compiler/supply-chain dependency root reaches its required state. Its H2→H1 Cookie real-wire fixture must become the effective protocol-only child delta before supplier RED/GREEN, merge, or release credit.
@@ -110,7 +118,7 @@ Runner delay and semantic failure are now distinguished by same-head evidence. #
 
 ## Legacy migration / release gate
 
-Legacy consumer repositories with dedicated writers remain read-only from this lane. Migration stays release-first: owner-safe structural inventory → explicit certificate/edge/application responsibility split → immutable `pingora-gateway` artifact → parity/shadow/canary → observed rollback → cutover → verified Nginx/OpenResty removal.
+Legacy consumer repositories with dedicated writers remain read-only from this lane. Fresh `linux-cluster-ops` evidence still shows host-native Nginx routing across b1/b4/b5, Certbot-adjacent TLS, and at least one PHP-FPM/FastCGI path. Issue #267 remains the consumer/operations owner path. Shared Pingora does not absorb PHP/FastCGI execution or certificate issuance merely to imitate Nginx. Migration stays release-first: owner-safe structural inventory → explicit certificate/edge/application responsibility split → immutable `pingora-gateway` artifact → parity/shadow/canary → observed rollback → cutover → verified Nginx/OpenResty removal.
 
 Commercial release credit requires exact protected candidate version/CHANGELOG alignment, immutable tag/package/image, SBOM, provenance, reproducibility, rollback artifact/runbook, and all live governance checks. Until fresh protected-main and release reads prove otherwise, no immutable gateway release, canary, cutover, or legacy-removal credit is assigned.
 
