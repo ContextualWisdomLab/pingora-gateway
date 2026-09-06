@@ -74,7 +74,7 @@ Organization-wide Actions authority remains in `ContextualWisdomLab/.github`; it
 
 Runner delay, formatting failure, and semantic failure are kept distinct. #56 waited runnerless and later passed unchanged; #54 waited and later produced the intended semantic RED on the same head; #62 `6f6b6fea...` also eventually acquired runners and failed locally at Rustfmt rather than admission. Current #62 `8027ebfb...` queueing is therefore a lane-local fresh-head admission sample, not sufficient evidence for gateway-local runner-selector churn or a new central scheduler defect.
 
-Protected `.github/main` was last observed at `efb8926923de45245338159a489a1b227e81945f` after its owner-side contextual-orchestrator retry-stacking repair. That owner-plane state is not #62 execution credit.
+Protected `.github/main` is now `fb2ae81dbeaacb0c630e51e9d772c6919fa220cf` after owner-side PR #1949 (`fix(sidecar): fill the preflight served set lazily to a readiness target`). That is owner-plane progress but is not #62 execution credit and does not justify writing `.github` source/refs from this lane.
 
 ## Legacy migration and release gate
 
