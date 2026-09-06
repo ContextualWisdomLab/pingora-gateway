@@ -89,11 +89,19 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ca-certificates cmake curl libssl-dev pkg-config
       - name: Install Rust 1.98.1
         run: |
-          rustup toolchain install 1.98.1 --profile minimal
+          rustup toolchain install 1.98.1 --profile minimal --component rustfmt
           rustup default 1.98.1
           rustc --version --verbose | grep -Fx 'release: 1.98.1'
-      - name: Build exact gateway candidate
-        run: cargo build --release --locked --bin cwl-pingora-gateway
+      - name: Build exact gateway candidate and Rust load origin
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --release --locked --bin cwl-pingora-gateway
+          rustfmt --edition 2021 --check tests/load/load_origin.rs
+          rustc --edition 2021 -D warnings --test tests/load/load_origin.rs -o /tmp/load_origin_tests
+          /tmp/load_origin_tests
+          rustc --edition 2021 -D warnings -C opt-level=3 -C debuginfo=0 \
+            --out-dir /tmp tests/load/load_origin.rs
       - name: Install checksum-pinned k6 2.2.0
         shell: bash
         run: |
@@ -110,7 +118,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 tests/load/upstream_fixture.py >/tmp/upstream-fixture.log 2>&1 &
+          /tmp/load_origin >/tmp/upstream-fixture.log 2>&1 &
           upstream_pid=$!
 
           cat >/tmp/gateway-load.yaml <<'EOF'
@@ -144,7 +152,7 @@ jobs:
             if [ "$status" -ne 0 ]; then
               echo "--- gateway log ---"
               cat /tmp/gateway-load.log || true
-              echo "--- upstream fixture log ---"
+              echo "--- Rust upstream fixture log ---"
               cat /tmp/upstream-fixture.log || true
             fi
           }
@@ -177,13 +185,15 @@ jobs:
           curl --fail --silent --show-error --max-time 1 http://127.0.0.1:18080/livez >/dev/null
 
           GATEWAY_URL=http://127.0.0.1:18080 k6 run --quiet tests/load/gateway_smoke.js
+      - name: Require loopback latency summary
+        run: test -s k6-summary.json
       - name: Upload loopback latency evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: k6-loopback-${{ env.EXPECTED_SHA }}
           path: k6-summary.json
-          if-no-files-found: error
+          if-no-files-found: ignore
           retention-days: 7
 
   oci-runtime:
