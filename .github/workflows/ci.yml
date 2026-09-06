@@ -150,6 +150,20 @@ jobs:
           }
           trap cleanup EXIT
 
+          # Prove the test-only origin has bound before measured gateway traffic starts.
+          # This is fixture liveness, not an application-route warm-up through the gateway.
+          for _ in $(seq 1 80); do
+            if curl --fail --silent --show-error --max-time 1 http://127.0.0.1:18081/fixture-ready >/dev/null; then
+              break
+            fi
+            if ! kill -0 "$upstream_pid" 2>/dev/null; then
+              echo "upstream fixture exited before becoming ready" >&2
+              exit 1
+            fi
+            sleep 0.05
+          done
+          curl --fail --silent --show-error --max-time 1 http://127.0.0.1:18081/fixture-ready >/dev/null
+
           for _ in $(seq 1 80); do
             if curl --fail --silent --show-error --max-time 1 http://127.0.0.1:18080/livez >/dev/null; then
               break
