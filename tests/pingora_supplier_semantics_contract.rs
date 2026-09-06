@@ -57,6 +57,14 @@ fn debug_has_field(debug: &str, field: &str) -> bool {
     })
 }
 
+/// Returns whether a requested scalar field is structurally present.
+///
+/// RED: field presence alone is intentionally insufficient; the value-sensitive
+/// contract below demonstrates the missing acceptance behavior before repair.
+fn debug_has_scalar_field_value(debug: &str, field: &str, _expected: &str) -> bool {
+    debug_has_field(debug, field)
+}
+
 /// Proves the supplier-field oracle distinguishes overlapping field names.
 #[test]
 fn debug_field_match_requires_a_structural_field_boundary() {
@@ -105,6 +113,51 @@ fn debug_field_match_accepts_equivalent_debug_whitespace() {
         ),
         "pretty or manually formatted Debug output must not change field-presence semantics"
     );
+}
+
+/// Proves field-name preservation cannot hide a stale or fabricated scalar value.
+#[test]
+fn debug_field_match_requires_scalar_value_identity() {
+    assert!(debug_has_scalar_field_value(
+        "PeerOptions { verify_cert: false }",
+        "verify_cert",
+        "false"
+    ));
+    assert!(
+        !debug_has_scalar_field_value(
+            "PeerOptions { verify_cert: true }",
+            "verify_cert",
+            "false"
+        ),
+        "a present field with the wrong value must not satisfy Debug semantics preservation"
+    );
+}
+
+/// Preserves representative configured scalar values, not only the Debug field vocabulary.
+#[test]
+fn peer_options_debug_reflects_configured_scalar_values() {
+    let mut options = PeerOptions::new();
+    options.verify_cert = false;
+    options.verify_hostname = false;
+    options.max_h2_streams = 17;
+    options.allow_h1_response_invalid_content_length = true;
+    options.second_keyshare = false;
+    options.tcp_fast_open = true;
+    let debug = format!("{options:?}");
+
+    for (field, expected) in [
+        ("verify_cert", "false"),
+        ("verify_hostname", "false"),
+        ("max_h2_streams", "17"),
+        ("allow_h1_response_invalid_content_length", "true"),
+        ("second_keyshare", "false"),
+        ("tcp_fast_open", "true"),
+    ] {
+        assert!(
+            debug_has_scalar_field_value(&debug, field, expected),
+            "supplier Debug output must reflect configured {field}={expected}: {debug}"
+        );
+    }
 }
 
 /// Preserves the public Debug boundary before replacing `derivative` upstream.
