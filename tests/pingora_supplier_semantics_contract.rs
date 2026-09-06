@@ -2,9 +2,52 @@
 
 use pingora::upstreams::peer::PeerOptions;
 
-/// Returns whether the Debug output contains the requested structural field name.
+/// Returns whether a byte position is at a top-level field of the outer Debug struct.
+fn is_top_level_debug_field_position(debug: &str, byte_index: usize) -> bool {
+    let mut brace_depth = 0_usize;
+    let mut bracket_depth = 0_usize;
+    let mut parenthesis_depth = 0_usize;
+    let mut quote = None;
+    let mut escaped = false;
+
+    for ch in debug[..byte_index].chars() {
+        if let Some(active_quote) = quote {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if ch == '\\' {
+                escaped = true;
+                continue;
+            }
+            if ch == active_quote {
+                quote = None;
+            }
+            continue;
+        }
+
+        match ch {
+            '"' | '\'' => quote = Some(ch),
+            '{' => brace_depth += 1,
+            '}' => brace_depth = brace_depth.saturating_sub(1),
+            '[' => bracket_depth += 1,
+            ']' => bracket_depth = bracket_depth.saturating_sub(1),
+            '(' => parenthesis_depth += 1,
+            ')' => parenthesis_depth = parenthesis_depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+
+    quote.is_none() && brace_depth == 1 && bracket_depth == 0 && parenthesis_depth == 0
+}
+
+/// Returns whether the Debug output contains the requested top-level structural field name.
 fn debug_has_field(debug: &str, field: &str) -> bool {
     debug.match_indices(field).any(|(start, matched)| {
+        if !is_top_level_debug_field_position(debug, start) {
+            return false;
+        }
+
         let preceding = debug[..start].chars().rev().find(|ch| !ch.is_whitespace());
         let following = debug[start + matched.len()..]
             .chars()
