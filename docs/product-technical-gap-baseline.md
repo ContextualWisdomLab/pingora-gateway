@@ -12,13 +12,25 @@ Ready supplier-semantics #62 adopted the proven #63 workflow delta by ordinary n
 
 Exact compare proves the successor tree is the complete non-destructive composition of the separately reviewed component tips: `d4a54d8d...38980146` changes only the #63 workflow delta, while `190cd6ae...38980146` changes only the two supplier-characterization files. There is no later workflow divergence.
 
-Current exact #62 execution is now terminal GREEN. CI `34030105237` succeeded for `test 101477936704`, `oci-runtime 101477936789`, and `load-contract 101477936942`. Supply Chain `34030105222` / `candidate-evidence 101477936825` succeeded through committed dependency audit, exact candidate image, SPDX SBOM, image scan, exact-source binding, and evidence upload. Immutable load artifact `9988970232`, digest `sha256:781ee31569f536b3fdaef29c5c2740bbe8bd47d1fb6b0bb451fff790a50e7dc7`, records 400/400 HTTP-200 and 400/400 body-identity checks, checks rate `1`, `http_req_failed` rate `0`, and `http_req_duration p(95)=1.5580363 ms` under the unchanged 400-request / 4-VU contract.
+Current exact #62 execution is terminal GREEN. CI `34030105237` succeeded for `test 101477936704`, `oci-runtime 101477936789`, and `load-contract 101477936942`. Supply Chain `34030105222` / `candidate-evidence 101477936825` succeeded through committed dependency audit, exact candidate image, SPDX SBOM, image scan, exact-source binding, and evidence upload. Immutable load artifact `9988970232`, digest `sha256:781ee31569f536b3fdaef29c5c2740bbe8bd47d1fb6b0bb451fff790a50e7dc7`, records 400/400 HTTP-200 and 400/400 body-identity checks, checks rate `1`, `http_req_failed` rate `0`, and `http_req_duration p(95)=1.5580363 ms` under the unchanged 400-request / 4-VU contract.
 
 Because current successor execution re-proves all carried workflow, supplier-semantics, OCI, load and Supply Chain evidence, #63 is closed only as **verified complete succession** into #62. It is not counted as merged and no valid delta/test/fixture/contract/evidence is discarded.
 
 Fresh CodeRabbit review now explicitly covers exact `389801461e28f422c166fb0918a2805d7085d05a` and reports no issues. It independently verified #63 as the second parent, the workflow-only adoption delta, direct fixture readiness before gateway/k6 admission, unchanged load thresholds, and the current `PeerOptions` characterization. This is technical bot review evidence only; no independent organization-required `APPROVED` review exists for promotion.
 
 The prior load RED remains RCA evidence. Exact `d4a54d8d...` produced 395 successes / 5 failures over 400 requests / 4 VUs while p95 stayed `1.0152792 ms`; all five failures were first-second gateway 502s caused by `Upstream ConnectRefused` to the asynchronously starting fixture at `127.0.0.1:18081`. The exact successor GREEN proves readiness admission, not threshold relaxation, was the causal fix.
+
+## Rust-only performance-evidence repair — #64
+
+Fresh review found a separate performance-attribution defect in the exact #62 GREEN path: `.github/workflows/ci.yml` still launches `tests/load/upstream_fixture.py`, a Python `ThreadingHTTPServer`, inside the measured k6 round trip. The #62 p95 remains valid evidence for that exact executed topology, but it is not final Rust-first gateway-performance evidence because Python interpreter/thread scheduling contributes to `http_req_duration`.
+
+Ready #64 is an ordinary non-force child of exact #62 and begins at exact `ea32917f97c81d1c3053302ec9b2099de8990ea5`. Exact compare is ahead 4 / behind 0 with #62 as merge base and exactly four changed paths: `.github/workflows/ci.yml`, `TEST_STRATEGY.md`, added `tests/load/load_origin.rs`, and removed `tests/load/upstream_fixture.py`.
+
+The successor adapts the valid intent of historical Draft #35 without merging its old diverged stack and adopts the later bounded-worker origin design from the #41/#42 lineage. The std-only Rust fixture validates startup controls before bind, caps workers at 256, uses a bounded accepted-socket queue, bounds request-header buffering, uses TCP_NODELAY and deterministic Content-Length framing, and defaults to keep-alive/no artificial delay so the existing 4-VU low-contention contract remains distinct from capacity testing.
+
+The load lane uses Rust 1.98.1 to format, compile and run the fixture's direct parser/startup/framing tests with `rustc -D warnings`, compiles the optimized helper outside Cargo production/example targets, then uses that helper for the measured path. The origin-only `/fixture-ready` probe remains outside the gateway and does not warm the measured route. Request count, VUs, exact status/body assertions, zero-failure gate and p95 `<20 ms` threshold are unchanged.
+
+Initial exact #64 CI `34039492737` and Supply Chain `34039492690` have materialized and are not credited before terminal execution. CodeRabbit auto-review skipped the non-default stack base by configuration, so an explicit exact-head review command was issued. Historical #35 remains open because its pg-erd Rust-origin delta has not yet been fully succeeded by #64; closure requires verified complete succession of every valid generic and pg-erd contract/evidence.
 
 ## Ownership boundary
 
@@ -28,7 +40,7 @@ It does not own product authentication/authorization, tenancy/business routing, 
 
 ## Buyer-visible release gaps
 
-The Rust/Pingora gateway is an implemented candidate, not a released edge product. Current exact #62 proves a bounded loopback gateway path on 400 requests / 4 VUs with zero failed requests and `http_req_duration p(95)=1.5580363 ms`, below the repository `p(95)<20` threshold. This is exact-head loopback CI evidence, not buyer-path WAN/TLS/H2/H3 performance.
+The Rust/Pingora gateway is an implemented candidate, not a released edge product. Exact #62 proves the functional 400-request / 4-VU loopback path with zero failed requests and `http_req_duration p(95)=1.5580363 ms`, but the measured origin on that head is Python and therefore the latency value is not credited as final Rust-first gateway-performance evidence. #64 must re-prove the unchanged traffic contract with the Rust-only measured path before that evidence is promotable. Neither loopback result is an Internet/TLS/H2/H3 production SLO.
 
 Production host/SNI/routing parity, realistic TLS/H1.1/H2/H3/WebSocket/streaming failure traffic, timeout/retry/backpressure behavior, client-IP/header/cookie/body-limit parity, immutable packaging, SBOM/provenance/reproducibility at a protected release candidate, observed rollback, and realistic buyer-path p95 ≤20 ms evidence remain release gates. No immutable gateway release, canary, cutover, or verified Nginx/OpenResty removal is credited.
 
