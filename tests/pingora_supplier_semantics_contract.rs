@@ -21,6 +21,22 @@ fn debug_field_match_requires_a_structural_field_boundary() {
     );
 }
 
+/// Proves semantic field matching does not depend on incidental Debug whitespace.
+#[test]
+fn debug_field_match_accepts_equivalent_debug_whitespace() {
+    assert!(
+        debug_has_field("PeerOptions{connection_timeout: None}", "connection_timeout"),
+        "a field immediately after the opening brace must remain visible"
+    );
+    assert!(
+        debug_has_field(
+            "PeerOptions {\n    connection_timeout: None,\n    read_timeout: None\n}",
+            "connection_timeout"
+        ),
+        "pretty or manually formatted Debug output must not change field-presence semantics"
+    );
+}
+
 /// Preserves the public Debug boundary before replacing `derivative` upstream.
 #[test]
 fn peer_options_debug_keeps_safe_fields_and_omits_hook_fields() {
