@@ -40,8 +40,9 @@ fn peer_options_debug_keeps_safe_fields_and_omits_hook_fields() {
         "tracer",
         "custom_l4",
     ] {
+        let marker = format!("{visible_field}:");
         assert!(
-            debug.contains(&format!("{visible_field}:")),
+            debug.contains(marker.as_str()),
             "supplier Debug output must retain the current non-hook field {visible_field}: {debug}"
         );
     }
