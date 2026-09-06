@@ -57,12 +57,44 @@ fn debug_has_field(debug: &str, field: &str) -> bool {
     })
 }
 
-/// Returns whether a requested scalar field is structurally present.
-///
-/// RED: field presence alone is intentionally insufficient; the value-sensitive
-/// contract below demonstrates the missing acceptance behavior before repair.
-fn debug_has_scalar_field_value(debug: &str, field: &str, _expected: &str) -> bool {
-    debug_has_field(debug, field)
+/// Returns whether a top-level scalar Debug field has the requested value token.
+fn debug_has_scalar_field_value(debug: &str, field: &str, expected: &str) -> bool {
+    debug.match_indices(field).any(|(start, matched)| {
+        if !is_top_level_debug_field_position(debug, start) {
+            return false;
+        }
+
+        let preceding = debug[..start].chars().rev().find(|ch| !ch.is_whitespace());
+        if !matches!(preceding, Some('{') | Some(',')) {
+            return false;
+        }
+
+        let after_name = &debug[start + matched.len()..];
+        let Some((colon_index, colon)) = after_name
+            .char_indices()
+            .find(|(_, ch)| !ch.is_whitespace())
+        else {
+            return false;
+        };
+        if colon != ':' {
+            return false;
+        }
+
+        let after_colon = &after_name[colon_index + colon.len_utf8()..];
+        let Some((value_start, _)) = after_colon
+            .char_indices()
+            .find(|(_, ch)| !ch.is_whitespace())
+        else {
+            return false;
+        };
+        let value_tail = &after_colon[value_start..];
+        let value_end = value_tail
+            .char_indices()
+            .find_map(|(index, ch)| matches!(ch, ',' | '}').then_some(index))
+            .unwrap_or(value_tail.len());
+
+        value_tail[..value_end].trim() == expected
+    })
 }
 
 /// Proves the supplier-field oracle distinguishes overlapping field names.
