@@ -10,7 +10,9 @@ Focused load-harness repair #63 is exact `190cd6aebc0b82b01f04b01ff095a741f831a0
 
 Ready supplier-semantics #62 adopted the proven #63 workflow delta by an ordinary non-force merge commit, exact `389801461e28f422c166fb0918a2805d7085d05a`, with parents `d4a54d8d1337797c3763c3d915c674cdf483db1c` and `190cd6aebc0b82b01f04b01ff095a741f831a0c8`. This preserves the full supplier-characterization lineage and the validated readiness repair without force-push or destructive rebase. Its effective child scope relative to #56 is now exactly `.github/workflows/ci.yml`, `TEST_STRATEGY.md`, and `tests/pingora_supplier_semantics_contract.rs`; Pingora pin, `Cargo.lock`, production gateway Rust, routing/TLS/auth/business logic, consumer state, and release metadata remain unchanged.
 
-New exact #62 validation has materialized as CI `34030105237` and Supply Chain `34030105222`. Predecessor #63 GREEN and predecessor #62 GREEN/RED evidence are causal evidence only; the merged exact head must prove test/load/OCI/Supply Chain again before any successor or promotion credit is assigned.
+Fresh current-head technical review independently inspected exact `389801461e28f422c166fb0918a2805d7085d05a`, confirmed `190cd6ae...` is the second parent and the adoption delta from prior #62 is only `.github/workflows/ci.yml`, rechecked the supplier characterization and unchanged load acceptance, and found no issue. This is current technical-review evidence, not an organization-required independent `APPROVED` review.
+
+New exact #62 validation is CI `34030105237` and Supply Chain `34030105222`. Latest fresh sweeps still show `test 101477936704`, `oci-runtime 101477936789`, `load-contract 101477936942`, and `candidate-evidence 101477936825` pre-checkout queued with `steps=[]` and `runner_id=0`. Predecessor #63 GREEN and predecessor #62 GREEN/RED evidence are causal evidence only; the merged exact head must prove test/load/OCI/Supply Chain again before any successor or promotion credit is assigned. No no-op retrigger or runner-selector churn is justified by runnerless pre-checkout admission alone.
 
 The prior #62 load RED remains preserved as RCA evidence. Exact `d4a54d8d...` produced 395 successes / 5 failures over 400 requests / 4 VUs while p95 stayed `1.0152792 ms`; all five failures were first-second gateway 502s caused by `Upstream ConnectRefused` to the asynchronously starting fixture at `127.0.0.1:18081`. The #63 GREEN proves that readiness admission, not latency-threshold relaxation, was the causal fix.
 
@@ -63,7 +65,7 @@ Four acceptance-oracle defects are explicit and test-first:
 
 Prior exact `d4a54d8d1337797c3763c3d915c674cdf483db1c` proved supplier-semantics source GREEN in `test 101463462339`, including formatting, compile/test, strict lint, rustdoc, 100% owned-production line/region coverage, and lock verification; `oci-runtime 101463462432` and Supply Chain `candidate-evidence 101463497940` were also GREEN. Its load-only RED was the fixture-startup race described above. Fresh exact-range CodeRabbit review covered `8027ebfb...d4a54d8d` with no actionable comments; this remains predecessor technical review evidence after adoption.
 
-Current exact `38980146...` must execute all lanes again. Exact #63 GREEN proves the adopted workflow change independently, but no predecessor execution or review credit is transferred to the merged head. Fresh current-head review and current-head CI/Supply Chain are required before #62 can be treated as GREEN.
+Current exact `38980146...` has current technical review with no issue but still must execute all lanes again. Exact #63 GREEN proves the adopted workflow change independently, but no predecessor execution credit is transferred to the merged head.
 
 The generic gateway does not enable Pingora load balancing merely to instantiate `Backend` for a supplier test. `Backend` address+weight equality/hash/order with opaque `Extensions` excluded remains an upstream-owner acceptance item until that bounded capability is actually consumed downstream.
 
@@ -77,9 +79,9 @@ The valid #63 delta has already been adopted non-destructively into #62 exact `3
 
 ## Supplier owner path
 
-Protected `cloudflare/pingora/main` is freshly verified at `09696b51bc59315353d96686355861604d0bb48c`. Issue `cloudflare/pingora#889` remains open and still identifies `derivative 2.2.0` as unmaintained; no maintainer-integrated immutable removal is current authority.
+Protected `cloudflare/pingora/main` is freshly verified at `09696b51bc59315353d96686355861604d0bb48c`. Issue `cloudflare/pingora#889` remains open and still identifies `derivative 2.2.0` as unmaintained; fresh open-PR search finds no maintainer-integrated removal candidate.
 
-Existing #889 downstream evidence is maintained in place. The minimal owner repair remains: replace `PeerOptions` macro Debug with a manual/std Debug implementation preserving every current non-hook top-level field, its actual configured value, and hook omissions under the same feature gates; replace `Backend` macro equality/hash/order with std/manual traits over address+weight only, with canonical `PartialOrd = Some(self.cmp(other))` and opaque `Extensions` excluded; remove `derivative` from workspace/core/load-balancing manifests; regenerate the lockfile; then prove supplier fmt/tests/Clippy/rustdoc/audit GREEN.
+Existing #889 downstream evidence is maintained in place and has been updated to current #62 exact/revalidation. The minimal owner repair remains: replace `PeerOptions` macro Debug with a manual/std Debug implementation preserving every current non-hook top-level field, its actual configured value, and hook omissions under the same feature gates; replace `Backend` macro equality/hash/order with std/manual traits over address+weight only, with canonical `PartialOrd = Some(self.cmp(other))` and opaque `Extensions` excluded; remove `derivative` from workspace/core/load-balancing manifests; regenerate the lockfile; then prove supplier fmt/tests/Clippy/rustdoc/audit GREEN.
 
 A direct attempt from this automation identity to create an upstream repair branch at exact protected supplier head was rejected by GitHub with `403 Resource not accessible by integration`. That makes the remaining supplier source mutation an external maintainer-permission boundary for this lane; it does not authorize a mutable fork/PR pin or advisory suppression. Only a maintainer-integrated immutable supplier revision/release is downstream dependency authority.
 
@@ -93,11 +95,11 @@ Mutable supplier Cookie/body-framing work is evidence only until current-main ma
 
 Organization-wide Actions authority remains in `ContextualWisdomLab/.github`; its dedicated writer owns source/refs/PR state. Pingora sends exact evidence through the owner path without modifying central source from this lane.
 
-Protected `.github/main` is freshly verified at `43024633eba9d96b0456970391360da5a171fbda`. Current `scripts/ci/pingora_edge_policy.py` on that authority still makes `_needs_content_scan()` return true for changed Dockerfile/Containerfile/compose and common config/service/script candidates, after which `evaluate_pull_request()` loads the final exact-head file content and applies `scan_content()`. The static-only Nginx ownership contradiction therefore remains live unless a later fresh owner sweep proves otherwise.
+Protected `.github/main` has advanced normally to `5ea1cc47ec040fa4f6417136f059be637666c2a2` through #1958. That integrated repair adds workflow-level coalescing for superseded OpenCode review dispatches so stale reviews can be cancelled while queued instead of first consuming a runner. This is real queue-health progress but does not modify or satisfy #1952's Nginx/Pingora bounded-context classification finding.
 
-Owner handoff `.github#1952` remains the canonical bounded-context repair. Active `.github#1946` currently changes the same four central files required by #1952 (`scripts/ci/pingora_edge_policy.py`, `tests/test_pingora_edge_policy.py`, `docs/policies/PINGORA_EDGE_POLICY.md`, `CHANGELOG.md`) for a distinct oversized-Contents/Git-Blobs repair. The Pingora lane has therefore handed off a single-writer sequence: finish/reconcile #1946, then adopt its protected-main result and add #1952's static-only-vs-edge-runtime RED→GREEN without parallel source branches, destructive rebase, or loss of either repair.
+Owner handoff `.github#1952` remains open. Overlapping #1946 remains open at exact `790ef33ea60ada7d21503ca57ccf955a1a36d44b` and changes the same four central policy files required by #1952 for a distinct oversized-Contents/Git-Blobs repair. With protected main now ahead of #1946's old base, the owner-safe sequence is: non-force reconcile/integrate #1946 onto current protected main, then adopt that protected-main result and add #1952's static-only-vs-edge-runtime responsibility-profile RED→GREEN. The Pingora lane updated the existing #1952 coordination comment in place and did not modify `.github` source/ref/PR state.
 
-Queue-health owner evidence is also maintained centrally. #62's prior runnerless states later acquired runners and exposed real leaf findings; current exact merged #62 may likewise wait for admission without justifying source no-op retriggers. Runner delay, formatting failure, semantic failure, and traffic correctness failure remain distinct and must not be collapsed into one scheduler diagnosis.
+Queue-health evidence and product-source evidence remain distinct. #62's prior runnerless states later acquired runners and exposed real leaf findings; current exact merged #62 may likewise wait for admission without justifying source no-op retriggers. Runner delay, formatting failure, semantic failure, and traffic correctness failure must not be collapsed into one scheduler diagnosis.
 
 ## Legacy migration and release gate
 
@@ -109,10 +111,10 @@ Protected `pingora-gateway/main` is freshly verified at `f8b4c99b8e5d3de79af1ff0
 
 ## Current causal order
 
-Primary execution root: `#63 exact readiness-repair GREEN → #62 ordinary non-force adoption at 38980146... → re-prove #62 exact test/load/OCI/Supply Chain and current technical review`.
+Primary execution root: `#63 exact readiness-repair GREEN → #62 ordinary non-force adoption at 38980146... → re-prove #62 exact test/load/OCI/Supply Chain; current technical review is already no-issue`.
 
 Primary supplier root after that local repair: `#54 hosted derivative RED + preserved #62 supplier semantics → maintainer-integrated immutable derivative repair → gateway supplier bump + committed lock regeneration → unchanged #54 absence regression GREEN + preserved #62 semantics/load GREEN → exact CI/Supply Chain/security/runtime GREEN → #56 independent approval/governance → foundation integration as applicable → #52/#53 non-force ancestry repair → protocol traffic RED/GREEN → immutable release → parity/shadow/canary/rollback/cutover → verified Nginx/OpenResty removal`.
 
-Parallel owner path: `.github#1952` must reconcile the organization-required Nginx/Pingora scanner with the same bounded-context migration rule after adopting overlapping #1946 work; `.github#712/#1150` owns runner-health diagnosis/reconciliation. Neither path grants the Pingora writer permission to modify `.github` source/refs or relax true edge-runtime enforcement.
+Parallel owner path: `.github#1946` must first reconcile onto current protected main; `.github#1952` then adds the bounded static-only-vs-edge-runtime classification contract. Integrated #1958 improves queued OpenCode review coalescing but does not satisfy #1952. Neither path grants the Pingora writer permission to modify `.github` source/refs or relax true edge-runtime enforcement.
 
 Primary standards and research citations belong in `docs/doctoring/TRACEABILITY.md`; this baseline keeps current ownership, exact execution dependencies, buyer-visible gaps, and next actions.
