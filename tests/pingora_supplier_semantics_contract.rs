@@ -4,9 +4,14 @@ use pingora::upstreams::peer::PeerOptions;
 
 /// Returns whether the Debug output contains the requested structural field name.
 fn debug_has_field(debug: &str, field: &str) -> bool {
-    let first_field = format!("{{ {field}:");
-    let later_field = format!(", {field}:");
-    debug.contains(first_field.as_str()) || debug.contains(later_field.as_str())
+    debug.match_indices(field).any(|(start, matched)| {
+        let preceding = debug[..start].chars().rev().find(|ch| !ch.is_whitespace());
+        let following = debug[start + matched.len()..]
+            .chars()
+            .find(|ch| !ch.is_whitespace());
+
+        matches!(preceding, Some('{') | Some(',')) && following == Some(':')
+    })
 }
 
 /// Proves the supplier-field oracle distinguishes overlapping field names.
