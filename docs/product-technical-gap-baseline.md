@@ -96,11 +96,19 @@ Required supplier order is now `hosted derivative RED (proven) → maintainer-in
 
 ## Supplier replacement characterization — #62
 
-Parallel Ready #62 is based directly on #56 and does not carry #54's intentionally failing dependency-absence oracle. Its source slice adds `tests/pingora_supplier_semantics_contract.rs`, which characterizes the current public `PeerOptions` Debug boundary before upstream `derivative` removal: the type remains structurally debuggable, a representative ordinary field remains present so the omission check cannot pass vacuously, and callback/TLS hook field names remain omitted. `TEST_STRATEGY.md` records the same acceptance boundary.
+Parallel Ready #62 is based directly on #56 and does not carry #54's intentionally failing dependency-absence oracle. Current exact head is `f6cefdb382bd7bb94f853d90e283956ee9632c84`; fresh compare is ahead 5 / behind 0 with #56 as exact merge base and the effective delta remains exactly `tests/pingora_supplier_semantics_contract.rs` plus `TEST_STRATEGY.md`.
 
-This lane does not change the pinned Pingora revision, production gateway Rust, config, routing, TLS policy, authentication/business logic, or consumer state. It also deliberately does not enable Pingora's optional load-balancing feature solely to instantiate `Backend`; generic v1 does not consume that bounded capability. `Backend` address+weight equality/hash/order with opaque `Extensions` excluded therefore remains an upstream-owner acceptance criterion on `cloudflare/pingora#889`, not a reason to widen the gateway dependency graph for a test.
+Fresh inspection of protected supplier source found the predecessor characterization under-specified. At pinned `cloudflare/pingora@09696b51bc59315353d96686355861604d0bb48c`, `PeerOptions` derives Debug through `derivative`, omits exactly three callback/TLS hook fields, and emits the rest of its OpenSSL-build field surface. The former one-field oracle could therefore pass a replacement that retained only the token field while silently dropping the rest of the current diagnostic surface.
 
-#62 is characterization evidence, not the supplier fix. It must acquire exact-head CI/Supply Chain and current review evidence, and its valid contract must be adopted by the eventual immutable supplier-repair successor before GREEN is credited.
+Current #62 closes that acceptance gap without widening gateway authority or dependencies. The executable contract requires all 26 unconditional non-hook fields in the pinned OpenSSL `PeerOptions` surface (`bind_to` through `custom_l4`) to remain represented in Debug output while `upstream_tcp_sock_tweak_hook`, `proxy_digest_user_data_hook`, and `upstream_tls_handshake_complete_hook` remain omitted. The final narrow commit uses an explicit `marker.as_str()` lookup boundary. `TEST_STRATEGY.md` records why the complete current safe-field surface, rather than a single representative field, is the supplier-repair invariant.
+
+This lane does not change the pinned Pingora revision, `Cargo.lock`, production gateway Rust, workflow, config, routing, TLS policy, authentication/business logic, or consumer state. It also deliberately does not enable Pingora's optional load-balancing feature solely to instantiate `Backend`; generic v1 does not consume that bounded capability. `Backend` address+weight equality/hash/order with opaque `Extensions` excluded remains an upstream-owner regression requirement on `cloudflare/pingora#889`, not a reason to widen the gateway dependency graph for a test.
+
+CodeRabbit inspected the strengthened range through `b504256473b6fa14d622ab28f464fe1197c0417a`, mechanically compared the exact supplier field surface, confirmed all 26 unconditional non-hook fields and the OpenSSL hook exclusions, and found no scope widening. Formal re-review was rate-limited, and final exact `f6cefdb3...` postdates that inspected head; current-head review credit is therefore not transferred.
+
+Current exact CI `34007471400` (`test 101417227535`, `load-contract 101417227622`, `oci-runtime 101417227632`) and Supply Chain `34007471395` (`candidate-evidence 101417227593`) are materialized on `f6cefdb3...`; at the latest fresh read all four jobs remain pre-checkout queued with `steps=[]`, `runner_id=0`, `runner_group_id=0`. No predecessor GREEN is transferred and no no-op retrigger is used.
+
+#62 is characterization evidence, not the supplier fix. Its valid contract must be adopted by the eventual immutable supplier-repair successor and proven GREEN there.
 
 ## Protocol / supplier path
 
@@ -108,13 +116,15 @@ Draft #53 remains a protocol-test lineage that must be ancestry-repaired only af
 
 Protected public `cloudflare/pingora/main` remains `09696b51bc59315353d96686355861604d0bb48c` at the current sweep. Cookie #901 remains open/unmerged on a stale base and is not immutable dependency authority; body-framing #936 and derivative owner issue #889 remain supplier-owner work until fresh maintainer integration evidence says otherwise. Mutable supplier work is evidence, not dependency authority.
 
-For derivative, #889 remains open. The existing owner-path evidence now includes the actual hosted downstream RED and identifies the minimal semantics-preserving repair surface in `PeerOptions` and `Backend`; there is still no maintainer-integrated immutable supplier repair. A fresh upstream PR search found no open repair candidate for the derivative removal. After the supply-chain root is repaired, protocol order is `#52/#53 non-force ancestry repair → protocol-only H2→H1 Cookie RED → current-main supplier repair/integration → immutable supplier identity → gateway bump → exact traffic GREEN`.
+For derivative, #889 remains open. A fresh upstream open-PR search still finds no maintainer-integrated derivative-removal candidate. The existing owner-path comment now contains the actual hosted #54 RED, the stronger #62 Debug characterization, and a concrete owner implementation/acceptance path: replace `PeerOptions` macro Debug with manual Debug preserving every current non-hook field while excluding hooks; replace `Backend` macro equality/hash/order with std/manual traits over address+weight only and canonical PartialOrd; remove `derivative` from workspace/core/load-balancing manifests and regenerate the lockfile; then prove full supplier fmt/tests/Clippy/rustdoc/audit GREEN.
+
+After the supply-chain root is repaired, protocol order is `#52/#53 non-force ancestry repair → protocol-only H2→H1 Cookie RED → current-main supplier repair/integration → immutable supplier identity → gateway bump → exact traffic GREEN`.
 
 ## Organization Actions owner-plane
 
 Organization-wide Actions authority remains in `ContextualWisdomLab/.github`; its dedicated writer owns source/refs/PR state. Pingora only sends exact evidence through the owner path while that writer is active.
 
-Runner delay and semantic failure are now distinguished by same-head evidence. #56 first sat runnerless and later passed unchanged. #54 also waited for runners, then the same unchanged head produced GREEN load/OCI and the intended test RED while Supply Chain completed GREEN. No no-op source churn or runner-selector change was required. Central scheduler/admission source remains `.github` owner authority rather than gateway-local policy.
+Runner delay and semantic failure are distinguished by same-head evidence. #56 first sat runnerless and later passed unchanged. #54 also waited for runners, then the same unchanged head produced GREEN load/OCI and the intended test RED while Supply Chain completed GREEN. Current #62 `f6cefdb3...` is a fresh runnerless lane-local sample, not authority for gateway-local selector churn or central source mutation. `.github#712` owner evidence has been updated in place with these exact jobs. Protected `.github/main` remains `fe827e133e7d867015d088777553e22736344c55` at the current sweep.
 
 ## Legacy migration / release gate
 
