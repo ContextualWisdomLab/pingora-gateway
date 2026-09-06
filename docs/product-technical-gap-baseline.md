@@ -51,7 +51,7 @@ The predecessor #64 hosted RED on `bad9e0ed158d633c259861106f50e223247370dd` rem
 
 ## Compiler prerequisite — #56
 
-Ready #56 remains exact `18fb38b1ba70c4bf222642ef347f3d57a98379a2`. Rust 1.98.1 is the release compiler after the Rust 1.98.0 vtable-generation miscompilation finding. CI `33992794787` and Supply Chain `33992794799` are terminal GREEN on that exact head.
+Ready #56 remains exact `18fb38b1ba70c4bf222642ef347f3d57a98379a2`. Rust 1.98.1 is the separately gated release-path compiler prerequisite that repairs the Rust 1.98.0 vtable-generation miscompilation; the foundation/docs branch itself remains on manifest MSRV `1.98.0` until #56 is normally integrated. CI `33992794787` and Supply Chain `33992794799` are terminal GREEN on #56's exact head.
 
 Fresh formal review enumeration still contains no independent `APPROVED` review; submitted reviews are `COMMENTED`. Technical CodeRabbit evidence does not replace the organization-required approving review. Do not self-approve or use administrator bypass merely to advance the stack.
 
@@ -63,7 +63,7 @@ Ready #54 remains exact `50b0516a9249c4066e3a0f305dbf2759eae3ae06`, based on #56
 
 ## Supplier owner path
 
-Protected `cloudflare/pingora/main` is freshly verified at `09696b51bc59315353d96686355861604d0bb48c`. Issue `cloudflare/pingora#889` remains open, and fresh open-PR search finds no maintainer-integrated `derivative` removal candidate.
+Protected `cloudflare/pingora/main` is freshly verified at `09696b51bc59315353d96686355861604d0bb48c`. Issue `cloudflare/pingora#889` remains open, and fresh open-PR search finds no maintainer-integrated `derivative` removal candidate. The latest published GitHub release, Pingora `0.8.1` from 2026-06-04, still declares workspace `derivative = "2.2.0"`; protected current `main` declares the same dependency. No already-released supplier version satisfies #54's absence contract.
 
 The downstream evidence comment on #889 keeps the accepted repair surface explicit:
 
@@ -74,7 +74,7 @@ The downstream evidence comment on #889 keeps the accepted repair surface explic
 - regenerate `Cargo.lock` and prove the exact `derivative` package is absent;
 - run supplier formatting, workspace/all-feature tests, strict Clippy, rustdoc, advisory/audit checks, `PeerOptions` regressions, and `Backend` identity/order/hash regressions.
 
-A direct upstream branch-creation attempt from the integration identity returned `403 Resource not accessible by integration`. Supplier source mutation therefore remains maintainer-owned. A mutable downstream fork or contributor PR pin is not release authority.
+A direct upstream branch-creation attempt from the integration identity returned `403 Resource not accessible by integration`. Supplier source mutation therefore remains maintainer-owned. A mutable downstream fork or contributor PR pin is not release authority. The consumer bump must target a maintainer-integrated, release-qualified immutable supplier revision rather than an unreleased mutable head.
 
 ## Historical pg-erd succession boundary
 
@@ -108,6 +108,6 @@ Legacy Nginx/OpenResty presence alone is not a migration trigger. Static-file se
 
 The current work-conserving order is:
 
-`#54 derivative RED + #62 exact hosted/technical GREEN → maintainer-integrated immutable Pingora derivative repair → gateway supplier bump + committed Cargo.lock regeneration → unchanged #54 absence regression GREEN + preserved #62 current-stack GREEN → #56 independent APPROVED governance → protected integration → current pg-erd/protocol non-force restacks → real-wire RED/GREEN → immutable release/SBOM/provenance/reproducibility/rollback → shadow/canary/cutover → verified Nginx/OpenResty removal`.
+`#54 derivative RED + #62 exact hosted/technical GREEN → maintainer-integrated release-qualified immutable Pingora derivative repair → gateway supplier bump + committed Cargo.lock regeneration → unchanged #54 absence regression GREEN + preserved #62 current-stack GREEN → #56 independent APPROVED governance → protected integration → current pg-erd/protocol non-force restacks → real-wire RED/GREEN → immutable release/SBOM/provenance/reproducibility/rollback → shadow/canary/cutover → verified Nginx/OpenResty removal`.
 
 Queued checks are incomplete evidence, not GREEN. Predecessor execution/review does not transfer across a new exact head. No force push, destructive rebase, self-approval, routine bypass, mutable supplier dependency, threshold weakening, sample reduction, or release/cutover claim is accepted.
