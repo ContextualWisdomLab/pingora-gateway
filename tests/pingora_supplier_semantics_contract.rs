@@ -2,10 +2,11 @@
 
 use pingora::upstreams::peer::PeerOptions;
 
-/// Returns whether the Debug output contains the requested field marker.
+/// Returns whether the Debug output contains the requested structural field name.
 fn debug_has_field(debug: &str, field: &str) -> bool {
-    let marker = format!("{field}:");
-    debug.contains(marker.as_str())
+    let first_field = format!("{{ {field}:");
+    let later_field = format!(", {field}:");
+    debug.contains(first_field.as_str()) || debug.contains(later_field.as_str())
 }
 
 /// Proves the supplier-field oracle distinguishes overlapping field names.
