@@ -2,6 +2,16 @@
 
 This is the code-current commercial-development baseline for `ContextualWisdomLab/pingora-gateway` as of 2026-09-06 KST. Mutable PR heads are evidence candidates, not release authority; later live evidence supersedes exact identities below.
 
+## Current execution update — #62 load RED and #63 repair
+
+Ready supplier-semantics characterization #62 remains exact `d4a54d8d1337797c3763c3d915c674cdf483db1c`, but its current hosted execution is no longer runnerless. CI `34024689629` executed on that unchanged head. `test 101463462339` is terminal GREEN through exact checkout, Rust 1.98.1, formatting, compile/test, strict Clippy, public rustdoc, pinned coverage tooling, owned-production coverage workload, 100% line/region enforcement, and dependency-lock evidence. `oci-runtime 101463462432` is terminal GREEN under the exact non-root/read-only least-privilege image contract.
+
+`load-contract 101463462445` is a distinct hosted traffic RED. The exact release candidate and checksum-pinned k6 2.2.0 built successfully, but the unchanged 400-request / 4-VU loopback sample produced 395 successful requests and 5 failures. Immutable artifact `9987411966`, digest `sha256:460b1ece2aeeaea5df49d36e37afb081bcd7a4964b987870df62d17d6a2266d5`, records 395/5 pass/fail for both HTTP-200 and body-identity checks, checks rate `0.9875`, `http_req_failed=0.0125`, and `http_req_duration p(95)=1.0152792 ms`. The p95 `<20 ms` threshold passed; zero-failure correctness thresholds did not. This result is therefore not a latency regression and must not be repaired by reducing samples or weakening correctness gates.
+
+The inherited load workflow starts `tests/load/upstream_fixture.py` asynchronously and proves only gateway `/livez` before measured application traffic. It does not prove the test-only origin on `127.0.0.1:18081` has bound. Focused Ready sibling #63 is exact `190cd6aebc0b82b01f04b01ff095a741f831a0c8`, direct child of #56 exact `18fb38b1ba70c4bf222642ef347f3d57a98379a2`, ahead 1 / behind 0 with that exact merge base and only `.github/workflows/ci.yml` changed (+14/-0). Before gateway admission/k6 it now proves the origin process is alive and directly reachable. That direct probe establishes fixture liveness; it does not pre-exercise the measured gateway application route. The 400-request / 4-VU sample, zero-failure requirements, p95 `<20 ms`, runtime, dependency graph, compiler, Pingora source, and routing semantics remain unchanged.
+
+Exact #63 CI `34027297080` and Supply Chain `34027296921` have materialized. They are the causal discriminator rather than evidence to transfer: a zero-failure GREEN supports the origin-startup-race diagnosis; a repeated RED requires continued runtime/load RCA. Once #63 is exact-head GREEN, #62 must adopt the valid workflow delta by ordinary non-force ancestry and re-prove its supplier characterization on the new exact head. No predecessor GREEN is transferred.
+
 ## Ownership boundary
 
 `pingora-gateway` owns Ingress, Edge Routing, TLS transport policy, HTTP Policy, Load Balancing, Observability, Admin Config, and Runtime Isolation. It may own forwarding sanitation, connection/request limits, timeout/retry/backpressure, health/drain, payload-free low-cardinality transport telemetry, and immutable edge packaging.
@@ -10,7 +20,7 @@ It does not own product authentication/authorization, tenancy/business routing, 
 
 ## Buyer-visible release gaps
 
-The Rust/Pingora gateway is an implemented candidate, not a released edge product. Workflow-policy candidate #60 proved a bounded loopback gateway path on 400 requests with zero failed requests and `http_req_duration p(95)=1.56505725 ms`, below the repository `p(95)<20` threshold. That evidence is exact-head loopback CI, not buyer-path WAN/TLS/H2/H3 performance.
+The Rust/Pingora gateway is an implemented candidate, not a released edge product. Workflow-policy candidate #60 proved a bounded loopback gateway path on 400 requests with zero failed requests and `http_req_duration p(95)=1.56505725 ms`, below the repository `p(95)<20` threshold. That evidence is exact-head loopback CI, not buyer-path WAN/TLS/H2/H3 performance. Current #62 additionally proves that p95 can remain well below 20 ms while correctness still fails, so zero-failure assertions remain independent release gates rather than being inferred from latency.
 
 Production host/SNI/routing parity, realistic TLS/H1.1/H2/H3/WebSocket/streaming failure traffic, timeout/retry/backpressure behavior, client-IP/header/cookie/body-limit parity, immutable packaging, SBOM/provenance/reproducibility at a protected release candidate, observed rollback, and realistic buyer-path p95 ≤20 ms evidence remain release gates. No immutable gateway release, canary, cutover, or verified Nginx/OpenResty removal is credited.
 
@@ -53,9 +63,17 @@ Predecessor exact `8027ebfbd4c9f020783e1bb5d4af5c4d0f6b4ca5` completed terminal 
 
 Hosted execution of exact `82566e02a03eedad2e75b0f7b9468ebd70545165` eventually acquired runner `1001709001`. Exact checkout and Rust 1.98.1 verification passed, but CI `34021912038` / `test 101455926617` then failed at `cargo fmt --all -- --check` before compile/test, lint, rustdoc, coverage, or lock-evidence. The job log's only source diff was Rustfmt collapsing the hostile wrong-value `debug_has_scalar_field_value("PeerOptions { verify_cert: true }", "verify_cert", "false")` call to one line.
 
-Current exact `d4a54d8d1337797c3763c3d915c674cdf483db1c` is the minimal causal repair and changes only that formatter-required layout in the existing test. Semantics, dependencies, workflows, Pingora pin, runtime, and production code are untouched. Fresh exact CI `34024689629` has `test 101463462339`, `oci-runtime 101463462432`, and `load-contract 101463462445`; Supply Chain `34024689818` has `candidate-evidence 101463497940`. At the first current-head read these jobs were pre-checkout queued, so GREEN is not claimed. A fresh exact-head CodeRabbit review has also been requested rather than carrying predecessor credit forward.
+Current exact `d4a54d8d1337797c3763c3d915c674cdf483db1c` is the minimal causal formatting repair. Its supplier-semantics source has now proved hosted GREEN in `test 101463462339`, including formatting, compile/test, strict lint, rustdoc, 100% owned-production line/region coverage, and lock verification. `oci-runtime 101463462432` is also GREEN. The sibling load-contract RED described above is a harness/runtime-evidence finding, not a failure of the `PeerOptions` characterization itself. Fresh exact-range CodeRabbit review covers `8027ebfb...d4a54d8d` with no actionable comments; this remains technical review evidence rather than a human `APPROVED` review.
+
+Supply Chain `34024689818` / `candidate-evidence 101463497940` has acquired a runner on exact `d4a54d8d...`; terminal supplier evidence is not claimed until that job completes. #62 also cannot be promoted by transferring #63 evidence; after #63 GREEN it must adopt the workflow repair non-destructively and execute again on the resulting exact head.
 
 The generic gateway does not enable Pingora load balancing merely to instantiate `Backend` for a supplier test. `Backend` address+weight equality/hash/order with opaque `Extensions` excluded remains an upstream-owner acceptance item until that bounded capability is actually consumed downstream.
+
+## Load-contract reliability repair — #63
+
+Ready #63 exists specifically because the full exact #62 traffic execution exposed a correctness RED while latency remained GREEN. Its exact head `190cd6aebc0b82b01f04b01ff095a741f831a0c8` changes only `.github/workflows/ci.yml` from #56. The repair adds explicit test-origin readiness admission before gateway liveness and measured k6 traffic. The origin process must stay alive and answer directly; otherwise the job fails before any measured gateway sample is taken.
+
+This repair does not change the product route, gateway candidate, Python fixture implementation, p95 threshold, request/check failure thresholds, VU count, iteration count, Pingora pin, Rust source, or compiler. Direct fixture liveness is not credited as gateway traffic or performance. Exact CI `34027297080` and Supply Chain `34027296921` are the current evidence wave. If zero failures are not restored, #63 remains RED and the next causal finding must come from the exact logs/artifact rather than from a blind rerun or threshold relaxation.
 
 ## Supplier owner path
 
@@ -75,13 +93,11 @@ Mutable supplier Cookie/body-framing work is evidence only until current-main ma
 
 Organization-wide Actions authority remains in `ContextualWisdomLab/.github`; its dedicated writer owns source/refs/PR state. Pingora sends exact evidence through the owner path without modifying central source from this lane.
 
-Protected `.github/main` is `43024633eba9d96b0456970391360da5a171fbda`, advanced by owner-side Strix sandbox/bootstrap handling rather than a Pingora-policy repair. Current `scripts/ci/pingora_edge_policy.py` on that head still makes `_needs_content_scan()` return true for changed Dockerfile/Containerfile/compose and common config/service/script candidates, after which `evaluate_pull_request()` loads the final exact-head file content and applies `scan_content()`. The static-only Nginx ownership contradiction therefore remains live; it was not repaired by the intervening `.github` commit.
+Protected `.github/main` was last verified at `43024633eba9d96b0456970391360da5a171fbda` before the final exit sweep. Current `scripts/ci/pingora_edge_policy.py` on that authority still makes `_needs_content_scan()` return true for changed Dockerfile/Containerfile/compose and common config/service/script candidates, after which `evaluate_pull_request()` loads the final exact-head file content and applies `scan_content()`. The static-only Nginx ownership contradiction therefore remains live unless a later fresh owner sweep proves otherwise.
 
 Owner handoff `.github#1952` remains the canonical bounded-context repair. Active `.github#1946` currently changes the same four central files required by #1952 (`scripts/ci/pingora_edge_policy.py`, `tests/test_pingora_edge_policy.py`, `docs/policies/PINGORA_EDGE_POLICY.md`, `CHANGELOG.md`) for a distinct oversized-Contents/Git-Blobs repair. The Pingora lane has therefore handed off a single-writer sequence: finish/reconcile #1946, then adopt its protected-main result and add #1952's static-only-vs-edge-runtime RED→GREEN without parallel source branches, destructive rebase, or loss of either repair.
 
-Queue-health owner evidence is also maintained centrally. #62 `82566e02...` reproduced the pre-checkout `runner_id=0` state and later acquired a runner, exposing a real leaf-local Rustfmt failure. That history is evidence against manufacturing no-op leaf retriggers. Canonical `.github#1150` remains an owner implementation candidate but fresh compare against `.github/main@43024633...` shows head `e6622a428060194b558929ad651d5b4ae3a9840f` diverged 69 ahead / 41 behind with merge base `6d7fbebec8aec31d88a30a36e71ca5b3925d241d`; the dedicated `.github` writer must reconcile it non-destructively before treating it as current owner authority.
-
-Runner delay, formatting failure, and semantic failure remain distinct. #56 waited runnerless and later passed unchanged; #54 waited and later produced the intended semantic RED on the same head; #62 `82566e02...` waited and then produced a formatter RED. Current #62 `d4a54d8d...` carries the minimal formatter repair and awaits its own exact execution.
+Queue-health owner evidence is also maintained centrally. #62's prior runnerless states later acquired runners and exposed real leaf findings; current #63 may likewise wait for admission without justifying source no-op retriggers. Runner delay, formatting failure, semantic failure, and traffic correctness failure remain distinct and must not be collapsed into one scheduler diagnosis.
 
 ## Legacy migration and release gate
 
@@ -93,7 +109,9 @@ Commercial release credit requires exact protected candidate version/CHANGELOG a
 
 ## Current causal order
 
-Primary supplier root: `#54 hosted derivative RED + #62 current scalar-value semantics characterization → #62 formatter repair/current exact execution/review → maintainer-integrated immutable derivative repair → gateway supplier bump + committed lock regeneration → unchanged #54 absence regression GREEN + preserved #62 semantics GREEN → exact CI/Supply Chain/security/runtime GREEN → #56 independent approval/governance → foundation integration as applicable → #52/#53 non-force ancestry repair → protocol traffic RED/GREEN → immutable release → parity/shadow/canary/rollback/cutover → verified Nginx/OpenResty removal`.
+Primary execution root: `#62 hosted load RED → #63 exact load-harness RED→GREEN → ordinary non-force adoption into #62 → re-prove #62 exact test/load/OCI/Supply Chain`.
+
+Primary supplier root after that local repair: `#54 hosted derivative RED + preserved #62 supplier semantics → maintainer-integrated immutable derivative repair → gateway supplier bump + committed lock regeneration → unchanged #54 absence regression GREEN + preserved #62 semantics/load GREEN → exact CI/Supply Chain/security/runtime GREEN → #56 independent approval/governance → foundation integration as applicable → #52/#53 non-force ancestry repair → protocol traffic RED/GREEN → immutable release → parity/shadow/canary/rollback/cutover → verified Nginx/OpenResty removal`.
 
 Parallel owner path: `.github#1952` must reconcile the organization-required Nginx/Pingora scanner with the same bounded-context migration rule after adopting overlapping #1946 work; `.github#712/#1150` owns runner-health diagnosis/reconciliation. Neither path grants the Pingora writer permission to modify `.github` source/refs or relax true edge-runtime enforcement.
 
