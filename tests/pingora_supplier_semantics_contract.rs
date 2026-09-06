@@ -92,7 +92,10 @@ fn debug_field_match_rejects_nested_and_quoted_field_like_text() {
 #[test]
 fn debug_field_match_accepts_equivalent_debug_whitespace() {
     assert!(
-        debug_has_field("PeerOptions{connection_timeout: None}", "connection_timeout"),
+        debug_has_field(
+            "PeerOptions{connection_timeout: None}",
+            "connection_timeout"
+        ),
         "a field immediately after the opening brace must remain visible"
     );
     assert!(
