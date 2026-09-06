@@ -2,7 +2,7 @@
 
 ## Runtime
 
-Rust edition 2021 with manifest MSRV `1.98.0` on this branch. The Pingora dependency is pinned to exact public upstream revision `09696b51bc59315353d96686355861604d0bb48c`; mutable branch or contributor-PR dependencies are not release authority. Compiler-repair Draft #56 separately moves release-producing paths to Rust 1.98.1 and must be adopted only after its own exact-head GREEN evidence.
+Rust edition 2021 with manifest MSRV `1.98.0` on this documentation branch. The Pingora dependency is pinned to exact public upstream revision `09696b51bc59315353d96686355861604d0bb48c`; mutable branch or contributor-PR dependencies are not release authority. Compiler-repair Ready #56 exact `18fb38b1ba70c4bf222642ef347f3d57a98379a2` separately moves release-producing paths to Rust 1.98.1 and has terminal exact-head CI and Supply Chain GREEN; it remains unmerged because the organization-required independent approving review is still absent. This docs projection does not synthesize that source delta into its foundation base.
 
 The production composition root is `src/bin/cwl-pingora-gateway.rs`. It parses `--config`, validates the transport-neutral contract before granting network authority, constructs `GatewayProxy`, exposes the dedicated metrics listener, adds the downstream TCP listener to Pingora `http_proxy_service`, and delegates serving/shutdown to Pingora's `Server` lifecycle. Product-specific routing, authentication/authorization, certificate issuance/ACME, Wardnet/EgressWeave policy and Keyverse identity remain outside this process boundary.
 
