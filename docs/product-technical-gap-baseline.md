@@ -1,6 +1,6 @@
 # Product / Technical Gap Baseline
 
-This is the code-current commercial-development baseline for `ContextualWisdomLab/pingora-gateway` as of 2026-09-06 KST. Mutable PR heads are evidence candidates, not release authority; later live evidence supersedes exact identities below.
+This is the code-current commercial-development baseline for `ContextualWisdomLab/pingora-gateway` as of 2026-09-06 KST. Mutable PR heads and protected-branch tips are evidence snapshots, not release authority; later live evidence supersedes exact identities below.
 
 ## Current execution update — #63 GREEN and #62 non-force adoption
 
@@ -95,9 +95,9 @@ Mutable supplier Cookie/body-framing work is evidence only until current-main ma
 
 Organization-wide Actions authority remains in `ContextualWisdomLab/.github`; its dedicated writer owns source/refs/PR state. Pingora sends exact evidence through the owner path without modifying central source from this lane.
 
-Protected `.github/main` has advanced normally to `5ea1cc47ec040fa4f6417136f059be637666c2a2` through #1958. That integrated repair adds workflow-level coalescing for superseded OpenCode review dispatches so stale reviews can be cancelled while queued instead of first consuming a runner. This is real queue-health progress but does not modify or satisfy #1952's Nginx/Pingora bounded-context classification finding.
+A fresh owner-plane sweep at 2026-09-06T11:37:30Z observed protected `.github/main` at `0b0f10476469d52adc40f98495d50855486cd32f` (#1957, preflight rate-limit candidate postponement). Its immediate parent `5ea1cc47ec040fa4f6417136f059be637666c2a2` is the valid #1958 integration point that added workflow-level coalescing for superseded OpenCode review dispatches. The latter is real queue-health progress, but neither #1957 nor #1958 modifies or satisfies #1952's Nginx/Pingora bounded-context classification finding. This is an evidence snapshot; later protected-main movement supersedes the tip identity without invalidating the two integrated commits.
 
-Owner handoff `.github#1952` remains open. Overlapping #1946 remains open at exact `790ef33ea60ada7d21503ca57ccf955a1a36d44b` and changes the same four central policy files required by #1952 for a distinct oversized-Contents/Git-Blobs repair. With protected main now ahead of #1946's old base, the owner-safe sequence is: non-force reconcile/integrate #1946 onto current protected main, then adopt that protected-main result and add #1952's static-only-vs-edge-runtime responsibility-profile RED→GREEN. The Pingora lane updated the existing #1952 coordination comment in place and did not modify `.github` source/ref/PR state.
+Owner handoff `.github#1952` remains open. Overlapping #1946 remains open at exact `790ef33ea60ada7d21503ca57ccf955a1a36d44b` and changes the same four central policy files required by #1952 for a distinct oversized-Contents/Git-Blobs repair. Its old base is behind protected main and GitHub currently reports it non-mergeable, so the owner-safe sequence is: non-force reconcile/integrate #1946 onto fresh protected main, then adopt that protected-main result and add #1952's static-only-vs-edge-runtime responsibility-profile RED→GREEN. The Pingora lane updated the existing #1952 coordination comment in place and did not modify `.github` source/ref/PR state.
 
 Queue-health evidence and product-source evidence remain distinct. #62's prior runnerless states later acquired runners and exposed real leaf findings; current exact merged #62 may likewise wait for admission without justifying source no-op retriggers. Runner delay, formatting failure, semantic failure, and traffic correctness failure must not be collapsed into one scheduler diagnosis.
 
@@ -115,6 +115,6 @@ Primary execution root: `#63 exact readiness-repair GREEN → #62 ordinary non-f
 
 Primary supplier root after that local repair: `#54 hosted derivative RED + preserved #62 supplier semantics → maintainer-integrated immutable derivative repair → gateway supplier bump + committed lock regeneration → unchanged #54 absence regression GREEN + preserved #62 semantics/load GREEN → exact CI/Supply Chain/security/runtime GREEN → #56 independent approval/governance → foundation integration as applicable → #52/#53 non-force ancestry repair → protocol traffic RED/GREEN → immutable release → parity/shadow/canary/rollback/cutover → verified Nginx/OpenResty removal`.
 
-Parallel owner path: `.github#1946` must first reconcile onto current protected main; `.github#1952` then adds the bounded static-only-vs-edge-runtime classification contract. Integrated #1958 improves queued OpenCode review coalescing but does not satisfy #1952. Neither path grants the Pingora writer permission to modify `.github` source/refs or relax true edge-runtime enforcement.
+Parallel owner path: `.github#1946` must first reconcile onto a fresh protected-main tip; `.github#1952` then adds the bounded static-only-vs-edge-runtime classification contract. Integrated #1958 improves queued OpenCode review coalescing but does not satisfy #1952. Neither path grants the Pingora writer permission to modify `.github` source/refs or relax true edge-runtime enforcement.
 
 Primary standards and research citations belong in `docs/doctoring/TRACEABILITY.md`; this baseline keeps current ownership, exact execution dependencies, buyer-visible gaps, and next actions.
