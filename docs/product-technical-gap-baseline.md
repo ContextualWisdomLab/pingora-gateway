@@ -6,7 +6,7 @@ This is the code-current commercial-development baseline for `ContextualWisdomLa
 
 Focused load-harness repair #63 exact `190cd6aebc0b82b01f04b01ff095a741f831a0c8` changed only `.github/workflows/ci.yml` (+14/-0) from #56. Before gateway admission and k6 it proves the origin process is alive and directly reachable at `127.0.0.1:18081/fixture-ready`, while failing immediately if that process exits. The probe does not traverse or warm the measured gateway `/load-contract` route; the 400-request / 4-VU sample, zero-failure requirements, p95 `<20 ms`, runtime, dependency graph, compiler, Pingora source, and routing semantics remain unchanged.
 
-#63 independently proved the repair GREEN in CI `34027297080` and Supply Chain `34027296921`. Immutable load artifact `9988273511`, digest `sha256:64500c71061e2df4a42693952fca72cdef5eac4df979b26bff3209722cf4276a`, records 400/400 HTTP-200 and body-identity checks, zero request failures, and p95 `0.64378865 ms`.
+`#63` independently proved the repair GREEN in CI `34027297080` and Supply Chain `34027296921`. Immutable load artifact `9988273511`, digest `sha256:64500c71061e2df4a42693952fca72cdef5eac4df979b26bff3209722cf4276a`, records 400/400 HTTP-200 and body-identity checks, zero request failures, and p95 `0.64378865 ms`.
 
 Ready supplier-semantics #62 adopted the proven #63 workflow delta by ordinary non-force merge commit `389801461e28f422c166fb0918a2805d7085d05a`, with parents `d4a54d8d1337797c3763c3d915c674cdf483db1c` and `190cd6aebc0b82b01f04b01ff095a741f831a0c8`. Effective scope relative to #56 is exactly `.github/workflows/ci.yml`, `TEST_STRATEGY.md`, and `tests/pingora_supplier_semantics_contract.rs`; Pingora pin, `Cargo.lock`, production gateway Rust, routing/TLS/auth/business logic, consumer state, and release metadata remain unchanged.
 
@@ -16,7 +16,7 @@ Current exact #62 execution is now terminal GREEN. CI `34030105237` succeeded fo
 
 Because current successor execution re-proves all carried workflow, supplier-semantics, OCI, load and Supply Chain evidence, #63 is closed only as **verified complete succession** into #62. It is not counted as merged and no valid delta/test/fixture/contract/evidence is discarded.
 
-Prior technical reviews separately cover the supplier-semantics tip and the #63 workflow tip. A fresh CodeRabbit review of exact `38980146...` has been requested; current-head bot coverage is not claimed until it is explicitly bound to this SHA. No independent organization-required `APPROVED` review exists for promotion.
+Fresh CodeRabbit review now explicitly covers exact `389801461e28f422c166fb0918a2805d7085d05a` and reports no issues. It independently verified #63 as the second parent, the workflow-only adoption delta, direct fixture readiness before gateway/k6 admission, unchanged load thresholds, and the current `PeerOptions` characterization. This is technical bot review evidence only; no independent organization-required `APPROVED` review exists for promotion.
 
 The prior load RED remains RCA evidence. Exact `d4a54d8d...` produced 395 successes / 5 failures over 400 requests / 4 VUs while p95 stayed `1.0152792 ms`; all five failures were first-second gateway 502s caused by `Upstream ConnectRefused` to the asynchronously starting fixture at `127.0.0.1:18081`. The exact successor GREEN proves readiness admission, not threshold relaxation, was the causal fix.
 
@@ -67,7 +67,7 @@ The generic gateway does not enable Pingora load balancing merely to instantiate
 
 ## Load-contract reliability repair — #63
 
-#63 exact `190cd6aebc0b82b01f04b01ff095a741f831a0c8` is closed, not merged, after verified complete succession into #62. Its exact original CI/Supply Chain GREEN and immutable artifact remain causal evidence, while current #62 exact GREEN is the successor execution authority. The closure is valid only because exact ancestry and compare prove the complete +14/-0 workflow delta is present unchanged and the successor re-proves every carried acceptance lane.
+`#63` exact `190cd6aebc0b82b01f04b01ff095a741f831a0c8` is closed, not merged, after verified complete succession into #62. Its exact original CI/Supply Chain GREEN and immutable artifact remain causal evidence, while current #62 exact GREEN is the successor execution authority. The closure is valid only because exact ancestry and compare prove the complete +14/-0 workflow delta is present unchanged and the successor re-proves every carried acceptance lane.
 
 ## Supplier owner path
 
@@ -98,13 +98,3 @@ Static-only product serving must not be promoted into shared Pingora responsibil
 Legacy consumer repositories with dedicated writers remain read-only from this lane. Nginx/OpenResty presence alone is not enough to move a workload into `pingora-gateway`: the responsibility must be shared edge routing/TLS/HTTP/load-balancing/runtime policy rather than static-file serving, certificate issuance, FastCGI, product auth, or business logic.
 
 Migration remains release-first: owner-safe inventory → explicit certificate/edge/application responsibility split → immutable `pingora-gateway` artifact → parity/shadow/canary → observed rollback → cutover → verified legacy removal.
-
-Protected `pingora-gateway/main` is freshly verified at `f8b4c99b8e5d3de79af1ff0c00c0c8fd63b52991`, and GitHub Releases remain empty. Commercial release credit requires exact protected candidate version/CHANGELOG alignment, immutable tag/package/image, SBOM, provenance, reproducibility, rollback artifact/runbook, and all live governance checks. No release, canary, cutover, or legacy-removal credit is assigned until fresh protected-main and release evidence proves those gates.
-
-## Current causal order
-
-Primary supplier root: `#54 hosted derivative RED + #62 exact semantics/load GREEN → maintainer-integrated immutable derivative repair → gateway supplier bump + committed lock regeneration → unchanged #54 absence regression GREEN + preserved #62 semantics/load GREEN → exact CI/Supply Chain/security/runtime GREEN → #56 independent approval/governance → protected integration as applicable → #52/#53 non-force ancestry repair → protocol traffic RED/GREEN → immutable release → parity/shadow/canary/rollback/cutover → verified Nginx/OpenResty removal`.
-
-Parallel owner path: `.github#1946` must reconcile onto fresh protected main; `.github#1952` then adds the bounded static-only-vs-edge-runtime classification contract. Neither path grants the Pingora writer permission to modify `.github` source/refs or relax true edge-runtime enforcement.
-
-Primary standards and research citations belong in `docs/doctoring/TRACEABILITY.md`; this baseline keeps current ownership, exact execution dependencies, buyer-visible gaps, and next actions.
