@@ -23,7 +23,9 @@ This is ordinary non-force child-to-parent integration, not a protected-`main` m
 
 No Pingora pin, `Cargo.lock`, production gateway Rust, routing/TLS/auth/business logic, consumer state, or release metadata changed in this integration.
 
-Fresh PR-triggered revalidation belongs to the new exact merge head rather than either parent. CI `34051494660` and Supply Chain `34051494627` were queued at the first post-merge read. Predecessor #62/#64 GREEN and review evidence remain valid component history but do not transfer exact-head GREEN or review credit to `32e0aeed...`. A fresh exact-head CodeRabbit review was requested on the six-path composed range; bot/static review remains distinct from any independently required `APPROVED` review.
+Fresh PR-triggered revalidation belongs to the new exact merge head rather than either parent. CI `34051494660` and Supply Chain `34051494627` remain the current exact runs and were still pre-checkout queued with `steps=[]` / `runner_id=0` at the latest sweep. Predecessor #62/#64 GREEN remains valid component history but does not transfer exact-head GREEN to `32e0aeed...`.
+
+Fresh CodeRabbit review now explicitly covers exact `32e0aeedac7b0fe6234d476245f37994b1b9168f`, reports no actionable comments, and marks merge risk Minimal up to that exact head. Its walkthrough revalidates the `PeerOptions` value contract, bounded Rust origin, direct readiness gate, non-empty k6 summary requirement, and causal evidence handling. This is exact-head technical bot/static evidence, not an independently required `APPROVED` review.
 
 ## Preserved supplier-semantics contract
 
@@ -106,6 +108,6 @@ Legacy Nginx/OpenResty presence alone is not a migration trigger. Static-file se
 
 The current work-conserving order is:
 
-`#62@32e0aeed exact revalidation + exact composed review → #54 derivative RED + preserved supplier semantics/load contracts → maintainer-integrated immutable Pingora derivative repair → gateway supplier bump + committed Cargo.lock regeneration → unchanged #54 absence regression GREEN + #62 current-stack GREEN → #56 independent APPROVED governance → protected integration → current pg-erd/protocol non-force restacks → real-wire RED/GREEN → immutable release/SBOM/provenance/reproducibility/rollback → shadow/canary/cutover → verified Nginx/OpenResty removal`.
+`#62@32e0aeed exact hosted revalidation + current exact technical review → #54 derivative RED + preserved supplier semantics/load contracts → maintainer-integrated immutable Pingora derivative repair → gateway supplier bump + committed Cargo.lock regeneration → unchanged #54 absence regression GREEN + #62 current-stack GREEN → #56 independent APPROVED governance → protected integration → current pg-erd/protocol non-force restacks → real-wire RED/GREEN → immutable release/SBOM/provenance/reproducibility/rollback → shadow/canary/cutover → verified Nginx/OpenResty removal`.
 
 Queued checks are incomplete evidence, not GREEN. Predecessor execution/review does not transfer across a new exact head. No force push, destructive rebase, self-approval, routine bypass, mutable supplier dependency, threshold weakening, sample reduction, or release/cutover claim is accepted.
