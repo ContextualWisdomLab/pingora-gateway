@@ -26,6 +26,25 @@ fn debug_field_match_requires_a_structural_field_boundary() {
     );
 }
 
+/// Proves nested values cannot impersonate a top-level `PeerOptions` field.
+#[test]
+fn debug_field_match_rejects_nested_and_quoted_field_like_text() {
+    assert!(
+        !debug_has_field(
+            "PeerOptions { bind_to: Nested { connection_timeout: None } }",
+            "connection_timeout"
+        ),
+        "a nested struct field must not satisfy a top-level PeerOptions field"
+    );
+    assert!(
+        !debug_has_field(
+            "PeerOptions { bind_to: \"Nested { connection_timeout: None }\" }",
+            "connection_timeout"
+        ),
+        "field-like text inside a quoted Debug value must not satisfy a top-level PeerOptions field"
+    );
+}
+
 /// Proves semantic field matching does not depend on incidental Debug whitespace.
 #[test]
 fn debug_field_match_accepts_equivalent_debug_whitespace() {
