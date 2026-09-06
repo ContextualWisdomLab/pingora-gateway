@@ -40,7 +40,7 @@ Current exact #64 execution is now terminal GREEN. CI `34045381577` succeeded fo
 
 Exact load artifact `9993754723`, digest `sha256:0c545787f21d264fd012d9b34f16d4272c5c8afeeccd3795ac256c70487d321e`, is bound to `1b6c5307...` and records 400/400 HTTP-200 checks, 400/400 body-identity checks, checks rate `1`, `http_req_failed` rate `0`, and `http_req_duration p(95)=0.9037063 ms`. This proves the unchanged local 400-request / 4-VU regression with a Rust-only measured origin; it does not prove an Internet, TLS, H2/H3, multi-hop, or consumer production SLO.
 
-Live CodeRabbit review-risk evidence still explicitly covers only through `ea32917f97c81d1c3053302ec9b2099de8990ea5` and reports no actionable comments/minimal risk for that reviewed scope. Current `1b6c5307...` is five commits ahead, so no review credit transfers. The first exact-head re-review request returned a transient CodeRabbit error; a second exact-head request is pending. No unresolved inline review threads are present at the latest read.
+Live CodeRabbit review-risk evidence still explicitly covers only through `ea32917f97c81d1c3053302ec9b2099de8990ea5` and reports no actionable comments/minimal risk for that reviewed scope. Current `1b6c5307...` is five commits ahead, so no review credit transfers. Two exact-head re-review requests have now returned transient CodeRabbit errors; current exact technical review therefore remains uncredited rather than pending. No unresolved inline review threads are present at the latest read.
 
 Historical #35 remains open because its pg-erd Rust-origin delta has not yet been fully succeeded by #64; closure requires verified complete succession of every valid generic and pg-erd contract/evidence.
 
