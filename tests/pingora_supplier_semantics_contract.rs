@@ -11,10 +11,40 @@ fn peer_options_debug_keeps_safe_fields_and_omits_hook_fields() {
         debug.starts_with("PeerOptions {"),
         "PeerOptions must remain structurally debuggable after supplier macro removal: {debug}"
     );
-    assert!(
-        debug.contains("connection_timeout: None"),
-        "a normal safe field must remain visible so hook omission cannot pass vacuously: {debug}"
-    );
+
+    for visible_field in [
+        "bind_to",
+        "connection_timeout",
+        "total_connection_timeout",
+        "read_timeout",
+        "idle_timeout",
+        "write_timeout",
+        "verify_cert",
+        "verify_hostname",
+        "alternative_cn",
+        "alpn",
+        "ca",
+        "tcp_keepalive",
+        "tcp_recv_buf",
+        "dscp",
+        "h2_ping_interval",
+        "max_h2_streams",
+        "h2_stream_window_size",
+        "h2_connection_window_size",
+        "allow_h1_response_invalid_content_length",
+        "http_upstream_request_policy",
+        "extra_proxy_headers",
+        "curves",
+        "second_keyshare",
+        "tcp_fast_open",
+        "tracer",
+        "custom_l4",
+    ] {
+        assert!(
+            debug.contains(&format!("{visible_field}:")),
+            "supplier Debug output must retain the current non-hook field {visible_field}: {debug}"
+        );
+    }
 
     for omitted_hook in [
         "upstream_tcp_sock_tweak_hook",
