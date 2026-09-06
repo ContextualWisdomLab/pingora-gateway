@@ -156,11 +156,7 @@ fn debug_field_match_requires_scalar_value_identity() {
         "false"
     ));
     assert!(
-        !debug_has_scalar_field_value(
-            "PeerOptions { verify_cert: true }",
-            "verify_cert",
-            "false"
-        ),
+        !debug_has_scalar_field_value("PeerOptions { verify_cert: true }", "verify_cert", "false"),
         "a present field with the wrong value must not satisfy Debug semantics preservation"
     );
 }
