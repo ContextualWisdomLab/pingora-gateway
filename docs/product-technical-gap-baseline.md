@@ -38,17 +38,19 @@ Do not manufacture GREEN with an audit ignore, deleted lock evidence, scanner su
 
 ## Supplier-semantics characterization — #62
 
-Ready #62 is a direct child of #56 and does not carry #54's intentionally failing dependency-absence oracle. Current exact head is `2cbaaeff2fe89416f4698098ebd1c95e461ef4e8`. Fresh compare against #56 is ahead 11 / behind 0 with #56 as exact merge base; effective scope remains exactly `tests/pingora_supplier_semantics_contract.rs` and `TEST_STRATEGY.md`. The Pingora revision, `Cargo.lock`, production gateway source, workflows, routing/TLS/auth/business logic, and consumer state are unchanged.
+Ready #62 is a direct child of #56 and does not carry #54's intentionally failing dependency-absence oracle. Current exact head is `6f6b6fea8acbcc58e85a474102ebcefe744d4157`; effective scope remains exactly `tests/pingora_supplier_semantics_contract.rs` and `TEST_STRATEGY.md`. The Pingora revision, `Cargo.lock`, production gateway source, workflows, routing/TLS/auth/business logic, and consumer state are unchanged.
 
 Pinned supplier `cloudflare/pingora@09696b51bc59315353d96686355861604d0bb48c` uses `derivative` for `PeerOptions` Debug and for `Backend` Clone/Hash/Eq/Ord/Debug semantics. The downstream `PeerOptions` contract requires all 26 unconditional non-hook fields in the OpenSSL build (`bind_to` through `custom_l4`) to remain represented in Debug output while `upstream_tcp_sock_tweak_hook`, `proxy_digest_user_data_hook`, and `upstream_tls_handshake_complete_hook` remain absent.
 
-The first oracle repair addressed overlapping field names. Source RED `f3ff0e94534d07a499ff27862800530f95034d16` proves raw substring matching could let `connection_timeout` pass merely because `total_connection_timeout` was present. GREEN `79e53796e4a1acaf786fd151ab423ab7f3d9d924` requires structural field identity instead of raw substring matching.
+Three acceptance-oracle defects are now explicit and test-first:
 
-Fresh review then found that the structural matcher itself over-constrained incidental Debug layout by accepting only literal `{ field:` / `, field:` spacing. Rust's derived `Debug` formatting is not a stable representation contract, so a semantics-preserving manual/std replacement must not fail solely because it emits an equivalent compact or multiline layout. Source RED `eb9bb65ebf39b54a238a11f198a4a015121daa42` adds compact and multiline equivalent layouts that the old matcher rejects. GREEN `b3d3abaec2c7c0ff9fc097f085f17eba44ae9640` accepts a field only when the nearest preceding non-whitespace token is `{` or `,` and the next non-whitespace token is `:`, preserving overlapping-name protection while ignoring incidental whitespace. Current `2cbaaeff...` records the invariant in `TEST_STRATEGY.md`. This remains acceptance-oracle repair only; no supplier or runtime implementation was changed.
+- RED `f3ff0e94534d07a499ff27862800530f95034d16` → GREEN `79e53796e4a1acaf786fd151ab423ab7f3d9d924`: raw substring matching could let `connection_timeout` pass merely because `total_connection_timeout` was present.
+- RED `eb9bb65ebf39b54a238a11f198a4a015121daa42` → GREEN `b3d3abaec2c7c0ff9fc097f085f17eba44ae9640`: field identity must not depend on incidental `{ field:` / `, field:` Debug whitespace or layout.
+- Fresh exact-head review at `2cbaaeff2fe89416f4698098ebd1c95e461ef4e8` found that the structural matcher still accepted nested or quoted field-like text because it did not track structural depth. Source RED `8f48cbab2f55a9a5764365cc6df74942e26581c1` adds nested and quoted false-positive controls. GREEN `281a1fd4f55864e235c1e8a63306b940c14dfdf6` tracks outer brace/bracket/parenthesis depth plus quoted/escaped regions before accepting a candidate as a top-level field. `6f6b6fea...` records the resulting invariant in `TEST_STRATEGY.md`.
 
-Fresh live CodeRabbit metadata corrects an earlier authority overstatement: the latest completed review marker covers only `18fb38b1ba70c4bf222642ef347f3d57a98379a2...82a04a67c9a9f7275c16b775849a594b8bf93657`, not later `7b744093...` and not current `2cbaaeff...`. It returned no actionable comments for that covered two-file range. A current-head review was requested, but the bot reports no included review remaining for the hour; no review credit is transferred beyond `82a04a67...`.
+The current review credit boundary is exact: the review at `2cbaaeff...` produced the nested-field finding and is not transferred to `6f6b6fea...`. A fresh current-head CodeRabbit review has been requested after the repair.
 
-Current exact Actions are CI `34010171665` and Supply Chain `34010171705`. Two fresh end-of-run sweeps show `test 101424482372`, `oci-runtime 101424482497`, `load-contract 101424482548`, and `candidate-evidence 101424482851` queued before checkout on `ubuntu-24.04`, with empty executed-step lists and `runner_id=0`. No predecessor GREEN is transferred and no no-op retrigger is used.
+Current exact Actions are CI `34011310005` and Supply Chain `34011310029`. Fresh reads show `oci-runtime 101427530622`, `load-contract 101427530748`, `test 101427530782`, and `candidate-evidence 101427530846` queued before checkout on `ubuntu-24.04`, with empty executed-step lists and `runner_id=0`. No predecessor GREEN is transferred and no no-op retrigger is used.
 
 The generic gateway does not enable Pingora load balancing merely to instantiate `Backend` for a supplier test. `Backend` address+weight equality/hash/order with opaque `Extensions` excluded remains an upstream-owner acceptance item until that bounded capability is actually consumed downstream.
 
@@ -56,7 +58,7 @@ The generic gateway does not enable Pingora load balancing merely to instantiate
 
 Protected `cloudflare/pingora/main` remains `09696b51bc59315353d96686355861604d0bb48c`. Issue `cloudflare/pingora#889` remains open, and the latest open-PR search finds no maintainer-integrated `derivative`-removal candidate.
 
-Existing #889 downstream evidence is maintained in place. The minimal owner repair remains: replace `PeerOptions` macro Debug with a manual/std Debug implementation preserving every current non-hook field and omitting hooks without treating incidental formatting whitespace as semantic authority; replace `Backend` macro equality/hash/order with std/manual traits over address+weight only, with canonical `PartialOrd = Some(self.cmp(other))` and opaque `Extensions` excluded; remove `derivative` from workspace/core/load-balancing manifests; regenerate the lockfile; then prove supplier fmt/tests/Clippy/rustdoc/audit GREEN. Field-name regression must use structural/exact identity so overlapping names cannot satisfy each other.
+Existing #889 downstream evidence is maintained in place. The minimal owner repair remains: replace `PeerOptions` macro Debug with a manual/std Debug implementation preserving every current non-hook top-level field and omitting hooks without treating incidental formatting whitespace as semantic authority; replace `Backend` macro equality/hash/order with std/manual traits over address+weight only, with canonical `PartialOrd = Some(self.cmp(other))` and opaque `Extensions` excluded; remove `derivative` from workspace/core/load-balancing manifests; regenerate the lockfile; then prove supplier fmt/tests/Clippy/rustdoc/audit GREEN. Field-name regression must reject overlapping names, nested values, and quoted field-like text.
 
 Only a maintainer-integrated immutable supplier revision/release is downstream dependency authority.
 
@@ -70,9 +72,9 @@ Mutable supplier Cookie/body-framing work is evidence only until current-main ma
 
 Organization-wide Actions authority remains in `ContextualWisdomLab/.github`; its dedicated writer owns source/refs/PR state. Pingora sends exact evidence through the owner path without modifying central source from this lane.
 
-Runner delay and semantic failure are kept distinct. #56 waited runnerless and later passed unchanged; #54 waited and later produced the intended semantic RED on the same head. Current #62 `2cbaaeff...` queueing is therefore a lane-local admission sample, not sufficient evidence for gateway-local runner-selector churn or a new central scheduler defect.
+Runner delay and semantic failure are kept distinct. #56 waited runnerless and later passed unchanged; #54 waited and later produced the intended semantic RED on the same head. Current #62 `6f6b6fea...` queueing is therefore a lane-local admission sample, not sufficient evidence for gateway-local runner-selector churn or a new central scheduler defect.
 
-Protected `.github/main` has independently advanced to `efb8926923de45245338159a489a1b227e81945f` through its owner-side contextual-orchestrator retry-stacking repair. That is useful owner-plane progress but is not #62 execution credit.
+Protected `.github/main` remains `efb8926923de45245338159a489a1b227e81945f` after its owner-side contextual-orchestrator retry-stacking repair. That is useful owner-plane progress but is not #62 execution credit.
 
 ## Legacy migration and release gate
 
@@ -84,6 +86,6 @@ Commercial release credit requires exact protected candidate version/CHANGELOG a
 
 ## Current causal order
 
-`#54 hosted derivative RED + #62 current supplier-semantics source RED→GREEN → #62 exact hosted execution + fresh current review → maintainer-integrated immutable derivative repair → gateway supplier bump + committed lock regeneration → unchanged #54 absence regression GREEN + preserved #62 semantics GREEN → exact CI/Supply Chain/security/runtime GREEN → #56 independent approval/governance → foundation integration as applicable → #52/#53 non-force ancestry repair → protocol traffic RED/GREEN → immutable release → parity/shadow/canary/rollback/cutover → verified Nginx/OpenResty removal`.
+`#54 hosted derivative RED + #62 nested/quoted source RED→GREEN → #62 exact hosted execution + fresh current review → maintainer-integrated immutable derivative repair → gateway supplier bump + committed lock regeneration → unchanged #54 absence regression GREEN + preserved #62 semantics GREEN → exact CI/Supply Chain/security/runtime GREEN → #56 independent approval/governance → foundation integration as applicable → #52/#53 non-force ancestry repair → protocol traffic RED/GREEN → immutable release → parity/shadow/canary/rollback/cutover → verified Nginx/OpenResty removal`.
 
 Primary standards and research citations belong in `docs/doctoring/TRACEABILITY.md`; this baseline keeps current ownership, exact execution dependencies, buyer-visible gaps, and next actions.
