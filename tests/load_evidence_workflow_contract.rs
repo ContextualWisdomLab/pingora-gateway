@@ -4,7 +4,7 @@
 //! artifact-upload failure. Conversely, a successful measured path must still require
 //! the summary before the always-run evidence upload is admitted.
 
-use serde_yaml::{Mapping, Value};
+use serde_yaml::Value;
 use std::fs;
 
 const CI_WORKFLOW: &str = ".github/workflows/ci.yml";
@@ -14,7 +14,7 @@ const SUMMARY_STEP: &str = "Require loopback latency summary";
 const UPLOAD_STEP: &str = "Upload loopback latency evidence";
 
 /// Parses the repository CI workflow and returns the direct load-contract steps.
-fn load_steps() -> Vec<Mapping> {
+fn load_steps() -> Vec<Value> {
     let source = fs::read_to_string(CI_WORKFLOW).expect("CI workflow should be readable UTF-8");
     let document: Value =
         serde_yaml::from_str(&source).expect("CI workflow YAML should parse before validation");
@@ -24,17 +24,11 @@ fn load_steps() -> Vec<Mapping> {
         .and_then(|job| job.get("steps"))
         .and_then(Value::as_sequence)
         .expect("load-contract job should define steps")
-        .iter()
-        .map(|step| {
-            step.as_mapping()
-                .expect("load-contract steps should be mappings")
-                .clone()
-        })
-        .collect()
+        .clone()
 }
 
-/// Returns the index and mapping for one named load-contract step.
-fn named_step<'a>(steps: &'a [Mapping], name: &str) -> (usize, &'a Mapping) {
+/// Returns the index and semantic mapping for one named load-contract step.
+fn named_step<'a>(steps: &'a [Value], name: &str) -> (usize, &'a Value) {
     steps
         .iter()
         .enumerate()
@@ -76,7 +70,6 @@ fn pre_k6_failure_cannot_be_replaced_by_missing_summary_upload_failure() {
     );
     let missing_file_policy = upload
         .get("with")
-        .and_then(Value::as_mapping)
         .and_then(|with| with.get("if-no-files-found"))
         .and_then(Value::as_str);
     assert_eq!(
