@@ -1,6 +1,6 @@
 # Product / Technical Gap Baseline
 
-This is the code-current commercial-development baseline for `ContextualWisdomLab/pingora-gateway` as of 2026-09-06 KST. Mutable PR heads and protected-branch tips are evidence snapshots, not release authority; later live evidence supersedes exact identities below.
+This is the code-current commercial-development baseline for `ContextualWisdomLab/pingora-gateway` as of 2026-09-07 KST. Mutable PR heads and protected-branch tips are evidence snapshots, not release authority; later live evidence supersedes exact identities below.
 
 ## Current execution update — #62 exact GREEN, #63 verified succession
 
@@ -24,13 +24,17 @@ The prior load RED remains RCA evidence. Exact `d4a54d8d...` produced 395 succes
 
 Fresh review found a separate performance-attribution defect in the exact #62 GREEN path: `.github/workflows/ci.yml` still launches `tests/load/upstream_fixture.py`, a Python `ThreadingHTTPServer`, inside the measured k6 round trip. The #62 p95 remains valid evidence for that exact executed topology, but it is not final Rust-first gateway-performance evidence because Python interpreter/thread scheduling contributes to `http_req_duration`.
 
-Ready #64 is an ordinary non-force child of exact #62 and begins at exact `ea32917f97c81d1c3053302ec9b2099de8990ea5`. Exact compare is ahead 4 / behind 0 with #62 as merge base and exactly four changed paths: `.github/workflows/ci.yml`, `TEST_STRATEGY.md`, added `tests/load/load_origin.rs`, and removed `tests/load/upstream_fixture.py`.
+Ready #64 is an ordinary non-force child of exact #62. Current exact head is `bad9e0ed158d633c259861106f50e223247370dd`; exact compare from #62 is ahead 8 / behind 0 with #62 as exact merge base and five effective paths: `.github/workflows/ci.yml`, `TEST_STRATEGY.md`, added `tests/load/load_origin.rs`, removed `tests/load/upstream_fixture.py`, and added `tests/load_evidence_workflow_contract.rs`.
 
 The successor adapts the valid intent of historical Draft #35 without merging its old diverged stack and adopts the later bounded-worker origin design from the #41/#42 lineage. The std-only Rust fixture validates startup controls before bind, caps workers at 256, uses a bounded accepted-socket queue, bounds request-header buffering, uses TCP_NODELAY and deterministic Content-Length framing, and defaults to keep-alive/no artificial delay so the existing 4-VU low-contention contract remains distinct from capacity testing.
 
 The load lane uses Rust 1.98.1 to format, compile and run the fixture's direct parser/startup/framing tests with `rustc -D warnings`, compiles the optimized helper outside Cargo production/example targets, then uses that helper for the measured path. The origin-only `/fixture-ready` probe remains outside the gateway and does not warm the measured route. Request count, VUs, exact status/body assertions, zero-failure gate and p95 `<20 ms` threshold are unchanged.
 
-Initial exact #64 CI `34039492737` and Supply Chain `34039492690` have materialized and are not credited before terminal execution. CodeRabbit auto-review skipped the non-default stack base by configuration, so an explicit exact-head review command was issued. Historical #35 remains open because its pg-erd Rust-origin delta has not yet been fully succeeded by #64; closure requires verified complete succession of every valid generic and pg-erd contract/evidence.
+Post-initial review found a separate failure-evidence defect: the loopback artifact upload was `always()` plus `if-no-files-found: error`, so a checkout/build/origin-startup failure before k6 could be followed by a secondary missing-summary failure that obscured the causal error. Source RED `ecb6245e21225dc1f2cfb8ccab01a721821043af` adds a semantic workflow contract; causal GREEN `7ed13abe5e26dc64bfe36b5760b8b5953452f0c3` adds a success-only `test -s k6-summary.json` gate and makes only the later always-run upload ignore an absent file; `0e17dcfae35b5a36e56a1bd25fbee1d4115b872f` keeps the oracle semantic over parsed YAML values; current `bad9e0ed...` makes `TEST_STRATEGY.md` code-current. Successful measured traffic still fails if its summary is absent or empty; only an earlier primary failure is protected from being replaced by artifact-upload noise.
+
+Current exact #64 CI `34041022444` (`oci-runtime 101507678563`, `test 101507678628`, `load-contract 101507678702`) and Supply Chain `34041022495` / `candidate-evidence 101507678799` are all pre-checkout queued on exact `bad9e0ed...` with `steps=[]`, `runner_id=0`, and no runner/group identity, so no runtime GREEN is credited. CodeRabbit coverage on the current review comment still ends at predecessor `ea32917f97c81d1c3053302ec9b2099de8990ea5`; an explicit review request has therefore been issued for exact `bad9e0ed...`, including the post-`ea32917f` evidence-path changes. Predecessor review credit is not transferred.
+
+Historical #35 remains open because its pg-erd Rust-origin delta has not yet been fully succeeded by #64; closure requires verified complete succession of every valid generic and pg-erd contract/evidence.
 
 ## Ownership boundary
 
