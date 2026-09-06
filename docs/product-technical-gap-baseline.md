@@ -44,9 +44,9 @@ Pinned supplier `cloudflare/pingora@09696b51bc59315353d96686355861604d0bb48c` us
 
 Fresh review of that strengthened oracle found a second acceptance defect: raw substring matching could let `connection_timeout` pass merely because `total_connection_timeout` was present. Source RED `f3ff0e94534d07a499ff27862800530f95034d16` captures the false positive. GREEN `79e53796e4a1acaf786fd151ab423ab7f3d9d924` requires a structural Debug field boundary (`{ field:` or `, field:`), and current `7b744093...` records the invariant in `TEST_STRATEGY.md`. This is acceptance-oracle repair only; no supplier or runtime implementation was changed.
 
-A prior CodeRabbit inspection mechanically confirmed the 26-field OpenSSL surface and hook exclusions through predecessor `b5042564...`, but that evidence does not transfer to current exact `7b744093...`. A new exact-range review is requested and remains pending.
+CodeRabbit subsequently reviewed the exact current range `18fb38b1ba70c4bf222642ef347f3d57a98379a2...7b7440935922f78c0c8ddf38c3456e2b759596e2` and found no issues. The review independently confirmed the structural-boundary fix prevents `connection_timeout` from aliasing `total_connection_timeout`, all 26 unconditional non-hook fields are required for the pinned OpenSSL supplier, the three active hook fields remain omitted, the remaining supplier-only fields are `s2n`-gated, and the effective range remains exactly the contract test plus `TEST_STRATEGY.md` without dependency or production-authority widening.
 
-Current exact Actions are CI `34009000844` and Supply Chain `34009000673`. At the latest read, `test 101421361777`, `oci-runtime 101421361874`, `load-contract 101421361902`, and `candidate-evidence 101421360727` are all pre-checkout queued on `ubuntu-24.04` with no executed steps and no assigned runner. No predecessor GREEN is transferred and no no-op retrigger is used.
+Current exact Actions are CI `34009000844` and Supply Chain `34009000673`. Across the two final fresh sweeps, `test 101421361777`, `oci-runtime 101421361874`, `load-contract 101421361902`, and `candidate-evidence 101421360727` remain pre-checkout queued on `ubuntu-24.04` with no executed steps and no assigned runner. No predecessor GREEN is transferred and no no-op retrigger is used.
 
 The generic gateway does not enable Pingora load balancing merely to instantiate `Backend` for a supplier test. `Backend` address+weight equality/hash/order with opaque `Extensions` excluded remains an upstream-owner acceptance item until that bounded capability is actually consumed downstream.
 
@@ -70,6 +70,8 @@ Organization-wide Actions authority remains in `ContextualWisdomLab/.github`; it
 
 Runner delay and semantic failure are kept distinct. #56 waited runnerless and later passed unchanged; #54 waited and later produced the intended semantic RED on the same head. Current #62 `7b744093...` queueing is therefore a lane-local admission sample, not sufficient evidence for gateway-local runner-selector churn or a new central scheduler defect.
 
+Protected `.github/main` has independently advanced to `efb8926923de45245338159a489a1b227e81945f` through its owner-side contextual-orchestrator retry-stacking repair. That is useful owner-plane progress but is not #62 execution credit.
+
 ## Legacy migration and release gate
 
 Legacy consumer repositories with dedicated writers remain read-only from this lane. Nginx/OpenResty presence alone is not enough to move a workload into `pingora-gateway`: the responsibility must be shared edge routing/TLS/HTTP/load-balancing/runtime policy rather than static-file serving, certificate issuance, FastCGI, product auth, or business logic.
@@ -80,6 +82,6 @@ Commercial release credit requires exact protected candidate version/CHANGELOG a
 
 ## Current causal order
 
-`#54 hosted derivative RED + #62 exact supplier-semantics characterization → #62 current review/execution → maintainer-integrated immutable derivative repair → gateway supplier bump + committed lock regeneration → unchanged #54 absence regression GREEN + preserved #62 semantics GREEN → exact CI/Supply Chain/security/runtime GREEN → #56 independent approval/governance → foundation integration as applicable → #52/#53 non-force ancestry repair → protocol traffic RED/GREEN → immutable release → parity/shadow/canary/rollback/cutover → verified Nginx/OpenResty removal`.
+`#54 hosted derivative RED + #62 exact supplier-semantics characterization/review → #62 exact hosted execution → maintainer-integrated immutable derivative repair → gateway supplier bump + committed lock regeneration → unchanged #54 absence regression GREEN + preserved #62 semantics GREEN → exact CI/Supply Chain/security/runtime GREEN → #56 independent approval/governance → foundation integration as applicable → #52/#53 non-force ancestry repair → protocol traffic RED/GREEN → immutable release → parity/shadow/canary/rollback/cutover → verified Nginx/OpenResty removal`.
 
 Primary standards and research citations belong in `docs/doctoring/TRACEABILITY.md`; this baseline keeps current ownership, exact execution dependencies, buyer-visible gaps, and next actions.
