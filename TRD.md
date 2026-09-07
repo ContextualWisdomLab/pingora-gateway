@@ -2,24 +2,48 @@
 
 ## Runtime
 
-Rust edition 2021, minimum Rust `1.97.1`. The Pingora dependency is pinned to an exact upstream Git revision. The production composition root is `src/bin/cwl-pingora-gateway.rs`; it parses `--config`, validates the contract, constructs `GatewayProxy`, adds a TCP listener to `http_proxy_service`, and delegates lifecycle handling to `Server::run_forever()`.
+Rust edition 2021 with manifest MSRV `1.98.0` on this branch. Cloudflare Pingora and `pingora-prometheus` are pinned to exact public upstream revision `09696b51bc59315353d96686355861604d0bb48c`; mutable branch or contributor-PR dependencies are not release authority.
+
+The generic production composition root is `src/bin/cwl-pingora-gateway.rs`. It parses one explicit `--config`, validates the transport-neutral contract before granting network authority, constructs `GatewayProxy`, exposes the dedicated metrics listener, adds the downstream TCP listener to Pingora `http_proxy_service`, and delegates serving and shutdown to Pingora's `Server` lifecycle.
+
+The characterized `pg-erd-cloud` migration uses the separate `src/bin/cwl-pingora-pg-erd-migration.rs` composition root and `PgErdMigrationConfig`. Keeping a separate binary prevents the generic v1 contract from being widened into a product-routing configuration language. Product authentication/authorization, business routing, certificate issuance/ACME, Wardnet/EgressWeave policy, and Keyverse identity remain outside this process boundary.
 
 ## Contract
 
-Configuration version 1 is YAML with `deny_unknown_fields`. Required top-level fields are `version`, `listener`, `max_request_body_bytes`, and `upstreams`. Exactly one upstream is accepted. Each upstream has `name`, `address`, `tls`, optional `sni`, and explicit positive timeout budgets.
+Generic configuration version 1 is strict YAML with `deny_unknown_fields`. Required top-level fields are `version`, `listener`, `metrics_listener`, `max_request_body_bytes`, `max_in_flight_requests`, `upstream_keepalive_pool_size`, and `upstreams`. Version 1 accepts exactly one upstream; it does not provide a generic product route table or request-controlled destination.
 
-TLS upstreams require SNI. The Pingora `HttpPeer` enables certificate verification and hostname verification. Cleartext upstreams must not carry an SNI value. No request may choose an upstream dynamically.
+Traffic and metrics listeners must use non-zero, non-overlapping effective socket authority. Validation rejects same-family wildcard/concrete overlap, IPv6-wildcard/IPv4 dual-stack ambiguity, native IPv4 versus IPv4-mapped IPv6 aliases, and native/mapped or mapped-to-mapped IPv4 wildcard aliases while preserving distinct concrete non-aliased addresses. Request-body, in-flight, and keepalive-pool budgets must be positive.
+
+Each upstream has a stable non-empty name, a non-zero concrete socket address, `tls`, optional `sni`, optional absolute `trust_bundle_file`, and explicit positive `connection_ms`, `total_connection_ms`, `read_ms`, `write_ms`, and `idle_ms` budgets. TLS upstreams require non-empty SNI. Pingora `HttpPeer` enables certificate and hostname verification. When `trust_bundle_file` is configured, the loaded PEM certificates become that peer's CA store rather than being silently merged with platform roots. Clear-text upstreams may define neither SNI nor a trust bundle. The gateway does not issue, renew, or rotate certificates.
+
+`PgErdMigrationConfig` is a bounded Admin Config contract, not a second generic router. It admits operator-supplied listener/metrics sockets, non-zero runtime budgets, and concrete transport/TLS data only for the already characterized `backend` and `frontend` identities. Route selection and response-security policy remain compiled migration contracts. Missing, extra, renamed, zero-port, or overlapping transport authority fails before listener activation.
 
 ## Request policy
 
-Pingora's standard upstream request policy strips hop-by-hop and connection-nominated headers and rejects malformed connection nominations. The gateway additionally strips client-provided `Forwarded`, `X-Forwarded-For`, `X-Forwarded-Host`, `X-Forwarded-Proto`, and `X-Real-IP`, then emits `Forwarded: proto=http` for the v1 cleartext downstream listener. Client IP is deliberately not asserted.
+Pingora's standard upstream request policy supplies the pinned supplier's hop-by-hop and `Connection`-nomination sanitation. The generic gateway additionally removes client-provided `Forwarded`, `X-Forwarded-For`, `X-Forwarded-Host`, `X-Forwarded-Proto`, and `X-Real-IP`, then emits only gateway-owned `Forwarded: proto=http` for the v1 clear-text downstream listener. Generic v1 deliberately makes no client-IP identity claim.
 
-Requests with a parseable `Content-Length` larger than `max_request_body_bytes` fail with 413 before upstream selection. Streamed chunks are counted and fail with 413 when the same bound is exceeded. Pingora's HTTP parser supplies its own finite header/protocol bounds; a configurable smaller header budget is not yet implemented.
+The pg-erd migration adapter also discards request-controlled forwarding identity before rebuilding only the characterized compatibility fields from accepted transport/request authority. The current captured Traefik entry point is clear-text, so its forwarded scheme is explicitly `http`; HTTPS requires a separate TLS-derived contract rather than inference.
 
-## Health
+Non-health requests acquire the process `max_in_flight_requests` budget before upstream selection and fail closed with HTTP 503 at capacity. Requests with a parseable `Content-Length` above `max_request_body_bytes` fail with HTTP 413 before upstream selection; streamed body bytes are counted and fail with 413 if the same bound is exceeded. Pingora's parser retains its own finite protocol limits, but an operator-controlled smaller HTTP/1 header byte/count budget remains a separate edge-policy gap.
 
-`GET /livez` and `/readyz` currently produce 200 with an empty non-cacheable response. Readiness proves validated configuration plus an active production serving path, not upstream health.
+Generic v1 makes one prevalidated upstream peer available per request. The pg-erd migration adapter selects only peers already bound by `MigrationDeliveryPlan`; neither path performs request-controlled service discovery. Domain retries, failover, and idempotency policy are not invented by this runtime.
+
+## Health and observability
+
+`GET /livez` and `/readyz` return HTTP 200 with an empty, non-cacheable response through the process-local Pingora health boundary. Readiness proves validated configuration plus an active serving path, not product dependency health. In the pg-erd migration profile, consumer `/healthz` remains ordinary routed application traffic and is not confused with process liveness/readiness.
+
+The shared process exposes bounded Prometheus counters for request completion, request errors, observed request-body bytes, and backpressure rejection. The canonical gateway log vocabulary records only low-cardinality transport completion facts; authorization headers, cookies, credentials, customer payloads, and unbounded product route labels are outside this shared observability contract.
 
 ## Packaging
 
-`Dockerfile` uses a Rust builder and Debian runtime, installs only CA/OpenSSL runtime dependencies, and executes as uid/gid `65532`. The process has no intentional filesystem writes. A committed lockfile, image build test, SBOM/provenance, and immutable registry digest remain release gates.
+The Docker builder is digest-pinned `rust:1.98.0-bookworm`; the final image is digest-pinned `gcr.io/distroless/base-nossl-debian13:nonroot`. The pinned Pingora OpenSSL path is vendored, so the final image does not carry Debian `libssl`. The Dockerfile exposes only one build-time selector, `CWL_GATEWAY_BIN`, and fail-closes unless its value is exactly `cwl-pingora-gateway` or `cwl-pingora-pg-erd-migration`. The selected executable is normalized to one fixed runtime path before the distroless stage, so a final image contains one admitted process identity rather than both binaries or a runtime shell selector.
+
+Both image profiles run as uid/gid `65532`, have no intentional application writes, and are required to remain compatible with a read-only root filesystem, all capabilities dropped, and `no-new-privileges`. The OCI gate builds the default generic image and an explicit pg-erd image, then independently starts each exact candidate under those restrictions with a read-only configuration mount and requires `/livez` to become reachable. `examples/pg-erd-migration.yaml` is bounded smoke configuration for this process-level OCI proof; it does not substitute for routed origin/load/failure acceptance. Until the exact current head reaches terminal success, the new workflow is source-defined acceptance rather than hosted GREEN evidence.
+
+The candidate supply-chain lane builds and vulnerability-scans both admitted images and binds both local image IDs plus per-image scan outputs to the exact source SHA. Its dependency SBOM describes the shared committed Rust dependency graph. A protected release still requires registry-bound immutable image digests, release-bound SBOM/provenance/reproducibility evidence, and rollback rehearsal; no Draft PR head or local image ID is a deployable release identity.
+
+## Protocol and migration limits
+
+Generic v1 is a clear-text downstream HTTP proxy with one explicit upstream per process. Downstream TLS termination, HTTP/2 admission, H2→H1 Cookie normalization, HTTP/3/QUIC, WebSocket/Extended CONNECT, dynamic reload, Kubernetes Gateway API, and consumer-specific multi-route behavior are versioned increments with separate realistic RED→GREEN evidence.
+
+The concrete pg-erd migration stack is a bounded consumer-characterization adapter and does not widen generic v1. Source presence is not parity. Promotion still requires unchanged exact-head formatting, compile/test, strict Clippy, rustdoc, owned-production coverage, routed traffic/load/failure evidence, terminal dedicated OCI/supply-chain execution, immutable release identity, consumer deployment pin, shadow/canary, rollback rehearsal, protected cutover, and verified legacy removal.

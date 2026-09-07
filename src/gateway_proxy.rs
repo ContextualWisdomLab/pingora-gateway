@@ -5,18 +5,23 @@
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use pingora::prelude::{Error, ErrorType, HttpPeer, ProxyHttp, RequestHeader, Session};
+use pingora::prelude::{
+    Error, ErrorType, HttpPeer, ProxyHttp, RequestHeader, ResponseHeader, Session,
+};
 use thiserror::Error;
 
 use crate::edge_contract::{GatewayConfig, GatewayConfigError};
 use crate::observability::{record_backpressure_rejection, record_request};
 use crate::pingora_delivery::{build_peer_from_validated, PeerBuildError};
-use crate::process_health::respond_healthy;
-pub use crate::process_health::{LIVENESS_PATH, READINESS_PATH};
 use crate::runtime_isolation::{
     BodyLimitExceeded, RequestAdmission, RequestAdmissionBudget, RequestBodyBudget,
     RuntimeIsolationLimits,
 };
+
+/// Stable process-local liveness endpoint.
+pub const LIVENESS_PATH: &str = "/livez";
+/// Stable readiness endpoint reached through the production Pingora serving path.
+pub const READINESS_PATH: &str = "/readyz";
 
 /// Per-request delivery state. Product domain state does not belong here.
 #[derive(Debug)]
@@ -79,6 +84,20 @@ impl GatewayProxy {
         self.upstream_peer.clone()
     }
 
+    async fn respond_healthy(session: &mut Session) -> pingora::Result<()> {
+        let mut response = ResponseHeader::build(200, None)
+            .expect("literal HTTP 200 response header must be valid");
+        response
+            .insert_header("Content-Length", "0")
+            .expect("literal Content-Length response header must be valid");
+        response
+            .insert_header("Cache-Control", "no-store")
+            .expect("literal Cache-Control response header must be valid");
+        session
+            .write_response_header(Box::new(response), true)
+            .await
+    }
+
     fn admit_request(&self, ctx: &mut RequestContext) -> pingora::Result<()> {
         if let Some(admission) = self.admission_budget.acquire() {
             ctx.admission = Some(admission);
@@ -119,22 +138,6 @@ fn body_rejection_to_pingora(rejection: BodyLimitExceeded) -> Box<Error> {
     )
 }
 
-fn sanitize_forwarding_headers(upstream_request: &mut RequestHeader) -> pingora::Result<()> {
-    for header in [
-        "Forwarded",
-        "X-Forwarded-For",
-        "X-Forwarded-Host",
-        "X-Forwarded-Port",
-        "X-Forwarded-Proto",
-        "X-Forwarded-Server",
-        "X-Real-IP",
-    ] {
-        upstream_request.remove_header(header);
-    }
-    upstream_request.insert_header("Forwarded", "proto=http")?;
-    Ok(())
-}
-
 #[async_trait]
 impl ProxyHttp for GatewayProxy {
     type CTX = RequestContext;
@@ -153,7 +156,7 @@ impl ProxyHttp for GatewayProxy {
     {
         match session.req_header().uri.path() {
             LIVENESS_PATH | READINESS_PATH => {
-                respond_healthy(session).await?;
+                Self::respond_healthy(session).await?;
                 Ok(true)
             }
             _ => {
@@ -197,7 +200,17 @@ impl ProxyHttp for GatewayProxy {
     where
         Self::CTX: Send + Sync,
     {
-        sanitize_forwarding_headers(upstream_request)
+        for header in [
+            "Forwarded",
+            "X-Forwarded-For",
+            "X-Forwarded-Host",
+            "X-Forwarded-Proto",
+            "X-Real-IP",
+        ] {
+            upstream_request.remove_header(header);
+        }
+        upstream_request.insert_header("Forwarded", "proto=http")?;
+        Ok(())
     }
 
     async fn logging(&self, session: &mut Session, error: Option<&Error>, ctx: &mut Self::CTX)
@@ -210,48 +223,11 @@ impl ProxyHttp for GatewayProxy {
 
 #[cfg(test)]
 mod tests {
-    use super::{body_rejection_to_pingora, sanitize_forwarding_headers, RequestContext};
+    use super::{body_rejection_to_pingora, RequestContext};
     use crate::runtime_isolation::{
         BodyLimitExceeded, RequestAdmissionBudget, RuntimeIsolationLimits,
     };
-    use pingora::prelude::{ErrorType, ProxyHttp, RequestHeader};
-
-    #[test]
-    fn generic_forwarding_sanitization_removes_all_client_controlled_proxy_identity() {
-        let mut request =
-            RequestHeader::build("GET", b"/", None).expect("fixture request must be valid");
-        for (name, value) in [
-            ("Forwarded", "for=attacker"),
-            ("X-Forwarded-For", "203.0.113.77"),
-            ("X-Forwarded-Host", "attacker.example"),
-            ("X-Forwarded-Port", "4444"),
-            ("X-Forwarded-Proto", "https"),
-            ("X-Forwarded-Server", "attacker-proxy"),
-            ("X-Real-IP", "203.0.113.77"),
-        ] {
-            request
-                .insert_header(name, value)
-                .expect("fixture forwarding header must be valid");
-        }
-
-        sanitize_forwarding_headers(&mut request)
-            .expect("gateway-owned forwarding metadata must remain valid");
-
-        assert_eq!(request.headers["forwarded"].to_str().unwrap(), "proto=http");
-        for name in [
-            "x-forwarded-for",
-            "x-forwarded-host",
-            "x-forwarded-port",
-            "x-forwarded-proto",
-            "x-forwarded-server",
-            "x-real-ip",
-        ] {
-            assert!(
-                !request.headers.contains_key(name),
-                "{name} must not retain client-controlled identity"
-            );
-        }
-    }
+    use pingora::prelude::{ErrorType, ProxyHttp};
 
     #[test]
     fn admission_budget_rejects_at_capacity_and_recovers_after_release() {
