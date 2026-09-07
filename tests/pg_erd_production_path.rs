@@ -199,7 +199,7 @@ fn compiled_pg_erd_listener_preserves_health_route_header_and_forwarding_boundar
         .expect("compiled pg-erd migration binary should start");
     wait_until_listening(gateway_address, &mut child);
     wait_until_listening(metrics_address, &mut child);
-    let _process = GatewayProcess(child);
+    let mut process = GatewayProcess(child);
 
     for health_path in ["/livez", "/readyz"] {
         let response = get(gateway_address, health_path);
@@ -244,4 +244,18 @@ fn compiled_pg_erd_listener_preserves_health_route_header_and_forwarding_boundar
     frontend_thread
         .join()
         .expect("frontend fixture should complete");
+
+    let signal_status = Command::new("kill")
+        .args(["-TERM", &process.0.id().to_string()])
+        .status()
+        .expect("system kill command should send SIGTERM");
+    assert!(signal_status.success(), "SIGTERM delivery should succeed");
+    let exit_status = process
+        .0
+        .wait()
+        .expect("pg-erd migration process should exit after SIGTERM");
+    assert!(
+        exit_status.success(),
+        "pg-erd migration should exit successfully after graceful SIGTERM: {exit_status}"
+    );
 }
