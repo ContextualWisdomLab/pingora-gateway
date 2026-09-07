@@ -80,9 +80,19 @@ A direct upstream branch-creation attempt from the integration identity returned
 
 ## Historical pg-erd succession boundary
 
-Historical Draft #35 remains open. Its generic Rust-origin delta is now genuinely carried by current #62 through the normal #64 merge, but #35 also carried a pg-erd routed-load path that built `cwl-pingora-pg-erd-migration`, launched distinct backend/frontend Rust origins, and ran `tests/load/pg_erd_gateway_smoke.js`.
+Historical Draft #35 remains open. Its generic Rust-origin delta is now genuinely carried by current #62 through the normal #64 merge, but #35 also carried a pg-erd routed-load path that built `cwl-pingora-pg-erd-migration`, launched distinct backend/frontend Rust origins, and ran `tests/load/pg_erd_gateway_smoke.js`. Current #62 does not yet contain that pg-erd routed-load test or binary build, so complete succession is not established.
 
-Current #62 does not contain that pg-erd routed-load test or binary build in its six-path integration range. Therefore #35 is not fully succeeded and must not be closed merely because the generic Rust-origin work is integrated. The remaining pg-erd stack must be reconciled against current bounded-edge authority rather than copied wholesale from the old diverged stack. Product auth/business logic remains outside the gateway.
+The surviving historical pg-erd stack is no longer blocked by an undifferentiated formatting failure. Exact Rust 1.98.0 CI logs were used to localize and repair the debt at the lowest demonstrated responsible layer, without force pushes, destructive rebases, formatter exclusions, gate weakening, or semantic edits:
+
+- #6 formatter-only `013ac250fb3904e2be431ea8e6e9bc2972c3d4d8` repairs `tests/pg_erd_http_policy_contract.rs`; repaired #7 is `4a750cbd60dffd42669dfb41ab3487313ec67e24`;
+- helper #65 normally propagated repaired #7 into #10, then #10 formatter-only `ce96a600fced88b7504a244e446ef784d04ae2c4` repaired exactly `src/migration_delivery.rs` and `tests/pg_erd_migration_plan_contract.rs`;
+- helper #67 normally propagated repaired #10 into #11, then #11 formatter-only `e33ae30c981dff0907fe42e21b2d3184f7ccc066` repaired exactly `src/gateway_proxy.rs`, `tests/pg_erd_forwarding_contract.rs`, and `tests/pg_erd_runtime_proxy_contract.rs`;
+- helper #68 exposed a real merge conflict against #12. The conflict was repaired with explicit two-parent commit `ec1175070e979b1647e0f8a24c28c7a67a235b22`, preserving the historical #12 head as first parent and repaired #11 as second parent while taking only the five proven inherited formatter deltas; GitHub records #68 as merged at that commit;
+- current Draft #12 is exact `0200e7c0b592eaf4aa83271f3cd5de64aea2d458`, based on repaired #11. Its final formatter-only delta repairs exactly the four #12-layer Rust 1.98.0 differences in `src/migration_admin.rs`, `src/process_health.rs`, `tests/pg_erd_admin_config_contract.rs`, and `tests/pg_erd_production_path.rs`.
+
+Exact #12 CI `34075198248` is queued and Supply Chain `34075198227` is pending on `0200e7c0...`; predecessor execution does not transfer. Until that exact head proves formatting, compile/test, strict Clippy, rustdoc, complete owned coverage, resolved lock, load/OCI, and supply-chain evidence, the pg-erd formatter repair is still candidate work rather than GREEN succession. Once exact #12 is GREEN, the repaired ancestry must continue non-force through the remaining pg-erd stack and reacquire current-head routed-load/review evidence before any #35 closure or current-stack succession claim.
+
+Product authentication/business logic remains outside the gateway throughout this repair. The historical routed-loopback capacity result on #42 remains useful component evidence only and is not transferred to these new exact heads or treated as representative TLS/network/deployment SLO.
 
 ## Protocol path
 
@@ -110,6 +120,6 @@ Legacy Nginx/OpenResty presence alone is not a migration trigger. Static-file se
 
 The current work-conserving order is:
 
-`#54 derivative RED + #62 exact hosted/technical GREEN → maintainer-integrated release-qualified immutable Pingora derivative repair → gateway supplier bump + committed Cargo.lock regeneration → unchanged #54 absence regression GREEN + preserved #62 current-stack GREEN → #56 independent APPROVED governance → protected integration → current pg-erd/protocol non-force restacks → real-wire RED/GREEN → immutable release/SBOM/provenance/reproducibility/rollback → shadow/canary/cutover → verified Nginx/OpenResty removal`.
+`#54 derivative RED + #62 exact hosted/technical GREEN → maintainer-integrated release-qualified immutable Pingora derivative repair → gateway supplier bump + committed Cargo.lock regeneration → unchanged #54 absence regression GREEN + preserved #62 current-stack GREEN → #56 independent APPROVED governance → protected integration → pg-erd formatter/succession non-force repair + current protocol restacks → real-wire RED/GREEN → immutable release/SBOM/provenance/reproducibility/rollback → shadow/canary/cutover → verified Nginx/OpenResty removal`.
 
 Queued checks are incomplete evidence, not GREEN. Predecessor execution/review does not transfer across a new exact head. No force push, destructive rebase, self-approval, routine bypass, mutable supplier dependency, threshold weakening, sample reduction, or release/cutover claim is accepted.
