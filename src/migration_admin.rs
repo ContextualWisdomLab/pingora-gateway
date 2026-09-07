@@ -130,10 +130,10 @@ impl PgErdMigrationConfig {
     /// Any custom TLS trust bundle is read by Pingora delivery during this single materialization.
     pub fn build_proxy(&self) -> Result<MigrationGatewayProxy, PgErdMigrationConfigError> {
         let delivery = self.build_delivery()?;
-        let limits = RuntimeIsolationLimits::try_new(
+        let limits = RuntimeIsolationLimits::from_validated(
             self.max_request_body_bytes,
             self.max_in_flight_requests,
-        )?;
+        );
         Ok(MigrationGatewayProxy::new(delivery, limits))
     }
 
