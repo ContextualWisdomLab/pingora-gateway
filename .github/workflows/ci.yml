@@ -252,7 +252,8 @@ jobs:
 
           for _ in $(seq 1 80); do
             if curl --fail --silent --show-error --max-time 1 http://127.0.0.1:6288/livez >/dev/null \
-              && curl --fail --silent --show-error --max-time 1 http://127.0.0.1:6289/metrics >/dev/null; then
+              && metrics_content_type="$(curl --fail --silent --show-error --max-time 1 --output /dev/null --write-out '%{content_type}' http://127.0.0.1:6289/metrics)" \
+              && [[ "${metrics_content_type}" == text/plain* ]]; then
               exit 0
             fi
             if ! docker inspect "${cid}" --format '{{.State.Running}}' | grep -qx true; then
@@ -261,5 +262,5 @@ jobs:
             fi
             sleep 0.25
           done
-          echo "pg-erd migration container did not expose live and metrics listeners under read-only least-privilege runtime" >&2
+          echo "pg-erd migration container did not expose live and Prometheus metrics listeners under read-only least-privilege runtime" >&2
           exit 1
