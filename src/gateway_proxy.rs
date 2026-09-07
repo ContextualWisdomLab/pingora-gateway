@@ -174,7 +174,9 @@ fn sanitize_forwarding_headers(upstream_request: &mut RequestHeader) -> pingora:
     ] {
         upstream_request.remove_header(header);
     }
-    upstream_request.insert_header("Forwarded", "proto=http")?;
+    upstream_request
+        .insert_header("Forwarded", "proto=http")
+        .expect("literal gateway-owned Forwarded header must be valid");
     Ok(())
 }
 
