@@ -28,6 +28,8 @@ Non-health requests acquire the process `max_in_flight_requests` budget before u
 
 Generic v1 makes one prevalidated upstream peer available per request. The pg-erd migration adapter selects only peers already bound by `MigrationDeliveryPlan`; neither path performs request-controlled service discovery. Domain retries, failover, and idempotency policy are not invented by this runtime.
 
+Failure handling is phase-aware. Before an upstream response header is committed downstream, transport failure may still be represented by the gateway's fail-closed error response under the one-attempt policy. After a valid response header has been committed, a later upstream framing/body failure cannot be rewritten into a second HTTP status or silently failed over: the incomplete downstream response terminates, low-cardinality error telemetry records the failed request, process readiness remains available, and independent routes must remain usable. This is an edge transport invariant, not product retry authority.
+
 ## Health and observability
 
 `GET /livez` and `/readyz` return HTTP 200 with an empty, non-cacheable response through the process-local Pingora health boundary. Readiness proves validated configuration plus an active serving path, not product dependency health. In the pg-erd migration profile, consumer `/healthz` remains ordinary routed application traffic and is not confused with process liveness/readiness.
