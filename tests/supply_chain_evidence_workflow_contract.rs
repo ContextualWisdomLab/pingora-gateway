@@ -15,9 +15,10 @@ const FAILURE_STAGE_STEP: &str = "Stage candidate failure diagnostics";
 const FAILURE_UPLOAD_STEP: &str = "Upload candidate failure diagnostics";
 
 fn candidate_steps() -> Vec<Value> {
-    let source = fs::read_to_string(WORKFLOW).expect("Supply Chain workflow should be readable UTF-8");
-    let document: Value =
-        serde_yaml::from_str(&source).expect("Supply Chain workflow YAML should parse before validation");
+    let source =
+        fs::read_to_string(WORKFLOW).expect("Supply Chain workflow should be readable UTF-8");
+    let document: Value = serde_yaml::from_str(&source)
+        .expect("Supply Chain workflow YAML should parse before validation");
     document
         .get("jobs")
         .and_then(|jobs| jobs.get(JOB))
@@ -41,7 +42,10 @@ fn exact_candidate_artifact_is_success_only_and_fully_bound() {
     let (bind_index, bind) = named_step(&steps, BIND_STEP);
     let (upload_index, upload) = named_step(&steps, EXACT_UPLOAD_STEP);
 
-    assert!(bind_index < upload_index, "exact binding must precede exact upload");
+    assert!(
+        bind_index < upload_index,
+        "exact binding must precede exact upload"
+    );
     assert!(
         bind.get("if").is_none() && upload.get("if").is_none(),
         "binding and the promotion-shaped candidate artifact must remain success-only"
@@ -67,7 +71,10 @@ fn exact_candidate_artifact_is_success_only_and_fully_bound() {
         "trivy-pg-erd-image.json",
         "candidate-evidence.txt",
     ] {
-        assert!(command.contains(evidence), "exact binding should account for {evidence}");
+        assert!(
+            command.contains(evidence),
+            "exact binding should account for {evidence}"
+        );
     }
 }
 
@@ -77,7 +84,10 @@ fn failed_supply_chain_path_uses_distinct_best_effort_diagnostics() {
     let (stage_index, stage) = named_step(&steps, FAILURE_STAGE_STEP);
     let (upload_index, upload) = named_step(&steps, FAILURE_UPLOAD_STEP);
 
-    assert!(stage_index < upload_index, "failure diagnostics must be staged before upload");
+    assert!(
+        stage_index < upload_index,
+        "failure diagnostics must be staged before upload"
+    );
     assert_eq!(
         stage.get("if").and_then(Value::as_str),
         Some("${{ failure() }}"),
@@ -88,7 +98,8 @@ fn failed_supply_chain_path_uses_distinct_best_effort_diagnostics() {
         .and_then(Value::as_str)
         .expect("failure diagnostic staging should be a shell step");
     assert!(
-        stage_command.contains("candidate-failure-context.txt") && stage_command.contains("source_sha="),
+        stage_command.contains("candidate-failure-context.txt")
+            && stage_command.contains("source_sha="),
         "failure diagnostics must bind the expected source SHA without requiring success artifacts"
     );
 
