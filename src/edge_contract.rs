@@ -238,8 +238,9 @@ impl GatewayConfig {
 ///
 /// Equal concrete addresses and same-family wildcard aliases overlap. An IPv6 wildcard may also
 /// consume the IPv4 port on dual-stack platforms when `IPV6_V6ONLY` is disabled. IPv4-mapped IPv6
-/// addresses alias their mapped IPv4 authority directly. Both cases are rejected before listener
-/// activation, while distinct concrete non-aliased addresses remain independent.
+/// addresses alias their mapped IPv4 authority directly; when either mapped or native IPv4 side is
+/// unspecified it carries the same wildcard risk for the mapped IPv4 namespace. These cases are
+/// rejected before listener activation while distinct concrete non-aliased addresses remain independent.
 pub(crate) fn socket_authorities_overlap(left: SocketAddr, right: SocketAddr) -> bool {
     if left.port() != right.port() {
         return false;
@@ -253,7 +254,12 @@ pub(crate) fn socket_authorities_overlap(left: SocketAddr, right: SocketAddr) ->
             left == right || left.is_unspecified() || right.is_unspecified()
         }
         (IpAddr::V6(ipv6), IpAddr::V4(ipv4)) | (IpAddr::V4(ipv4), IpAddr::V6(ipv6)) => {
-            ipv6.is_unspecified() || ipv6.to_ipv4_mapped() == Some(ipv4)
+            if ipv6.is_unspecified() {
+                return true;
+            }
+            ipv6.to_ipv4_mapped().is_some_and(|mapped| {
+                mapped == ipv4 || mapped.is_unspecified() || ipv4.is_unspecified()
+            })
         }
     }
 }
