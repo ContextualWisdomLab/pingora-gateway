@@ -204,9 +204,9 @@ impl PgErdMigrationConfig {
 /// Returns true when two listener declarations can claim the same effective socket authority.
 ///
 /// Equal concrete addresses and same-family wildcard aliases overlap. An IPv6 wildcard may also
-/// consume the IPv4 port on dual-stack platforms when `IPV6_V6ONLY` is disabled, so that
-/// platform-dependent cross-family case is rejected before listener activation. Distinct concrete
-/// addresses remain independent.
+/// consume the IPv4 port on dual-stack platforms when `IPV6_V6ONLY` is disabled. IPv4-mapped IPv6
+/// addresses alias their mapped IPv4 authority directly. Both cases are rejected before listener
+/// activation, while distinct concrete non-aliased addresses remain independent.
 fn listener_authorities_overlap(left: SocketAddr, right: SocketAddr) -> bool {
     if left.port() != right.port() {
         return false;
@@ -219,8 +219,8 @@ fn listener_authorities_overlap(left: SocketAddr, right: SocketAddr) -> bool {
         (IpAddr::V6(left), IpAddr::V6(right)) => {
             left == right || left.is_unspecified() || right.is_unspecified()
         }
-        (IpAddr::V6(ipv6), IpAddr::V4(_)) | (IpAddr::V4(_), IpAddr::V6(ipv6)) => {
-            ipv6.is_unspecified()
+        (IpAddr::V6(ipv6), IpAddr::V4(ipv4)) | (IpAddr::V4(ipv4), IpAddr::V6(ipv6)) => {
+            ipv6.is_unspecified() || ipv6.to_ipv4_mapped() == Some(ipv4)
         }
     }
 }
