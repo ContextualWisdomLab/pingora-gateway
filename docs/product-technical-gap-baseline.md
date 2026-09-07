@@ -28,14 +28,18 @@ Parent #12 is exact `69f22265cd88881b8e14cedb32defa0a91180aa2` and is terminal h
 
 #15 preserves the generic forwarding-trust delta while adopting current #14 without force-push or destructive rebase. Ordinary two-parent adoption `87fa98275340e205feb81b6dad208391cd619254` uses prior #15 `50c160e6d76c09559f56a1cda3b9269f720757ed` as first parent and exact #14 `8937364909b82f50fd911aa001a8d073b517f5d9` as second parent. Follow-up `4cad126a568093b31a052e0375e95a2ca8680e76` reapplies only the still-valid TRD forwarding contract on the current parent tree. Parent-supplied route-ordering and parameterized `cargo build --locked --release --bin "${CWL_GATEWAY_BIN}"` reproducibility repairs are inherited rather than duplicated.
 
-The #15 effective forwarding invariant is: remove request-controlled `Forwarded`, `X-Forwarded-For`, `X-Forwarded-Host`, `X-Forwarded-Port`, `X-Forwarded-Proto`, `X-Forwarded-Server` and `X-Real-IP`; then emit only gateway-owned `Forwarded: proto=http`. Generic v1 makes no client-IP or trusted-proxy provenance claim. Product identity authority is not introduced. Current #15 must reacquire exact-head CI, Supply Chain, rustdoc/100% coverage and fresh exact-head review after this ancestry movement; predecessor execution/review does not transfer.
+The #15 effective forwarding invariant is: remove request-controlled `Forwarded`, `X-Forwarded-For`, `X-Forwarded-Host`, `X-Forwarded-Port`, `X-Forwarded-Proto`, `X-Forwarded-Server` and `X-Real-IP`; then emit only gateway-owned `Forwarded: proto=http`. Generic v1 makes no client-IP or trusted-proxy provenance claim. Product identity authority is not introduced.
+
+Exact predecessor `f3dbe7afe1fa945d74145bb7852ae77882145b0a` produced a real hosted coverage RED rather than a compile, lint, traffic or OCI failure. CI `34165264156` had GREEN formatting, compile/test, strict Clippy, warning-denied rustdoc, owned-production coverage workload, load contract and dual-profile OCI runtime; only `Enforce complete owned production coverage` failed. Coverage artifact `10034137549`, digest `sha256:77778830cb0fe2334adeaeceb511360cc219e3dad0036a3e7c7c9d81474900d4`, showed exactly one uncovered production region in `src/gateway_proxy.rs` at the error-propagation edge of inserting the static gateway-owned `Forwarded: proto=http` literal. Supply Chain `34165264253` was terminal GREEN on that predecessor SHA.
+
+Source repair `abeca67680bc218781209f2ffe065c1091dd55e4` removes only that impossible literal-header error branch: the same statically valid gateway-owned header is inserted with an explicit invariant `expect`, matching existing literal response-header construction. Request-controlled header removal, the emitted value, function result type and external error/resource-policy surface are unchanged. This repair must earn fresh exact-head formatting, compile/test, strict Clippy, rustdoc, 100% owned-production coverage, load/OCI and Supply Chain evidence; no predecessor GREEN transfers after the source move.
 
 ## Capability state and buyer-visible gaps
 
 | Area | Current state | Remaining acceptance |
 | --- | --- | --- |
 | Admin Config / network authority | Implemented; #12/#14 exact hosted GREEN | Keep exact-head revalidation after every restack; no duplicate listener-authority implementations |
-| Generic forwarding trust | Implemented on restacked #15 source | Exact-head hosted GREEN and fresh exact-head review required |
+| Generic forwarding trust | Implemented on #15; predecessor hosted coverage RED has a one-line causal source repair | Fresh exact-head 100% coverage/full CI/Supply Chain and fresh review required |
 | Edge routing / HTTP policy | Characterized and compiled for pg-erd | Routed production-process parity must remain GREEN through descendant restacks |
 | Runtime isolation | Declared/streamed body and in-flight limits implemented; inherited real-listener saturation/recovery exists | Routed timeout/reset/post-commit truncation/slow-drip, origin-capacity and in-flight SIGTERM drain remain separate tests |
 | Upstream TLS | Generic local-CA/SNI verification exists; pg-erd fail-closed trust activation exists | Successful pg-erd TLS listener/origin path and representative TLS performance remain unproven |
@@ -47,6 +51,6 @@ The #15 effective forwarding invariant is: remove request-controlled `Forwarded`
 
 ## Execution order
 
-The current dependency order is `#54 derivative RED + #62 exact semantics/load GREEN → maintainer-integrated immutable supplier repair → gateway supplier bump and committed lock regeneration → #54 GREEN + preserved #62 GREEN → #56 independent APPROVED/governance → foundation/protected integration → #12 → #14 → #15 and descendants ordinary non-force restack with exact-head GREEN → remaining routed TLS/failure/drain/protocol acceptance → immutable gateway release/SBOM/provenance/reproducibility/rollback → shadow/canary → cutover → verified legacy removal`.
+The current dependency order is `#54 derivative RED + #62 exact semantics/load GREEN → maintainer-integrated immutable supplier repair → gateway supplier bump and committed lock regeneration → #54 GREEN + preserved #62 GREEN → #56 independent APPROVED/governance → foundation/protected integration → #12 → #14 → #15 current source repair exact-head GREEN → #16/#17 and later descendants ordinary non-force restack with exact-head GREEN → remaining routed TLS/failure/drain/protocol acceptance → immutable gateway release/SBOM/provenance/reproducibility/rollback → shadow/canary → cutover → verified legacy removal`.
 
 No Draft state, predecessor receipt, bot review, local image ID, mutable supplier PR, queue state or controlled loopback measurement is treated as protected merge, release, canary, cutover, rollback or legacy-removal evidence.
