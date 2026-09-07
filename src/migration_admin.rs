@@ -6,12 +6,12 @@
 //! widen arbitrary per-request network authority through configuration.
 
 use std::collections::HashSet;
-use std::net::{IpAddr, SocketAddr};
+use std::net::SocketAddr;
 
 use serde::Deserialize;
 use thiserror::Error;
 
-use crate::edge_contract::{GatewayConfigError, UpstreamConfig};
+use crate::edge_contract::{socket_authorities_overlap, GatewayConfigError, UpstreamConfig};
 use crate::edge_routing::{RouteMatch, RouteRule};
 use crate::http_policy::ResponseHeaderRule;
 use crate::migration_delivery::{MigrationDeliveryError, MigrationDeliveryPlan};
@@ -148,7 +148,7 @@ impl PgErdMigrationConfig {
         if self.metrics_listener.port() == 0 {
             return Err(PgErdMigrationConfigError::ZeroMetricsListenerPort);
         }
-        if listener_authorities_overlap(self.listener, self.metrics_listener) {
+        if socket_authorities_overlap(self.listener, self.metrics_listener) {
             return Err(PgErdMigrationConfigError::ListenerCollision);
         }
         if self.upstream_keepalive_pool_size == 0 {
@@ -175,13 +175,13 @@ impl PgErdMigrationConfig {
 
         let mut configured_names = HashSet::with_capacity(actual);
         for upstream in &self.upstreams {
-            upstream.validate()?;
             let upstream_name = upstream.name.trim().to_string();
             if upstream.address.port() == 0 {
                 return Err(PgErdMigrationConfigError::ZeroTransportAuthorityPort {
                     upstream_name,
                 });
             }
+            upstream.validate()?;
             if !configured_names.insert(upstream_name.clone()) {
                 return Err(PgErdMigrationConfigError::DuplicateTransportAuthority {
                     upstream_name,
@@ -198,30 +198,6 @@ impl PgErdMigrationConfig {
     fn build_delivery(&self) -> Result<MigrationDeliveryPlan, PgErdMigrationConfigError> {
         MigrationDeliveryPlan::try_new(pg_erd_migration_plan(), self.upstreams.clone())
             .map_err(Into::into)
-    }
-}
-
-/// Returns true when two listener declarations can claim the same effective socket authority.
-///
-/// Equal concrete addresses and same-family wildcard aliases overlap. An IPv6 wildcard may also
-/// consume the IPv4 port on dual-stack platforms when `IPV6_V6ONLY` is disabled. IPv4-mapped IPv6
-/// addresses alias their mapped IPv4 authority directly. Both cases are rejected before listener
-/// activation, while distinct concrete non-aliased addresses remain independent.
-fn listener_authorities_overlap(left: SocketAddr, right: SocketAddr) -> bool {
-    if left.port() != right.port() {
-        return false;
-    }
-
-    match (left.ip(), right.ip()) {
-        (IpAddr::V4(left), IpAddr::V4(right)) => {
-            left == right || left.is_unspecified() || right.is_unspecified()
-        }
-        (IpAddr::V6(left), IpAddr::V6(right)) => {
-            left == right || left.is_unspecified() || right.is_unspecified()
-        }
-        (IpAddr::V6(ipv6), IpAddr::V4(ipv4)) | (IpAddr::V4(ipv4), IpAddr::V6(ipv6)) => {
-            ipv6.is_unspecified() || ipv6.to_ipv4_mapped() == Some(ipv4)
-        }
     }
 }
 
