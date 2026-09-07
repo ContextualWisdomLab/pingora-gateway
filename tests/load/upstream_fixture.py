@@ -1,12 +1,8 @@
 #!/usr/bin/env python3
-"""Deterministic HTTP/1.1 upstream used only by loopback gateway load contracts."""
+"""Deterministic HTTP/1.1 upstream used only by the loopback gateway load contract."""
 
-import os
 import socket
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-
-PORT = int(os.environ.get("UPSTREAM_PORT", "18081"))
-PAYLOAD = os.environ.get("UPSTREAM_PAYLOAD", "upstream-ok").encode("ascii")
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -20,12 +16,13 @@ class Handler(BaseHTTPRequestHandler):
         self.connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
 
     def do_GET(self) -> None:
-        """Return the configured fixed payload used to prove proxy correctness under concurrency."""
+        """Return the fixed payload used to prove proxy correctness under concurrency."""
+        payload = b"upstream-ok"
         self.send_response(200)
         self.send_header("Content-Type", "text/plain")
-        self.send_header("Content-Length", str(len(PAYLOAD)))
+        self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
-        self.wfile.write(PAYLOAD)
+        self.wfile.write(payload)
         self.wfile.flush()
 
     def log_message(self, format: str, *args: object) -> None:
@@ -33,6 +30,6 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
+    server = ThreadingHTTPServer(("127.0.0.1", 18081), Handler)
     server.daemon_threads = True
     server.serve_forever()
