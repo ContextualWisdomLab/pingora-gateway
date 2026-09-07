@@ -1,8 +1,8 @@
 //! Regression contract for preserving the primary Supply Chain failure in GitHub Actions.
 //!
-//! Exact candidate binding is a success-path gate: it may require every SBOM/scan/image
-//! receipt only after earlier audit/build/scan steps succeed. The always-run upload must not
-//! replace an earlier causal failure merely because those success artifacts do not exist.
+//! Exact candidate binding and the promotion-shaped artifact are success-path gates. A failed
+//! audit/build/SBOM/scan path may publish separately named diagnostics, but must not manufacture
+//! or partially publish the exact candidate-evidence artifact used by successful acceptance.
 
 use serde_yaml::Value;
 use std::fs;
@@ -10,7 +10,9 @@ use std::fs;
 const WORKFLOW: &str = ".github/workflows/supply-chain.yml";
 const JOB: &str = "candidate-evidence";
 const BIND_STEP: &str = "Bind candidate evidence to exact source";
-const UPLOAD_STEP: &str = "Upload exact candidate evidence";
+const EXACT_UPLOAD_STEP: &str = "Upload exact candidate evidence";
+const FAILURE_STAGE_STEP: &str = "Stage candidate failure diagnostics";
+const FAILURE_UPLOAD_STEP: &str = "Upload candidate failure diagnostics";
 
 fn candidate_steps() -> Vec<Value> {
     let source = fs::read_to_string(WORKFLOW).expect("Supply Chain workflow should be readable UTF-8");
@@ -34,19 +36,25 @@ fn named_step<'a>(steps: &'a [Value], name: &str) -> (usize, &'a Value) {
 }
 
 #[test]
-fn exact_binding_remains_a_success_path_gate_before_upload() {
+fn exact_candidate_artifact_is_success_only_and_fully_bound() {
     let steps = candidate_steps();
     let (bind_index, bind) = named_step(&steps, BIND_STEP);
-    let (upload_index, _) = named_step(&steps, UPLOAD_STEP);
+    let (upload_index, upload) = named_step(&steps, EXACT_UPLOAD_STEP);
 
+    assert!(bind_index < upload_index, "exact binding must precede exact upload");
     assert!(
-        bind_index < upload_index,
-        "exact evidence binding must complete before the artifact upload"
+        bind.get("if").is_none() && upload.get("if").is_none(),
+        "binding and the promotion-shaped candidate artifact must remain success-only"
     );
-    assert!(
-        bind.get("if").is_none(),
-        "exact evidence binding must retain the default success-only condition so an earlier failure remains causal"
+    assert_eq!(
+        upload
+            .get("with")
+            .and_then(|with| with.get("if-no-files-found"))
+            .and_then(Value::as_str),
+        Some("error"),
+        "a successful exact candidate path must fail if its bound evidence disappears"
     );
+
     let command = bind
         .get("run")
         .and_then(Value::as_str)
@@ -59,22 +67,35 @@ fn exact_binding_remains_a_success_path_gate_before_upload() {
         "trivy-pg-erd-image.json",
         "candidate-evidence.txt",
     ] {
-        assert!(
-            command.contains(evidence),
-            "exact evidence binding should account for {evidence}"
-        );
+        assert!(command.contains(evidence), "exact binding should account for {evidence}");
     }
 }
 
 #[test]
-fn earlier_supply_chain_failure_is_not_replaced_by_missing_artifact_failure() {
+fn failed_supply_chain_path_uses_distinct_best_effort_diagnostics() {
     let steps = candidate_steps();
-    let (_, upload) = named_step(&steps, UPLOAD_STEP);
+    let (stage_index, stage) = named_step(&steps, FAILURE_STAGE_STEP);
+    let (upload_index, upload) = named_step(&steps, FAILURE_UPLOAD_STEP);
+
+    assert!(stage_index < upload_index, "failure diagnostics must be staged before upload");
+    assert_eq!(
+        stage.get("if").and_then(Value::as_str),
+        Some("${{ failure() }}"),
+        "failure diagnostics should not run on a successful candidate path"
+    );
+    let stage_command = stage
+        .get("run")
+        .and_then(Value::as_str)
+        .expect("failure diagnostic staging should be a shell step");
+    assert!(
+        stage_command.contains("candidate-failure-context.txt") && stage_command.contains("source_sha="),
+        "failure diagnostics must bind the expected source SHA without requiring success artifacts"
+    );
 
     assert_eq!(
         upload.get("if").and_then(Value::as_str),
-        Some("${{ always() }}"),
-        "available candidate evidence should remain uploadable after an earlier failure"
+        Some("${{ failure() }}"),
+        "failure diagnostics must be distinct from the exact success artifact"
     );
     assert_eq!(
         upload
@@ -82,6 +103,6 @@ fn earlier_supply_chain_failure_is_not_replaced_by_missing_artifact_failure() {
             .and_then(|with| with.get("if-no-files-found"))
             .and_then(Value::as_str),
         Some("ignore"),
-        "a failure before evidence generation must not be replaced by a missing-artifact failure"
+        "diagnostic upload must not replace the primary failure if staging itself cannot produce files"
     );
 }
