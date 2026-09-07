@@ -234,7 +234,10 @@ fn migration_proxy_replaces_untrusted_forwarding_identity_from_transport_context
         request.headers["x-forwarded-host"].to_str().unwrap(),
         "app.example:8080"
     );
-    assert_eq!(request.headers["x-forwarded-port"].to_str().unwrap(), "8080");
+    assert_eq!(
+        request.headers["x-forwarded-port"].to_str().unwrap(),
+        "8080"
+    );
     assert_eq!(
         request.headers["x-forwarded-proto"].to_str().unwrap(),
         "http"
