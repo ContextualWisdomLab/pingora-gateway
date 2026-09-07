@@ -44,6 +44,14 @@ Both image profiles run as uid/gid `65532`, have no intentional application writ
 
 The candidate supply-chain lane builds and vulnerability-scans both admitted images and binds both local image IDs plus per-image scan outputs to the exact source SHA. Its dependency SBOM describes the shared committed Rust dependency graph. A protected release still requires registry-bound immutable image digests, release-bound SBOM/provenance/reproducibility evidence, and rollback rehearsal; no Draft PR head or local image ID is a deployable release identity.
 
+## Load and performance evidence
+
+The exact-head `load-contract` lane builds both release binaries and keeps the generic and pg-erd load contracts distinct. The generic contract remains a minimal one-upstream loopback regression. The pg-erd contract starts distinct deterministic `backend` and `frontend` HTTP/1.1 origins, configures the release-mode `cwl-pingora-pg-erd-migration` binary with explicit non-zero in-flight, keepalive, and I/O budgets, and performs only origin/process liveness probes before measurement; the measured application routes are not warmed.
+
+`tests/load/pg_erd_gateway_smoke.js` sends 400 total requests across four VUs, alternating `/api/load-contract` to the characterized `backend` and `/load-contract` to `frontend`. Both route-specific bodies must remain correct, every k6 check must pass, `http_req_failed` must remain zero, and local `http_req_duration` p95 must stay below 20 ms. A successful lane requires `k6-pg-erd-summary.json`; the always-run artifact upload tolerates a missing summary only after an earlier causal failure so evidence handling does not replace that failure with a secondary upload error. The generic summary follows the same success-versus-diagnostics rule.
+
+This p95 threshold is a deterministic local regression bound, not a production latency claim. It does not establish TLS handshake cost, Internet or multi-hop network behavior, representative origin capacity, Kubernetes scheduling, shadow/canary traffic, or buyer deployment SLOs. Production performance credit requires representative deployment measurement on an immutable release identity without sample reduction, measurement exclusion, or application-route cache warm-up.
+
 ## Protocol and migration limits
 
 Generic v1 is a clear-text downstream HTTP proxy with one explicit upstream per process. Downstream TLS termination, HTTP/2 admission, H2→H1 Cookie normalization, HTTP/3/QUIC, WebSocket/Extended CONNECT, dynamic reload, Kubernetes Gateway API, and consumer-specific multi-route behavior are versioned increments with separate realistic RED→GREEN evidence.
