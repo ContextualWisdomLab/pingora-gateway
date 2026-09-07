@@ -72,18 +72,26 @@ impl ForwardingContext {
 
         let client_ip = self.client_ip.to_string();
         let downstream_port = self.downstream_port.to_string();
-        upstream_request.insert_header("X-Forwarded-For", client_ip.as_str())?;
-        upstream_request.insert_header("X-Real-IP", client_ip.as_str())?;
+        upstream_request
+            .insert_header("X-Forwarded-For", client_ip.as_str())
+            .expect("IpAddr display output must be a valid HTTP header value");
+        upstream_request
+            .insert_header("X-Real-IP", client_ip.as_str())
+            .expect("IpAddr display output must be a valid HTTP header value");
         upstream_request.insert_header("X-Forwarded-Host", self.original_host.as_str())?;
-        upstream_request.insert_header("X-Forwarded-Port", downstream_port.as_str())?;
-        upstream_request.insert_header("X-Forwarded-Proto", self.scheme.as_str())?;
+        upstream_request
+            .insert_header("X-Forwarded-Port", downstream_port.as_str())
+            .expect("u16 display output must be a valid HTTP header value");
+        upstream_request
+            .insert_header("X-Forwarded-Proto", self.scheme.as_str())
+            .expect("enumerated downstream scheme must be a valid HTTP header value");
         Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::net::{IpAddr, Ipv6Addr};
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
     use pingora::prelude::RequestHeader;
 
@@ -106,5 +114,22 @@ mod tests {
 
         assert_eq!(request.headers["x-forwarded-for"].to_str().unwrap(), "::1");
         assert_eq!(request.headers["x-real-ip"].to_str().unwrap(), "::1");
+    }
+
+    #[test]
+    fn forwarding_rejects_an_invalid_original_host_value() {
+        let mut request =
+            RequestHeader::build("GET", b"/", None).expect("fixture request must be valid");
+        let context = ForwardingContext::new(
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+            "app.example\r\nx-injected: value".to_string(),
+            8080,
+            DownstreamScheme::Http,
+        );
+
+        assert!(
+            context.apply(&mut request).is_err(),
+            "an invalid original Host value must fail closed instead of becoming forwarding metadata"
+        );
     }
 }
