@@ -50,8 +50,8 @@ pub enum PgErdMigrationConfigError {
     /// A port-zero metrics listener would make the declared observability endpoint indeterminate.
     #[error("metrics_listener must use a non-zero port")]
     ZeroMetricsListenerPort,
-    /// Traffic and metrics endpoints must never compete for the same socket authority.
-    #[error("listener and metrics_listener must use distinct socket addresses")]
+    /// Traffic and metrics endpoints must never compete for overlapping socket authority.
+    #[error("listener and metrics_listener must not use overlapping socket authorities")]
     ListenerCollision,
     /// A characterized upstream must identify a concrete, connectable transport port.
     #[error("pg-erd migration transport authority {upstream_name} must use a non-zero port")]
@@ -137,6 +137,7 @@ impl PgErdMigrationConfig {
         Ok(MigrationGatewayProxy::new(delivery, limits))
     }
 
+    /// Rejects configuration that could fail after listener authority has already been granted.
     fn validate(&self) -> Result<(), PgErdMigrationConfigError> {
         if self.version != PG_ERD_MIGRATION_CONFIG_VERSION {
             return Err(PgErdMigrationConfigError::UnsupportedVersion(self.version));
@@ -147,7 +148,7 @@ impl PgErdMigrationConfig {
         if self.metrics_listener.port() == 0 {
             return Err(PgErdMigrationConfigError::ZeroMetricsListenerPort);
         }
-        if self.listener == self.metrics_listener {
+        if listener_authorities_overlap(self.listener, self.metrics_listener) {
             return Err(PgErdMigrationConfigError::ListenerCollision);
         }
         if self.upstream_keepalive_pool_size == 0 {
@@ -158,6 +159,7 @@ impl PgErdMigrationConfig {
         self.validate_transport_authority(&pg_erd_migration_plan())
     }
 
+    /// Enforces a complete one-to-one binding of operator transport data to compiled upstream names.
     fn validate_transport_authority(
         &self,
         plan: &EdgeMigrationPlan,
@@ -192,12 +194,35 @@ impl PgErdMigrationConfig {
         Ok(())
     }
 
+    /// Materializes the fixed migration plan against validated concrete transport authorities.
     fn build_delivery(&self) -> Result<MigrationDeliveryPlan, PgErdMigrationConfigError> {
         MigrationDeliveryPlan::try_new(pg_erd_migration_plan(), self.upstreams.clone())
             .map_err(Into::into)
     }
 }
 
+/// Returns true when two listener declarations can claim the same same-family socket authority.
+///
+/// Equal concrete addresses overlap. A wildcard address also overlaps every concrete address in
+/// its own IP family on the same port. Different concrete addresses and different IP families stay
+/// independent so operators can deliberately bind them in parallel.
+fn listener_authorities_overlap(left: SocketAddr, right: SocketAddr) -> bool {
+    if left.port() != right.port() {
+        return false;
+    }
+
+    match (left, right) {
+        (SocketAddr::V4(left), SocketAddr::V4(right)) => {
+            left.ip() == right.ip() || left.ip().is_unspecified() || right.ip().is_unspecified()
+        }
+        (SocketAddr::V6(left), SocketAddr::V6(right)) => {
+            left.ip() == right.ip() || left.ip().is_unspecified() || right.ip().is_unspecified()
+        }
+        _ => false,
+    }
+}
+
+/// Builds the immutable characterized routing and response-policy plan for `pg-erd-cloud`.
 fn pg_erd_migration_plan() -> EdgeMigrationPlan {
     EdgeMigrationPlan::try_new(
         vec!["backend".to_string(), "frontend".to_string()],
