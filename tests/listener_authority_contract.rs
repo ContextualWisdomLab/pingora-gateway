@@ -3,8 +3,8 @@ use cwl_pingora_gateway::edge_contract::{GatewayConfig, GatewayConfigError};
 fn generic_gateway_yaml(listener: &str, metrics_listener: &str) -> String {
     format!(
         r#"version: 1
-listener: {listener}
-metrics_listener: {metrics_listener}
+listener: "{listener}"
+metrics_listener: "{metrics_listener}"
 max_request_body_bytes: 1048576
 max_in_flight_requests: 128
 upstream_keepalive_pool_size: 32
