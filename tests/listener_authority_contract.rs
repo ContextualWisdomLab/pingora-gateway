@@ -3,8 +3,8 @@ use cwl_pingora_gateway::edge_contract::{GatewayConfig, GatewayConfigError};
 fn generic_gateway_yaml(listener: &str, metrics_listener: &str) -> String {
     format!(
         r#"version: 1
-listener: {listener}
-metrics_listener: {metrics_listener}
+listener: "{listener}"
+metrics_listener: "{metrics_listener}"
 max_request_body_bytes: 1048576
 max_in_flight_requests: 128
 upstream_keepalive_pool_size: 32
@@ -33,6 +33,14 @@ fn generic_gateway_rejects_overlapping_listener_authority() {
         ("[::1]:6188", "[::]:6188"),
         ("[::]:6188", "127.0.0.1:6188"),
         ("127.0.0.1:6188", "[::]:6188"),
+        ("[::ffff:127.0.0.1]:6188", "127.0.0.1:6188"),
+        ("127.0.0.1:6188", "[::ffff:127.0.0.1]:6188"),
+        ("[::ffff:127.0.0.1]:6188", "0.0.0.0:6188"),
+        ("0.0.0.0:6188", "[::ffff:127.0.0.1]:6188"),
+        ("[::ffff:0.0.0.0]:6188", "127.0.0.1:6188"),
+        ("127.0.0.1:6188", "[::ffff:0.0.0.0]:6188"),
+        ("[::ffff:0.0.0.0]:6188", "[::ffff:127.0.0.1]:6188"),
+        ("[::ffff:127.0.0.1]:6188", "[::ffff:0.0.0.0]:6188"),
     ] {
         assert_eq!(
             GatewayConfig::from_yaml(&generic_gateway_yaml(listener, metrics_listener)),

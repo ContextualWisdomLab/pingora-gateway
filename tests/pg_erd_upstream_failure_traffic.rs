@@ -1,9 +1,9 @@
 //! Real-listener upstream-failure acceptance for the dedicated pg-erd migration binary.
 //!
 //! This contract proves one transport failure class through the compiled migration process without
-//! importing product-domain behavior: a refused characterized backend connection fails closed
-//! within its configured connection budget, process health remains available, error telemetry is
-//! emitted, and an independent fallback route can still complete through the frontend authority.
+//! importing product-domain behavior: a refused characterized backend connection fails closed,
+//! process health remains available, error telemetry is emitted, and an independent fallback route
+//! can still complete through the frontend authority.
 
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
@@ -150,13 +150,14 @@ fn compiled_pg_erd_refused_backend_fails_bounded_and_preserves_independent_routi
 
     let started = Instant::now();
     let failed = get(gateway_address, "/api/unavailable");
+    let failure_elapsed = started.elapsed();
     assert!(
         failed.starts_with("HTTP/1.1 502"),
         "a refused characterized backend must fail as Bad Gateway: {failed:?}"
     );
     assert!(
-        started.elapsed() < Duration::from_secs(3),
-        "a refused backend must remain inside the configured connection budgets"
+        failure_elapsed < Duration::from_secs(1),
+        "loopback refusal must stay within a conservative one-second envelope around the configured 200/400 ms connection budgets; elapsed={failure_elapsed:?}"
     );
 
     let readiness = get(gateway_address, "/readyz");
