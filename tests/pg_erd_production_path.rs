@@ -329,9 +329,7 @@ fn compiled_pg_erd_listener_rejects_saturation_before_origin_and_recovers() {
             .recv_timeout(Duration::from_secs(5))
             .expect("test should release held origin response");
         first
-            .write_all(
-                b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nfirst",
-            )
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nfirst")
             .expect("held origin response should be writable");
 
         let (mut recovered, _) = backend
@@ -364,7 +362,9 @@ fn compiled_pg_erd_listener_rejects_saturation_before_origin_and_recovers() {
     release_first_tx
         .send(())
         .expect("held request should be releasable");
-    let first_response = first_request.join().expect("held request thread should finish");
+    let first_response = first_request
+        .join()
+        .expect("held request thread should finish");
     assert!(first_response.starts_with("HTTP/1.1 200"));
     assert!(first_response.ends_with("first"));
 
