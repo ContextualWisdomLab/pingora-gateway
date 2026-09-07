@@ -161,6 +161,28 @@ fn pg_erd_admin_config_rejects_listener_collision_and_zero_capacity_budgets() {
 }
 
 #[test]
+fn pg_erd_admin_config_build_proxy_revalidates_direct_deserialization() {
+    for (field, value) in [
+        (
+            "max_request_body_bytes: 1048576",
+            "max_request_body_bytes: 0",
+        ),
+        ("max_in_flight_requests: 128", "max_in_flight_requests: 0"),
+    ] {
+        let invalid = valid_yaml().replace(field, value);
+        let config: PgErdMigrationConfig = serde_yaml::from_str(&invalid)
+            .expect("direct deserialization should expose the public construction boundary");
+        assert!(
+            matches!(
+                config.build_proxy(),
+                Err(PgErdMigrationConfigError::RuntimeIsolation(_))
+            ),
+            "public build_proxy must revalidate directly deserialized runtime budgets"
+        );
+    }
+}
+
+#[test]
 fn pg_erd_admin_config_rejects_zero_port_network_authority() {
     let zero_listener = valid_yaml().replace("listener: 127.0.0.1:8080", "listener: 127.0.0.1:0");
     assert_eq!(
