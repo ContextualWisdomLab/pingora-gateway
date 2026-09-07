@@ -136,12 +136,9 @@ fn migration_plan_rejects_route_to_unknown_upstream() {
 
 #[test]
 fn migration_plan_preserves_route_policy_fail_closed_errors() {
-    let error = EdgeMigrationPlan::try_new(
-        vec!["backend".to_string()],
-        Vec::new(),
-        pg_erd_headers(),
-    )
-    .expect_err("invalid route tables must remain invalid when composed");
+    let error =
+        EdgeMigrationPlan::try_new(vec!["backend".to_string()], Vec::new(), pg_erd_headers())
+            .expect_err("invalid route tables must remain invalid when composed");
 
     assert_eq!(
         error,
