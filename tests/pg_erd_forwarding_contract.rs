@@ -62,8 +62,8 @@ fn pg_erd_forwarding_rebuilds_transport_identity_instead_of_trusting_request_hea
 fn pg_erd_forwarding_derives_authority_from_admitted_transport_and_host_fallback() {
     let client = PingoraSocketAddr::Inet(SocketAddr::from(([198, 51, 100, 19], 51515)));
     let listener = PingoraSocketAddr::Inet(SocketAddr::from(([127, 0, 0, 1], 8443)));
-    let upstream = RequestHeader::build("GET", b"/api", None)
-        .expect("fixture upstream request must be valid");
+    let upstream =
+        RequestHeader::build("GET", b"/api", None).expect("fixture upstream request must be valid");
     let mut downstream = RequestHeader::build("GET", b"/api", None)
         .expect("fixture downstream request must be valid");
     downstream
@@ -93,8 +93,8 @@ fn pg_erd_forwarding_derives_authority_from_admitted_transport_and_host_fallback
 fn pg_erd_forwarding_transport_authority_fails_closed_when_required_evidence_is_missing() {
     let client = PingoraSocketAddr::Inet(SocketAddr::from(([198, 51, 100, 19], 51515)));
     let listener = PingoraSocketAddr::Inet(SocketAddr::from(([127, 0, 0, 1], 8080)));
-    let upstream = RequestHeader::build("GET", b"/api", None)
-        .expect("fixture upstream request must be valid");
+    let upstream =
+        RequestHeader::build("GET", b"/api", None).expect("fixture upstream request must be valid");
     let mut downstream = RequestHeader::build("GET", b"/api", None)
         .expect("fixture downstream request must be valid");
     downstream
