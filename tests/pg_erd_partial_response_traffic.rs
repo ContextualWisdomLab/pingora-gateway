@@ -9,6 +9,7 @@
 use std::io::{ErrorKind, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::process::{Child, Command, Stdio};
+use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -110,9 +111,11 @@ fn raw_request(address: SocketAddr, request: &[u8]) -> String {
     response
 }
 
-fn raw_request_until_terminal(
+fn raw_request_until_terminal_after_body_prefix(
     address: SocketAddr,
     request: &[u8],
+    expected_body_prefix: &[u8],
+    release_origin: mpsc::Sender<()>,
 ) -> (Vec<u8>, DownstreamTermination) {
     let mut downstream = TcpStream::connect(address).expect("gateway should accept traffic");
     downstream
@@ -124,11 +127,44 @@ fn raw_request_until_terminal(
 
     let mut response = Vec::new();
     let mut buffer = [0_u8; 1024];
+    let mut origin_released = false;
     loop {
         match downstream.read(&mut buffer) {
-            Ok(0) => return (response, DownstreamTermination::Eof),
-            Ok(read) => response.extend_from_slice(&buffer[..read]),
+            Ok(0) => {
+                assert!(
+                    origin_released,
+                    "downstream terminated before the committed body prefix was observed"
+                );
+                return (response, DownstreamTermination::Eof);
+            }
+            Ok(read) => {
+                response.extend_from_slice(&buffer[..read]);
+                if !origin_released {
+                    if let Some(header_end) = response
+                        .windows(4)
+                        .position(|window| window == b"\r\n\r\n")
+                        .map(|position| position + 4)
+                    {
+                        let expected_end = header_end + expected_body_prefix.len();
+                        if response.len() >= expected_end {
+                            assert_eq!(
+                                &response[header_end..expected_end],
+                                expected_body_prefix,
+                                "downstream must observe the exact committed body prefix before origin termination"
+                            );
+                            release_origin
+                                .send(())
+                                .expect("origin should wait for downstream commit evidence");
+                            origin_released = true;
+                        }
+                    }
+                }
+            }
             Err(error) if error.kind() == ErrorKind::ConnectionReset => {
+                assert!(
+                    origin_released,
+                    "downstream reset before the committed body prefix was observed"
+                );
                 return (response, DownstreamTermination::ConnectionReset);
             }
             Err(error) => panic!("partial downstream response should terminate, not stall: {error}"),
@@ -159,6 +195,7 @@ fn read_request_headers(stream: &mut TcpStream) -> String {
 
 #[test]
 fn compiled_pg_erd_truncated_response_stays_committed_and_preserves_independent_routing() {
+    let (release_backend_tx, release_backend_rx) = mpsc::channel();
     let backend = TcpListener::bind("127.0.0.1:0").expect("backend fixture should bind");
     let backend_address = backend.local_addr().expect("backend address should exist");
     let backend_origin = thread::spawn(move || {
@@ -168,13 +205,17 @@ fn compiled_pg_erd_truncated_response_stays_committed_and_preserves_independent_
         let request = read_request_headers(&mut stream);
         assert!(request.starts_with("GET /api/partial-response HTTP/1.1\r\n"));
 
-        // Once this status/header block is forwarded, a later framing failure cannot be replaced
-        // with a second HTTP status or silently failed over to another characterized origin.
+        // Keep the upstream open until the downstream has actually observed this committed prefix.
+        // Otherwise an immediate FIN can race proxy forwarding and accidentally exercise a
+        // pre-commit failure phase while still producing the same buffered bytes.
         stream
             .write_all(
                 b"HTTP/1.1 200 OK\r\nContent-Length: 20\r\nConnection: close\r\n\r\npartial",
             )
             .expect("partial backend response should be writable");
+        release_backend_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("downstream should observe the committed prefix before backend close");
     });
 
     let frontend = TcpListener::bind("127.0.0.1:0").expect("frontend fixture should bind");
@@ -201,9 +242,11 @@ fn compiled_pg_erd_truncated_response_stays_committed_and_preserves_independent_
     );
     let _process = start_gateway(&config, gateway_address, metrics_address);
 
-    let (partial, termination) = raw_request_until_terminal(
+    let (partial, termination) = raw_request_until_terminal_after_body_prefix(
         gateway_address,
         b"GET /api/partial-response HTTP/1.1\r\nHost: app.example:8080\r\nConnection: close\r\n\r\n",
+        b"partial",
+        release_backend_tx,
     );
     assert!(
         matches!(
