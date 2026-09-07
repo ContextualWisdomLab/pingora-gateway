@@ -10,6 +10,8 @@ use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
+#[cfg(unix)]
+use cwl_pingora_gateway::runtime_policy::V1_TERMINATION_BUDGET_SECONDS;
 use tempfile::NamedTempFile;
 
 struct GatewayProcess(Child);
@@ -71,13 +73,26 @@ fn terminate_gateway(process: &mut Child) {
             .status()
             .expect("system kill command should send SIGTERM");
         assert!(signal_status.success(), "SIGTERM delivery should succeed");
-        let exit_status = process
-            .wait()
-            .expect("gracefully terminated gateway should be reapable");
-        assert!(
-            exit_status.success(),
-            "SIGTERM graceful shutdown should exit successfully: {exit_status}"
-        );
+
+        let deadline = Instant::now() + Duration::from_secs(V1_TERMINATION_BUDGET_SECONDS);
+        loop {
+            if let Some(exit_status) = process
+                .try_wait()
+                .expect("gateway process state should be readable")
+            {
+                assert!(
+                    exit_status.success(),
+                    "SIGTERM graceful shutdown should exit successfully: {exit_status}"
+                );
+                break;
+            }
+            if Instant::now() >= deadline {
+                let _ = process.kill();
+                let _ = process.wait();
+                panic!("gateway did not terminate before the external hard-kill budget");
+            }
+            thread::sleep(Duration::from_millis(25));
+        }
     }
 
     #[cfg(not(unix))]
