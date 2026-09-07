@@ -93,6 +93,8 @@ fn pg_erd_admin_config_rejects_listener_collision_and_zero_capacity_budgets() {
         ("[::1]:8080", "[::]:8080"),
         ("[::]:8080", "127.0.0.1:8080"),
         ("127.0.0.1:8080", "[::]:8080"),
+        ("[::ffff:127.0.0.1]:8080", "127.0.0.1:8080"),
+        ("127.0.0.1:8080", "[::ffff:127.0.0.1]:8080"),
     ] {
         let overlapping = valid_yaml()
             .replace(
@@ -106,7 +108,7 @@ fn pg_erd_admin_config_rejects_listener_collision_and_zero_capacity_budgets() {
         assert_eq!(
             PgErdMigrationConfig::from_yaml(&overlapping),
             Err(PgErdMigrationConfigError::ListenerCollision),
-            "wildcard authority must conservatively collide with {listener} / {metrics_listener}"
+            "overlapping socket authority must fail closed for {listener} / {metrics_listener}"
         );
     }
 
