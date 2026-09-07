@@ -216,20 +216,17 @@ fn listener_authorities_overlap(left: SocketAddr, right: SocketAddr) -> bool {
         (IpAddr::V4(left), IpAddr::V4(right)) => {
             left == right || left.is_unspecified() || right.is_unspecified()
         }
-        (IpAddr::V6(left), IpAddr::V6(right)) => match (
-            left.to_ipv4_mapped(),
-            right.to_ipv4_mapped(),
-        ) {
-            (Some(left), Some(right)) => {
-                left == right || left.is_unspecified() || right.is_unspecified()
+        (IpAddr::V6(left), IpAddr::V6(right)) => {
+            match (left.to_ipv4_mapped(), right.to_ipv4_mapped()) {
+                (Some(left), Some(right)) => {
+                    left == right || left.is_unspecified() || right.is_unspecified()
+                }
+                _ => left == right || left.is_unspecified() || right.is_unspecified(),
             }
-            _ => left == right || left.is_unspecified() || right.is_unspecified(),
-        },
+        }
         (IpAddr::V6(ipv6), IpAddr::V4(ipv4)) | (IpAddr::V4(ipv4), IpAddr::V6(ipv6)) => {
             match ipv6.to_ipv4_mapped() {
-                Some(mapped) => {
-                    mapped == ipv4 || mapped.is_unspecified() || ipv4.is_unspecified()
-                }
+                Some(mapped) => mapped == ipv4 || mapped.is_unspecified() || ipv4.is_unspecified(),
                 None => ipv6.is_unspecified(),
             }
         }
