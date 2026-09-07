@@ -1,6 +1,7 @@
 use cwl_pingora_gateway::migration_admin::{
     PgErdMigrationConfig, PgErdMigrationConfigError, PG_ERD_MIGRATION_CONFIG_VERSION,
 };
+use pingora::upstreams::peer::Peer;
 
 fn config_yaml(upstreams: &str) -> String {
     format!(
