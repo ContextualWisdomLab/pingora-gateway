@@ -294,8 +294,10 @@ fn compiled_pg_erd_truncated_response_stays_committed_and_preserves_independent_
 
     let metrics = get(metrics_address, "/metrics");
     assert!(
-        metrics.contains("cwl_pingora_gateway_request_errors_total 1"),
-        "the post-header upstream framing failure must remain visible through low-cardinality error telemetry: {metrics:?}"
+        metrics
+            .lines()
+            .any(|line| line == "cwl_pingora_gateway_request_errors_total 1"),
+        "the post-header upstream framing failure must expose exactly one request error through low-cardinality telemetry: {metrics:?}"
     );
 
     let recovered = get(gateway_address, "/after-partial-response");
