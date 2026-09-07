@@ -99,6 +99,8 @@ fn pg_erd_admin_config_rejects_listener_collision_and_zero_capacity_budgets() {
         ("0.0.0.0:8080", "[::ffff:127.0.0.1]:8080"),
         ("[::ffff:0.0.0.0]:8080", "127.0.0.1:8080"),
         ("127.0.0.1:8080", "[::ffff:0.0.0.0]:8080"),
+        ("[::ffff:0.0.0.0]:8080", "[::ffff:127.0.0.1]:8080"),
+        ("[::ffff:127.0.0.1]:8080", "[::ffff:0.0.0.0]:8080"),
     ] {
         let overlapping = valid_yaml()
             .replace(
