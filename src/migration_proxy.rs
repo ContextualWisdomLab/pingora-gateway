@@ -39,6 +39,7 @@ pub struct MigrationRequestContext {
 }
 
 impl MigrationRequestContext {
+    /// Creates isolated per-request accounting with no in-flight admission lease yet acquired.
     fn new(limits: RuntimeIsolationLimits) -> Self {
         Self {
             request_body: RequestBodyBudget::new(limits),
@@ -108,6 +109,7 @@ impl MigrationGatewayProxy {
         Ok(())
     }
 
+    /// Acquires one process-local in-flight lease or rejects before upstream work begins.
     fn admit_request(&self, ctx: &mut MigrationRequestContext) -> pingora::Result<()> {
         if let Some(admission) = self.admission_budget.acquire() {
             ctx.admission = Some(admission);
@@ -121,6 +123,7 @@ impl MigrationGatewayProxy {
         ))
     }
 
+    /// Rejects an already-declared request body that exceeds the configured byte budget.
     fn reject_oversize_declared_body(
         session: &Session,
         ctx: &MigrationRequestContext,
@@ -140,6 +143,7 @@ impl MigrationGatewayProxy {
     }
 }
 
+/// Derives the legacy-compatible forwarding fields only from accepted downstream transport state.
 fn pg_erd_forwarding_context(
     session: &Session,
     upstream_request: &RequestHeader,
@@ -187,6 +191,7 @@ fn pg_erd_forwarding_context(
     ))
 }
 
+/// Maps the transport-neutral body-limit violation to the stable fail-closed HTTP status.
 fn body_rejection_to_pingora(rejection: BodyLimitExceeded) -> Box<Error> {
     let _ = (rejection.observed, rejection.limit);
     Error::explain(
@@ -195,6 +200,7 @@ fn body_rejection_to_pingora(rejection: BodyLimitExceeded) -> Box<Error> {
     )
 }
 
+/// Maps a route-plan miss to a bounded response without exposing internal routing details.
 fn unmatched_route_to_pingora(_error: MigrationGatewayProxyError) -> Box<Error> {
     Error::explain(
         ErrorType::HTTPStatus(404),
@@ -206,10 +212,12 @@ fn unmatched_route_to_pingora(_error: MigrationGatewayProxyError) -> Box<Error> 
 impl ProxyHttp for MigrationGatewayProxy {
     type CTX = MigrationRequestContext;
 
+    /// Creates request-local body and admission accounting for a new downstream exchange.
     fn new_ctx(&self) -> Self::CTX {
         MigrationRequestContext::new(self.limits)
     }
 
+    /// Serves process health locally and admits ordinary traffic before any upstream selection.
     async fn request_filter(
         &self,
         session: &mut Session,
@@ -231,6 +239,7 @@ impl ProxyHttp for MigrationGatewayProxy {
         }
     }
 
+    /// Accounts streamed request bytes so chunked bodies cannot bypass the declared-length gate.
     async fn request_body_filter(
         &self,
         _session: &mut Session,
@@ -247,6 +256,7 @@ impl ProxyHttp for MigrationGatewayProxy {
             .map_err(body_rejection_to_pingora)
     }
 
+    /// Resolves only a prevalidated peer admitted by the immutable characterized route plan.
     async fn upstream_peer(
         &self,
         session: &mut Session,
@@ -257,6 +267,7 @@ impl ProxyHttp for MigrationGatewayProxy {
             .map_err(unmatched_route_to_pingora)
     }
 
+    /// Rebuilds forwarding identity from the accepted socket and Host authority before origin I/O.
     async fn upstream_request_filter(
         &self,
         session: &mut Session,
@@ -270,6 +281,7 @@ impl ProxyHttp for MigrationGatewayProxy {
         self.apply_upstream_request_policy(upstream_request, &forwarding)
     }
 
+    /// Applies the characterized edge-owned response fields with replacement semantics.
     async fn response_filter(
         &self,
         _session: &mut Session,
@@ -282,6 +294,7 @@ impl ProxyHttp for MigrationGatewayProxy {
         self.apply_response_headers(upstream_response)
     }
 
+    /// Emits only the shared low-cardinality completion observation for the finished request.
     async fn logging(&self, session: &mut Session, error: Option<&Error>, ctx: &mut Self::CTX)
     where
         Self::CTX: Send + Sync,

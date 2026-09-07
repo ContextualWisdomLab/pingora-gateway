@@ -27,11 +27,21 @@ impl Drop for GatewayProcess {
     }
 }
 
-fn reserve_loopback() -> SocketAddr {
-    TcpListener::bind("127.0.0.1:0")
-        .expect("loopback port should be reservable")
-        .local_addr()
-        .expect("reservation should expose an address")
+fn reserve_distinct_loopback_addresses() -> (SocketAddr, SocketAddr) {
+    // Hold both ephemeral reservations at once so the kernel cannot hand the just-released traffic
+    // port back to the metrics reservation and manufacture an invalid listener-authority config.
+    let traffic = TcpListener::bind("127.0.0.1:0").expect("traffic port should be reservable");
+    let metrics = TcpListener::bind("127.0.0.1:0").expect("metrics port should be reservable");
+    let addresses = (
+        traffic
+            .local_addr()
+            .expect("traffic reservation should expose an address"),
+        metrics
+            .local_addr()
+            .expect("metrics reservation should expose an address"),
+    );
+    assert_ne!(addresses.0, addresses.1);
+    addresses
 }
 
 fn write_config(
@@ -111,8 +121,7 @@ fn sigterm_drains_routed_pg_erd_request_before_process_exit() {
     let frontend_address = frontend_listener
         .local_addr()
         .expect("frontend authority should expose its address");
-    let gateway_address = reserve_loopback();
-    let metrics_address = reserve_loopback();
+    let (gateway_address, metrics_address) = reserve_distinct_loopback_addresses();
     let config = write_config(
         gateway_address,
         metrics_address,

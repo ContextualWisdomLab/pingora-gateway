@@ -4,15 +4,14 @@ This file links material technical/security claims to primary standards or upstr
 
 | Claim | Source |
 | --- | --- |
-| Pingora server/proxy composition and graceful server lifecycle | Cloudflare Pingora source at pinned commit `09696b51bc59315353d96686355861604d0bb48c`, the protected upstream `main` head revalidated on 2026-09-02 |
+| Pingora server/proxy composition and graceful server lifecycle | Cloudflare Pingora source at pinned commit `09696b51bc59315353d96686355861604d0bb48c`, the protected upstream `main` head observed on 2026-09-01 |
 | Pingora downstream sessions expose accepted client/server socket addresses; Pingora socket addresses expose IP socket values through `as_inet()` | `pingora-core/src/protocols/http/server.rs`, `pingora-proxy/tests/utils/server_utils.rs`, and `pingora-core/src/protocols/l4/socket.rs` at pinned commit `09696b51bc59315353d96686355861604d0bb48c`; these are the transport observations used by the pg-erd forwarding adapter |
 | Pingora's server default `max_retries` is 16, while the proxy loop copies that field and loops while its attempt counter is below the value | `pingora-core/src/server/configuration/mod.rs` and `pingora-proxy/src/lib.rs` at pinned commit `09696b51bc59315353d96686355861604d0bb48c`; CWL v1 therefore sets the field to `1` for one total attempt |
 | Graceful SIGTERM uses `grace_period_seconds` and `graceful_shutdown_timeout_seconds`, with framework fallbacks when unset | `pingora-core/src/server/mod.rs` and `pingora-core/src/server/configuration/mod.rs` at the pinned commit; CWL v1 sets 5 s grace and 10 s per-runtime graceful timeout explicitly inside a 30 s external termination budget |
 | Standard upstream request policy supports hop-by-hop/connection-nominated stripping and normalized WebSocket-only HTTP/1 upgrade forwarding | Cloudflare Pingora `HttpUpstreamRequestPolicy` / peer implementation at pinned commit `09696b51bc59315353d96686355861604d0bb48c` |
-| Pingora `read_timeout` is a per-individual-read inactivity budget and resets after each successful upstream `read()`; it is not a total-response lifetime bound | Cloudflare Pingora `docs/user_guide/peer.md` and `pingora-proxy/src/proxy_h1.rs` at pinned commit `09696b51bc59315353d96686355861604d0bb48c`; the pg-erd read-stall acceptance therefore characterizes a connected origin that sends no response bytes and deliberately does not claim slow-drip/whole-response bounding |
-| A proxy failure after the upstream response header has already been sent downstream cannot be replaced with a new error response or failover; Pingora logs/surfaces the error and gives up that request | Cloudflare Pingora `docs/user_guide/failover.md` and `pingora-proxy/src/proxy_h1.rs` at pinned commit `09696b51bc59315353d96686355861604d0bb48c`; this phase boundary is the basis of the dedicated pg-erd partial-response traffic contract |
-| Pingora HTTP/1 body framing treats a body that ends before its declared `Content-Length` as `PREMATURE_BODY_END`, while upstream read failures are propagated as failed proxy tasks | `pingora-core/src/protocols/http/v1/body.rs`, `pingora-core/src/protocols/http/v1/client.rs`, and `pingora-proxy/src/proxy_h1.rs` at pinned commit `09696b51bc59315353d96686355861604d0bb48c`; RFC 9112 defines HTTP/1.1 message framing requirements |
+| Pingora `read_timeout` is a per-individual-read inactivity budget and resets after each successful upstream `read()`; it is not a total-response lifetime bound | Cloudflare Pingora `docs/user_guide/peer.md` and `pingora-proxy/src/proxy_h1.rs` at pinned commit `09696b51bc59315353d96686355861604d0bb48c`; the pg-erd read-stall acceptance therefore keeps a connected origin silent without closing its socket and deliberately does not claim slow-drip/whole-response bounding |
 | Pingora OpenSSL peers support a per-peer CA store; when configured it replaces the verification store for that peer while certificate and hostname verification remain separately enabled | `pingora-core/src/upstreams/peer.rs`, `pingora-core/src/connectors/tls/boringssl_openssl/mod.rs`, and `pingora-core/src/protocols/tls/boringssl_openssl/mod.rs` at pinned commit `09696b51bc59315353d96686355861604d0bb48c` |
+| IPv4-mapped IPv6 addresses represent IPv4 nodes in IPv6 form; Rust's `Ipv6Addr::to_ipv4_mapped` performs the bounded mapped-only canonicalization used by the socket-authority invariant. Linux IPv6 sockets can expose IPv4 peers as mapped IPv6 addresses, so mapped/native authority must not be compared only as unrelated textual address families | RFC 4291 §2.5.5.2; Rust `std::net::Ipv6Addr` documentation; Linux `ipv6(7)` |
 | Traefik normally adds `X-Forwarded-For`, `X-Real-Ip`, `X-Forwarded-Host`, `X-Forwarded-Port`, `X-Forwarded-Proto`, and `X-Forwarded-Server` when proxying HTTP | Traefik official Getting Started FAQ, current documentation revalidated 2026-09-02 |
 | Incoming Traefik `X-Forwarded-*` identity is trusted only when an EntryPoint explicitly configures trusted IPs or insecure trust; insecure mode is not recommended for production | Traefik official EntryPoints documentation, current documentation revalidated 2026-09-02 |
 | `pg-erd-cloud` can use `X-Forwarded-For` for rate-limit/observability client identity only under an explicit trust switch and tells operators to enable it only behind a sanitizing ingress | `ContextualWisdomLab/pg-erd-cloud@8dc746920c12988f082e914879d95e13c9693535`: `.env.example`, `backend/app/rate_limit.py`, `backend/app/observability.py`, `docs/api-security-checklist.md` |
@@ -24,10 +23,11 @@ This file links material technical/security claims to primary standards or upstr
 | Current TLS 1.3 protocol semantics and application identity-verification responsibility | RFC 9846, published July 2026, which obsoletes RFC 8446 and points applications to RFC 9525 for identity verification |
 | New protocols using TLS must require TLS 1.3 | RFC 9852, BCP 195, July 2026; this gateway is not claiming a new application protocol and still requires explicit migration-time protocol compatibility evidence |
 | March 2026 Pingora request-smuggling/cache-key advisories are patched in 0.8.0 | GitHub Security Advisories GHSA-xq2h-p299-vjwv, GHSA-hj7x-879w-vrp7, GHSA-f93w-pcj3-rggc |
-| Pingora 0.8.1 remains the latest GitHub release revalidated on 2026-09-02 and bounds default HTTP/2 server limits | Cloudflare Pingora GitHub Releases, 0.8.1, 2026-06-04 |
+| Pingora 0.8.1 is the latest release observed on 2026-09-01 and bounds default HTTP/2 server limits | Cloudflare Pingora GitHub Releases, 0.8.1, 2026-06-04 |
 | The pinned upstream head is seven commits after the prior security-resolution pin `6463ad6407a1d3fe256f1951dd0ecb054477e3f6`; the relevant retry/grace configuration remains unchanged at the new head | GitHub compare `6463ad6...09696b5` plus the exact `ServerConf` source at `09696b5` |
-| Rust 1.98.0 is the latest stable toolchain observed on 2026-09-01 | Rust Release Team, Rust 1.98.0 announcement, 2026-08-20 |
-| OCI runtime-spec 1.3.0 is the latest released runtime specification observed on 2026-09-01 | Open Container Initiative runtime-spec v1.3.0 release notice, 2025-11-04; runtime hardening claims still require executable container evidence |
+| Rust 1.98.1 is the current stable point release observed on 2026-09-07 and fixes a Rust 1.98.0 vtable-generation miscompilation that could place a null pointer where a trait-object function pointer was required | Rust Release Team, Rust 1.98.1 announcement, 2026-09-03; this external authority does not by itself promote the repository's separately gated compiler prerequisite |
+| OCI runtime-spec 1.3.0 is the latest released runtime specification observed on 2026-09-07 | Open Container Initiative runtime-spec v1.3.0 release notice, 2025-11-04; runtime hardening claims still require executable container evidence |
+| OCI image-spec 1.1.1 is the latest released image specification observed on 2026-09-07 | Open Container Initiative image-spec v1.1.1 release notice, 2025-04-02; image-format conformance does not prove non-root, read-only-root, capability or `no-new-privileges` runtime behavior, which remains an executable acceptance concern |
 | `lru` versions before 0.18.2 are affected by RUSTSEC-2026-0253 | RustSec advisory RUSTSEC-2026-0253; the upstream pin includes the first-fixed `lru` dependency change, but release must use a committed audited lock |
 
 ## References
@@ -38,13 +38,7 @@ Cloudflare. (n.d.). *Pingora upstream peer options* [Source code, commit 09696b5
 
 Cloudflare. (n.d.). *Peer: how to connect to upstream* [Documentation, commit 09696b51bc59315353d96686355861604d0bb48c]. GitHub. https://github.com/cloudflare/pingora/blob/09696b51bc59315353d96686355861604d0bb48c/docs/user_guide/peer.md
 
-Cloudflare. (n.d.). *Handling failures and failover* [Documentation, commit 09696b51bc59315353d96686355861604d0bb48c]. GitHub. https://github.com/cloudflare/pingora/blob/09696b51bc59315353d96686355861604d0bb48c/docs/user_guide/failover.md
-
 Cloudflare. (n.d.). *Pingora HTTP/1 proxy implementation* [Source code, commit 09696b51bc59315353d96686355861604d0bb48c]. GitHub. https://github.com/cloudflare/pingora/blob/09696b51bc59315353d96686355861604d0bb48c/pingora-proxy/src/proxy_h1.rs
-
-Cloudflare. (n.d.). *Pingora HTTP/1 client session* [Source code, commit 09696b51bc59315353d96686355861604d0bb48c]. GitHub. https://github.com/cloudflare/pingora/blob/09696b51bc59315353d96686355861604d0bb48c/pingora-core/src/protocols/http/v1/client.rs
-
-Cloudflare. (n.d.). *Pingora HTTP/1 body framing* [Source code, commit 09696b51bc59315353d96686355861604d0bb48c]. GitHub. https://github.com/cloudflare/pingora/blob/09696b51bc59315353d96686355861604d0bb48c/pingora-core/src/protocols/http/v1/body.rs
 
 Cloudflare. (n.d.). *Pingora OpenSSL upstream TLS connector* [Source code, commit 09696b51bc59315353d96686355861604d0bb48c]. GitHub. https://github.com/cloudflare/pingora/blob/09696b51bc59315353d96686355861604d0bb48c/pingora-core/src/connectors/tls/boringssl_openssl/mod.rs
 
@@ -64,6 +58,12 @@ Cloudflare. (2026). *HTTP request smuggling via HTTP/1.0 and Transfer-Encoding m
 
 Cloudflare. (2026). *Cache key poisoning advisory* (GHSA-f93w-pcj3-rggc). GitHub Security Advisories. https://github.com/cloudflare/pingora/security/advisories/GHSA-f93w-pcj3-rggc
 
+Hinden, R., & Deering, S. (2006). *IP version 6 addressing architecture* (RFC 4291). RFC Editor. https://www.rfc-editor.org/rfc/rfc4291
+
+The Rust Project Developers. (2026). *Ipv6Addr in std::net*. Rust standard library documentation. https://doc.rust-lang.org/std/net/struct.Ipv6Addr.html
+
+Kerrisk, M. (n.d.). *ipv6(7) — Linux manual page*. Linux man-pages project. https://man7.org/linux/man-pages/man7/ipv6.7.html
+
 Traefik Labs. (n.d.). *Traefik getting started FAQ: Forwarded headers when proxying HTTP requests*. https://doc.traefik.io/traefik/getting-started/faq/
 
 Traefik Labs. (n.d.). *Traefik EntryPoints: Forwarded headers*. https://doc.traefik.io/traefik/reference/install-configuration/entrypoints/
@@ -82,8 +82,10 @@ Salz, R., & Aviram, N. (2026). *New protocols using TLS must require TLS 1.3* (R
 
 Petersson, A., & Nilsson, M. (2014). *Forwarded HTTP extension* (RFC 7239). RFC Editor. https://www.rfc-editor.org/rfc/rfc7239
 
+Open Container Initiative. (2025, April 2). *OCI image-spec v1.1.1 release notice*. https://opencontainers.org/release-notices/v1-1-1-image-spec/
+
 Open Container Initiative. (2025, November 4). *OCI runtime-spec v1.3.0 release notice*. https://opencontainers.org/release-notices/v1-3-0-runtime-spec/
 
-Rust Release Team. (2026, August 20). *Announcing Rust 1.98.0*. Rust Blog. https://blog.rust-lang.org/2026/08/20/Rust-1.98.0/
+Rust Release Team. (2026, September 3). *Announcing Rust 1.98.1*. Rust Blog. https://blog.rust-lang.org/2026/09/03/Rust-1.98.1/
 
 Rust Secure Code Working Group. (2026, August 11). *RUSTSEC-2026-0253: lru—memory safety issue under panic*. RustSec Advisory Database. https://rustsec.org/advisories/RUSTSEC-2026-0253.html
