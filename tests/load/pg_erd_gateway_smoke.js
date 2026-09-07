@@ -10,6 +10,8 @@ export const options = {
     http_req_duration: ['p(95)<20'],
     'http_req_duration{route:backend}': ['p(95)<20'],
     'http_req_duration{route:frontend}': ['p(95)<20'],
+    'http_reqs{route:backend}': ['count>=198'],
+    'http_reqs{route:frontend}': ['count>=198'],
   },
 };
 
