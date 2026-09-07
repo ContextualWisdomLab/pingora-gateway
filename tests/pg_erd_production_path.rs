@@ -123,9 +123,7 @@ fn serve_origin(
         assert!(lowered.contains("x-real-ip: 127.0.0.1\r\n"));
         assert!(lowered.contains("x-forwarded-host: app.example:8080\r\n"));
         assert!(lowered.contains("x-forwarded-proto: http\r\n"));
-        assert!(lowered.contains(&format!(
-            "x-forwarded-port: {expected_forwarded_port}\r\n"
-        )));
+        assert!(lowered.contains(&format!("x-forwarded-port: {expected_forwarded_port}\r\n")));
         assert!(!lowered.contains("x-forwarded-port: 443\r\n"));
         assert!(!lowered.contains("x-forwarded-server:"));
         assert!(!lowered.contains("attacker.example"));
