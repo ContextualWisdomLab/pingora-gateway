@@ -6,7 +6,7 @@
 //! widen arbitrary per-request network authority through configuration.
 
 use std::collections::HashSet;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 
 use serde::Deserialize;
 use thiserror::Error;
@@ -201,24 +201,27 @@ impl PgErdMigrationConfig {
     }
 }
 
-/// Returns true when two listener declarations can claim the same same-family socket authority.
+/// Returns true when two listener declarations can claim the same effective socket authority.
 ///
-/// Equal concrete addresses overlap. A wildcard address also overlaps every concrete address in
-/// its own IP family on the same port. Different concrete addresses and different IP families stay
-/// independent so operators can deliberately bind them in parallel.
+/// Equal concrete addresses and same-family wildcard aliases overlap. An IPv6 wildcard may also
+/// consume the IPv4 port on dual-stack platforms when `IPV6_V6ONLY` is disabled, so that
+/// platform-dependent cross-family case is rejected before listener activation. Distinct concrete
+/// addresses remain independent.
 fn listener_authorities_overlap(left: SocketAddr, right: SocketAddr) -> bool {
     if left.port() != right.port() {
         return false;
     }
 
-    match (left, right) {
-        (SocketAddr::V4(left), SocketAddr::V4(right)) => {
-            left.ip() == right.ip() || left.ip().is_unspecified() || right.ip().is_unspecified()
+    match (left.ip(), right.ip()) {
+        (IpAddr::V4(left), IpAddr::V4(right)) => {
+            left == right || left.is_unspecified() || right.is_unspecified()
         }
-        (SocketAddr::V6(left), SocketAddr::V6(right)) => {
-            left.ip() == right.ip() || left.ip().is_unspecified() || right.ip().is_unspecified()
+        (IpAddr::V6(left), IpAddr::V6(right)) => {
+            left == right || left.is_unspecified() || right.is_unspecified()
         }
-        _ => false,
+        (IpAddr::V6(ipv6), IpAddr::V4(_)) | (IpAddr::V4(_), IpAddr::V6(ipv6)) => {
+            ipv6.is_unspecified()
+        }
     }
 }
 
