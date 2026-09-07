@@ -79,8 +79,7 @@ fn wait_until_listening(address: SocketAddr, process: &mut Child) {
     }
 }
 
-fn wait_for_exit(process: &mut Child) -> std::process::ExitStatus {
-    let deadline = Instant::now() + Duration::from_secs(V1_TERMINATION_BUDGET_SECONDS);
+fn wait_for_exit(process: &mut Child, deadline: Instant) -> std::process::ExitStatus {
     loop {
         if let Some(status) = process
             .try_wait()
@@ -182,6 +181,8 @@ fn sigterm_drains_routed_pg_erd_request_before_process_exit() {
         .expect("routed request should reach backend before SIGTERM");
 
     let signal_sent_at = Instant::now();
+    let termination_deadline =
+        signal_sent_at + Duration::from_secs(V1_TERMINATION_BUDGET_SECONDS);
     let signal_status = Command::new("kill")
         .args(["-TERM", &process.0.id().to_string()])
         .status()
@@ -205,7 +206,7 @@ fn sigterm_drains_routed_pg_erd_request_before_process_exit() {
     );
 
     backend.join().expect("backend fixture should complete");
-    let exit_status = wait_for_exit(&mut process.0);
+    let exit_status = wait_for_exit(&mut process.0, termination_deadline);
     assert!(
         exit_status.success(),
         "SIGTERM graceful shutdown should exit successfully: {exit_status}"
