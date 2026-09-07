@@ -18,6 +18,8 @@ Each upstream has a stable non-empty name, a non-zero concrete socket address, `
 
 `PgErdMigrationConfig` is a bounded Admin Config contract, not a second generic router. It admits operator-supplied listener/metrics sockets, non-zero runtime budgets, and concrete transport/TLS data only for the already characterized `backend` and `frontend` identities. Route selection and response-security policy remain compiled migration contracts. Missing, extra, renamed, zero-port, or overlapping transport authority fails before listener activation.
 
+`PgErdMigrationConfig` also derives public Serde `Deserialize`; callers therefore are not forced through `PgErdMigrationConfig::from_yaml`. The public `build_proxy()` activation boundary revalidates the complete deterministic Admin Config contract before delivery peers or runtime limits are materialized. Only after that revalidation may `RuntimeIsolationLimits::from_validated` reuse the proven-positive budgets, so direct deserialization cannot bypass version, listener-authority, runtime, keepalive, or transport-authority invariants.
+
 ## Request policy
 
 Pingora's standard upstream request policy supplies the pinned supplier's hop-by-hop and `Connection`-nomination sanitation. The generic gateway additionally removes client-provided `Forwarded`, `X-Forwarded-For`, `X-Forwarded-Host`, `X-Forwarded-Proto`, and `X-Real-IP`, then emits only gateway-owned `Forwarded: proto=http` for the v1 clear-text downstream listener. Generic v1 deliberately makes no client-IP identity claim.
