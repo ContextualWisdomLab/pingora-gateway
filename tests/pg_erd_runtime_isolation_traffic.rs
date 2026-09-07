@@ -62,7 +62,11 @@ fn wait_until_listening(address: SocketAddr, process: &mut Child) {
     }
 }
 
-fn start_gateway(config: &NamedTempFile, gateway_address: SocketAddr, metrics_address: SocketAddr) -> GatewayProcess {
+fn start_gateway(
+    config: &NamedTempFile,
+    gateway_address: SocketAddr,
+    metrics_address: SocketAddr,
+) -> GatewayProcess {
     let mut child = Command::new(env!("CARGO_BIN_EXE_cwl-pingora-pg-erd-migration"))
         .args(["--config", config.path().to_str().expect("UTF-8 temp path")])
         .stdin(Stdio::null())

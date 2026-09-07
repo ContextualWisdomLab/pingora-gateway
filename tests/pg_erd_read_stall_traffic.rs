@@ -8,6 +8,7 @@
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::process::{Child, Command, Stdio};
+use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -118,17 +119,24 @@ fn read_request_headers(stream: &mut TcpStream) -> String {
 fn compiled_pg_erd_silent_backend_hits_read_timeout_and_preserves_independent_routing() {
     let backend = TcpListener::bind("127.0.0.1:0").expect("backend fixture should bind");
     let backend_address = backend.local_addr().expect("backend address should exist");
+    let (backend_connected_tx, backend_connected_rx) = mpsc::channel();
+    let (release_backend_tx, release_backend_rx) = mpsc::channel();
     let backend_origin = thread::spawn(move || {
         let (mut stream, _) = backend
             .accept()
             .expect("routed request should reach the characterized backend authority");
         let request = read_request_headers(&mut stream);
         assert!(request.starts_with("GET /api/read-stall HTTP/1.1\r\n"));
+        backend_connected_tx
+            .send(())
+            .expect("test should observe the connected silent backend");
 
-        // Stay silent for far longer than the configured 100 ms per-read timeout. The fixture does
-        // not send even a response header, so this characterizes an actual upstream read stall
-        // rather than a partial-response or slow-drip case.
-        thread::sleep(Duration::from_millis(750));
+        // Keep the accepted connection open and send no response bytes until the gateway has
+        // already produced its downstream failure. This prevents fixture closure from masquerading
+        // as the configured 100 ms per-read timeout.
+        release_backend_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("gateway should time out the silent backend before fixture release");
     });
 
     let frontend = TcpListener::bind("127.0.0.1:0").expect("frontend fixture should bind");
@@ -158,14 +166,21 @@ fn compiled_pg_erd_silent_backend_hits_read_timeout_and_preserves_independent_ro
 
     let started = Instant::now();
     let failed = get(gateway_address, "/api/read-stall");
+    let failure_elapsed = started.elapsed();
+    backend_connected_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("the failure case must have connected to the characterized backend");
     assert!(
         failed.starts_with("HTTP/1.1 502"),
         "a characterized upstream read timeout must fail as Bad Gateway: {failed:?}"
     );
     assert!(
-        started.elapsed() < Duration::from_secs(2),
-        "a silent upstream must be bounded by the configured per-read timeout"
+        failure_elapsed < Duration::from_secs(1),
+        "a silent connected upstream must fail inside a conservative one-second envelope around the configured 100 ms per-read timeout; elapsed={failure_elapsed:?}"
     );
+    release_backend_tx
+        .send(())
+        .expect("silent backend fixture should be released after timeout evidence is captured");
 
     let readiness = get(gateway_address, "/readyz");
     assert!(

@@ -28,10 +28,7 @@ fn pg_erd_cloud_security_headers_preserve_live_traefik_contract() {
     let policy = ResponseHeaderPolicy::try_new(pg_erd_cloud_security_headers())
         .expect("live pg-erd-cloud security header contract is valid");
 
-    assert_eq!(
-        policy.value_for("x-content-type-options"),
-        Some("nosniff")
-    );
+    assert_eq!(policy.value_for("x-content-type-options"), Some("nosniff"));
     assert_eq!(policy.value_for("X-Frame-Options"), Some("DENY"));
     assert_eq!(policy.value_for("referrer-policy"), Some("no-referrer"));
     assert_eq!(
