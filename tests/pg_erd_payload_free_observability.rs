@@ -35,7 +35,9 @@ impl GatewayProcess {
                 .try_wait()
                 .expect("gateway process state should be readable")
             {
-                panic!("gateway exited before expected log {needle:?}: {status}; stderr={captured:?}");
+                panic!(
+                    "gateway exited before expected log {needle:?}: {status}; stderr={captured:?}"
+                );
             }
             assert!(
                 Instant::now() < deadline,
@@ -50,7 +52,9 @@ impl GatewayProcess {
             .child
             .take()
             .expect("gateway child should still be owned");
-        child.kill().expect("gateway should be terminable after traffic");
+        child
+            .kill()
+            .expect("gateway should be terminable after traffic");
         child
             .wait()
             .expect("gateway should terminate after traffic capture");
@@ -101,7 +105,10 @@ fn wait_until_listening(address: SocketAddr, process: &mut Child) {
         if TcpStream::connect_timeout(&address, Duration::from_millis(100)).is_ok() {
             return;
         }
-        assert!(Instant::now() < deadline, "gateway did not start within 10s");
+        assert!(
+            Instant::now() < deadline,
+            "gateway did not start within 10s"
+        );
         thread::sleep(Duration::from_millis(25));
     }
 }
@@ -150,8 +157,13 @@ fn read_request_headers(stream: &mut TcpStream) -> String {
     let mut bytes = Vec::new();
     let mut buffer = [0_u8; 1024];
     loop {
-        let read = stream.read(&mut buffer).expect("origin request should be readable");
-        assert!(read > 0, "gateway closed origin request before headers completed");
+        let read = stream
+            .read(&mut buffer)
+            .expect("origin request should be readable");
+        assert!(
+            read > 0,
+            "gateway closed origin request before headers completed"
+        );
         bytes.extend_from_slice(&buffer[..read]);
         if bytes.windows(4).any(|window| window == b"\r\n\r\n") {
             return String::from_utf8_lossy(&bytes).into_owned();
@@ -169,9 +181,7 @@ fn compiled_pg_erd_shared_access_log_excludes_request_sensitive_material() {
             .expect("routed request should reach the characterized backend authority");
         let request = read_request_headers(&mut stream);
         let lower = request.to_ascii_lowercase();
-        assert!(lower.starts_with(
-            "get /api/log-contract?customer=query-secret http/1.1\r\n"
-        ));
+        assert!(lower.starts_with("get /api/log-contract?customer=query-secret http/1.1\r\n"));
         assert!(lower.contains("host: tenant-secret.example:8080\r\n"));
         assert!(lower.contains("authorization: bearer authorization-secret\r\n"));
         assert!(lower.contains("cookie: session=cookie-secret\r\n"));
@@ -182,7 +192,9 @@ fn compiled_pg_erd_shared_access_log_excludes_request_sensitive_material() {
     });
 
     let frontend = TcpListener::bind("127.0.0.1:0").expect("frontend fixture should bind");
-    let frontend_address = frontend.local_addr().expect("frontend address should exist");
+    let frontend_address = frontend
+        .local_addr()
+        .expect("frontend address should exist");
 
     let gateway_address = reserve_loopback();
     let metrics_address = reserve_loopback();
@@ -214,9 +226,8 @@ fn compiled_pg_erd_shared_access_log_excludes_request_sensitive_material() {
         metrics.contains("cwl_pingora_gateway_requests_total 1"),
         "metrics scrape should prove the proxied request reached shared completion recording: {metrics:?}"
     );
-    process.wait_until_stderr_contains(
-        "gateway_request status=200 outcome=ok request_body_bytes=0",
-    );
+    process
+        .wait_until_stderr_contains("gateway_request status=200 outcome=ok request_body_bytes=0");
 
     let stderr = process.capture_stderr();
     let request_logs: Vec<_> = stderr
