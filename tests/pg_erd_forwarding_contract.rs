@@ -46,7 +46,10 @@ fn pg_erd_forwarding_rebuilds_transport_identity_instead_of_trusting_request_hea
         request.headers["x-forwarded-host"].to_str().unwrap(),
         "app.example:8443"
     );
-    assert_eq!(request.headers["x-forwarded-port"].to_str().unwrap(), "8443");
+    assert_eq!(
+        request.headers["x-forwarded-port"].to_str().unwrap(),
+        "8443"
+    );
     assert_eq!(
         request.headers["x-forwarded-proto"].to_str().unwrap(),
         "https"
