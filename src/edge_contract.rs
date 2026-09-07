@@ -236,31 +236,33 @@ impl GatewayConfig {
 
 /// Returns true when two listener declarations can claim the same effective socket authority.
 ///
-/// Equal concrete addresses and same-family wildcard aliases overlap. An IPv6 wildcard may also
-/// consume the IPv4 port on dual-stack platforms when `IPV6_V6ONLY` is disabled. IPv4-mapped IPv6
-/// addresses alias their mapped IPv4 authority directly; when either mapped or native IPv4 side is
-/// unspecified it carries the same wildcard risk for the mapped IPv4 namespace. These cases are
-/// rejected before listener activation while distinct concrete non-aliased addresses remain independent.
+/// IPv4-mapped IPv6 addresses are first reduced to their mapped IPv4 authority so wildcard and
+/// equality rules cannot diverge merely because two declarations use different address families.
+/// An unmapped IPv6 wildcard may also consume the IPv4 port on dual-stack platforms when
+/// `IPV6_V6ONLY` is disabled. These cases are rejected before listener activation while distinct
+/// concrete non-aliased addresses remain independent.
 pub(crate) fn socket_authorities_overlap(left: SocketAddr, right: SocketAddr) -> bool {
     if left.port() != right.port() {
         return false;
     }
 
+    let mapped_ipv4 = |ip: IpAddr| match ip {
+        IpAddr::V4(ipv4) => Some(ipv4),
+        IpAddr::V6(ipv6) => ipv6.to_ipv4_mapped(),
+    };
+
+    if let (Some(left), Some(right)) = (mapped_ipv4(left.ip()), mapped_ipv4(right.ip())) {
+        return left == right || left.is_unspecified() || right.is_unspecified();
+    }
+
     match (left.ip(), right.ip()) {
-        (IpAddr::V4(left), IpAddr::V4(right)) => {
-            left == right || left.is_unspecified() || right.is_unspecified()
-        }
         (IpAddr::V6(left), IpAddr::V6(right)) => {
             left == right || left.is_unspecified() || right.is_unspecified()
         }
-        (IpAddr::V6(ipv6), IpAddr::V4(ipv4)) | (IpAddr::V4(ipv4), IpAddr::V6(ipv6)) => {
-            if ipv6.is_unspecified() {
-                return true;
-            }
-            ipv6.to_ipv4_mapped().is_some_and(|mapped| {
-                mapped == ipv4 || mapped.is_unspecified() || ipv4.is_unspecified()
-            })
+        (IpAddr::V6(ipv6), IpAddr::V4(_)) | (IpAddr::V4(_), IpAddr::V6(ipv6)) => {
+            ipv6.is_unspecified()
         }
+        (IpAddr::V4(_), IpAddr::V4(_)) => unreachable!("IPv4 authorities are handled above"),
     }
 }
 
