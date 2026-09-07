@@ -63,6 +63,34 @@ fn wait_until_listening(address: SocketAddr, process: &mut Child) {
     }
 }
 
+fn terminate_gateway(process: &mut Child) {
+    #[cfg(unix)]
+    {
+        let signal_status = Command::new("kill")
+            .args(["-TERM", &process.id().to_string()])
+            .status()
+            .expect("system kill command should send SIGTERM");
+        assert!(signal_status.success(), "SIGTERM delivery should succeed");
+        let exit_status = process
+            .wait()
+            .expect("gracefully terminated gateway should be reapable");
+        assert!(
+            exit_status.success(),
+            "SIGTERM graceful shutdown should exit successfully: {exit_status}"
+        );
+    }
+
+    #[cfg(not(unix))]
+    {
+        process
+            .kill()
+            .expect("gateway process should still be running");
+        process
+            .wait()
+            .expect("terminated gateway process should be reapable");
+    }
+}
+
 fn raw_request(address: SocketAddr, request: &[u8]) -> String {
     let mut downstream = TcpStream::connect(address).expect("gateway should accept traffic");
     downstream
@@ -199,7 +227,7 @@ fn compiled_pg_erd_listener_preserves_health_route_header_and_forwarding_boundar
         .expect("compiled pg-erd migration binary should start");
     wait_until_listening(gateway_address, &mut child);
     wait_until_listening(metrics_address, &mut child);
-    let _process = GatewayProcess(child);
+    let mut process = GatewayProcess(child);
 
     for health_path in ["/livez", "/readyz"] {
         let response = get(gateway_address, health_path);
@@ -237,6 +265,8 @@ fn compiled_pg_erd_listener_preserves_health_route_header_and_forwarding_boundar
         oversize.starts_with("HTTP/1.1 413"),
         "declared body limit must fail before origin delivery: {oversize:?}"
     );
+
+    terminate_gateway(&mut process.0);
 
     backend_thread
         .join()
