@@ -86,6 +86,45 @@ fn pg_erd_admin_config_rejects_listener_collision_and_zero_capacity_budgets() {
         Err(PgErdMigrationConfigError::ListenerCollision)
     );
 
+    for (listener, metrics_listener) in [
+        ("0.0.0.0:8080", "127.0.0.1:8080"),
+        ("127.0.0.1:8080", "0.0.0.0:8080"),
+        ("[::]:8080", "[::1]:8080"),
+        ("[::1]:8080", "[::]:8080"),
+    ] {
+        let overlapping = valid_yaml()
+            .replace(
+                "listener: 127.0.0.1:8080",
+                &format!("listener: \"{listener}\""),
+            )
+            .replace(
+                "metrics_listener: 127.0.0.1:9090",
+                &format!("metrics_listener: \"{metrics_listener}\""),
+            );
+        assert_eq!(
+            PgErdMigrationConfig::from_yaml(&overlapping),
+            Err(PgErdMigrationConfigError::ListenerCollision),
+            "same-family wildcard authority must collide with {listener} / {metrics_listener}"
+        );
+    }
+
+    for (listener, metrics_listener) in [
+        ("127.0.0.1:8080", "127.0.0.2:8080"),
+        ("127.0.0.1:8080", "[::1]:8080"),
+    ] {
+        let independent = valid_yaml()
+            .replace(
+                "listener: 127.0.0.1:8080",
+                &format!("listener: \"{listener}\""),
+            )
+            .replace(
+                "metrics_listener: 127.0.0.1:9090",
+                &format!("metrics_listener: \"{metrics_listener}\""),
+            );
+        PgErdMigrationConfig::from_yaml(&independent)
+            .expect("distinct concrete or different-family listeners must remain independent");
+    }
+
     let zero_keepalive = valid_yaml().replace(
         "upstream_keepalive_pool_size: 64",
         "upstream_keepalive_pool_size: 0",
