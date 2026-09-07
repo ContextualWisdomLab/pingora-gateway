@@ -234,8 +234,10 @@ fn compiled_pg_erd_in_flight_saturation_rejects_recovers_and_preserves_control_p
 
     let metrics = get(metrics_address, "/metrics");
     assert!(
-        metrics.contains("cwl_pingora_gateway_backpressure_rejections_total 1"),
-        "saturation must be visible through low-cardinality gateway telemetry: {metrics:?}"
+        metrics
+            .lines()
+            .any(|line| line == "cwl_pingora_gateway_backpressure_rejections_total 1"),
+        "saturation must expose exactly one rejected request in low-cardinality gateway telemetry: {metrics:?}"
     );
 
     release_response_tx
