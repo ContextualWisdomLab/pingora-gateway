@@ -56,7 +56,10 @@ fn wait_until_listening(address: SocketAddr, process: &mut Child) {
         if TcpStream::connect_timeout(&address, Duration::from_millis(100)).is_ok() {
             return;
         }
-        assert!(Instant::now() < deadline, "gateway did not start within 10s");
+        assert!(
+            Instant::now() < deadline,
+            "gateway did not start within 10s"
+        );
         thread::sleep(Duration::from_millis(25));
     }
 }
@@ -105,8 +108,13 @@ fn read_request_headers(stream: &mut TcpStream) -> String {
     let mut bytes = Vec::new();
     let mut buffer = [0_u8; 1024];
     loop {
-        let read = stream.read(&mut buffer).expect("origin request should be readable");
-        assert!(read > 0, "gateway closed origin request before headers completed");
+        let read = stream
+            .read(&mut buffer)
+            .expect("origin request should be readable");
+        assert!(
+            read > 0,
+            "gateway closed origin request before headers completed"
+        );
         bytes.extend_from_slice(&buffer[..read]);
         if bytes.windows(4).any(|window| window == b"\r\n\r\n") {
             return String::from_utf8_lossy(&bytes).into_owned();
@@ -124,7 +132,9 @@ fn compiled_pg_erd_refused_backend_fails_bounded_and_preserves_independent_routi
     drop(unavailable_backend);
 
     let frontend = TcpListener::bind("127.0.0.1:0").expect("frontend fixture should bind");
-    let frontend_address = frontend.local_addr().expect("frontend address should exist");
+    let frontend_address = frontend
+        .local_addr()
+        .expect("frontend address should exist");
     let frontend_origin = thread::spawn(move || {
         let (mut stream, _) = frontend
             .accept()
