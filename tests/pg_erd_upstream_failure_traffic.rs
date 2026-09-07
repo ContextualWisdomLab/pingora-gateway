@@ -178,8 +178,10 @@ fn compiled_pg_erd_refused_backend_fails_bounded_and_preserves_independent_routi
 
     let metrics = get(metrics_address, "/metrics");
     assert!(
-        metrics.contains("cwl_pingora_gateway_request_errors_total 1"),
-        "the refused upstream must remain visible through low-cardinality error telemetry: {metrics:?}"
+        metrics
+            .lines()
+            .any(|line| line == "cwl_pingora_gateway_request_errors_total 1"),
+        "the refused upstream must expose exactly one request error through low-cardinality telemetry: {metrics:?}"
     );
 
     let recovered = get(gateway_address, "/after-backend-failure");
