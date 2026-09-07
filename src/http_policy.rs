@@ -88,11 +88,7 @@ impl ResponseHeaderPolicy {
                     header_name: header.name.clone(),
                 });
             }
-            if header
-                .value
-                .bytes()
-                .any(is_prohibited_header_value_byte)
-            {
+            if header.value.bytes().any(is_prohibited_header_value_byte) {
                 return Err(HeaderPolicyError::InvalidHeaderValue {
                     header_name: header.name.clone(),
                 });
