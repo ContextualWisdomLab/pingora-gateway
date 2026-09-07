@@ -55,7 +55,10 @@ fn wait_until_listening(address: SocketAddr, process: &mut Child) {
         if TcpStream::connect_timeout(&address, Duration::from_millis(100)).is_ok() {
             return;
         }
-        assert!(Instant::now() < deadline, "gateway did not start within 10s");
+        assert!(
+            Instant::now() < deadline,
+            "gateway did not start within 10s"
+        );
         thread::sleep(Duration::from_millis(25));
     }
 }
@@ -87,8 +90,13 @@ fn read_request(stream: &mut TcpStream) -> String {
     let mut bytes = Vec::new();
     let mut buffer = [0_u8; 1024];
     loop {
-        let read = stream.read(&mut buffer).expect("origin request should be readable");
-        assert!(read > 0, "gateway closed origin request before headers completed");
+        let read = stream
+            .read(&mut buffer)
+            .expect("origin request should be readable");
+        assert!(
+            read > 0,
+            "gateway closed origin request before headers completed"
+        );
         bytes.extend_from_slice(&buffer[..read]);
         if bytes.windows(4).any(|window| window == b"\r\n\r\n") {
             return String::from_utf8(bytes).expect("fixture request headers should be UTF-8");
@@ -96,7 +104,12 @@ fn read_request(stream: &mut TcpStream) -> String {
     }
 }
 
-fn serve_origin(listener: TcpListener, expected_paths: &'static [&'static str], body: &'static str) {
+fn serve_origin(
+    listener: TcpListener,
+    expected_paths: &'static [&'static str],
+    expected_forwarded_port: u16,
+    body: &'static str,
+) {
     for expected_path in expected_paths {
         let (mut stream, _) = listener.accept().expect("gateway should reach origin");
         let request = read_request(&mut stream);
@@ -110,6 +123,10 @@ fn serve_origin(listener: TcpListener, expected_paths: &'static [&'static str], 
         assert!(lowered.contains("x-real-ip: 127.0.0.1\r\n"));
         assert!(lowered.contains("x-forwarded-host: app.example:8080\r\n"));
         assert!(lowered.contains("x-forwarded-proto: http\r\n"));
+        assert!(lowered.contains(&format!(
+            "x-forwarded-port: {expected_forwarded_port}\r\n"
+        )));
+        assert!(!lowered.contains("x-forwarded-port: 443\r\n"));
         assert!(!lowered.contains("x-forwarded-server:"));
         assert!(!lowered.contains("attacker.example"));
         write!(
@@ -130,7 +147,10 @@ fn assert_characterized_response_headers(response: &str) {
         "referrer-policy: no-referrer\r\n",
         "permissions-policy: geolocation=(), microphone=(), camera=()\r\n",
     ] {
-        assert!(lowered.contains(expected), "missing characterized field {expected:?}: {response:?}");
+        assert!(
+            lowered.contains(expected),
+            "missing characterized field {expected:?}: {response:?}"
+        );
     }
     assert!(!lowered.contains("x-frame-options: sameorigin"));
 }
@@ -140,14 +160,36 @@ fn compiled_pg_erd_listener_preserves_health_route_header_and_forwarding_boundar
     let backend = TcpListener::bind("127.0.0.1:0").expect("backend fixture should bind");
     let backend_address = backend.local_addr().expect("backend address should exist");
     let frontend = TcpListener::bind("127.0.0.1:0").expect("frontend fixture should bind");
-    let frontend_address = frontend.local_addr().expect("frontend address should exist");
+    let frontend_address = frontend
+        .local_addr()
+        .expect("frontend address should exist");
     let gateway_address = reserve_loopback();
     let metrics_address = reserve_loopback();
     assert_ne!(gateway_address, metrics_address);
 
-    let backend_thread = thread::spawn(move || serve_origin(backend, &["/healthz", "/apiary"], "backend"));
-    let frontend_thread = thread::spawn(move || serve_origin(frontend, &["/projects/42"], "frontend"));
-    let config = write_config(gateway_address, metrics_address, backend_address, frontend_address);
+    let expected_forwarded_port = gateway_address.port();
+    let backend_thread = thread::spawn(move || {
+        serve_origin(
+            backend,
+            &["/healthz", "/apiary"],
+            expected_forwarded_port,
+            "backend",
+        )
+    });
+    let frontend_thread = thread::spawn(move || {
+        serve_origin(
+            frontend,
+            &["/projects/42"],
+            expected_forwarded_port,
+            "frontend",
+        )
+    });
+    let config = write_config(
+        gateway_address,
+        metrics_address,
+        backend_address,
+        frontend_address,
+    );
 
     let mut child = Command::new(env!("CARGO_BIN_EXE_cwl-pingora-pg-erd-migration"))
         .args(["--config", config.path().to_str().expect("UTF-8 temp path")])
@@ -167,7 +209,9 @@ fn compiled_pg_erd_listener_preserves_health_route_header_and_forwarding_boundar
             response.starts_with("HTTP/1.1 200"),
             "process health endpoint {health_path} must not fall through to a product origin: {response:?}"
         );
-        assert!(response.to_ascii_lowercase().contains("cache-control: no-store\r\n"));
+        assert!(response
+            .to_ascii_lowercase()
+            .contains("cache-control: no-store\r\n"));
     }
 
     for (path, expected_body) in [
@@ -176,10 +220,13 @@ fn compiled_pg_erd_listener_preserves_health_route_header_and_forwarding_boundar
         ("/projects/42", "frontend"),
     ] {
         let hostile = format!(
-            "GET {path} HTTP/1.1\r\nHost: app.example:8080\r\nForwarded: for=203.0.113.7;proto=https\r\nX-Forwarded-For: 203.0.113.7\r\nX-Forwarded-Host: attacker.example\r\nX-Forwarded-Proto: https\r\nX-Forwarded-Server: attacker-proxy\r\nX-Real-IP: 203.0.113.7\r\nConnection: close\r\n\r\n"
+            "GET {path} HTTP/1.1\r\nHost: app.example:8080\r\nForwarded: for=203.0.113.7;proto=https\r\nX-Forwarded-For: 203.0.113.7\r\nX-Forwarded-Host: attacker.example\r\nX-Forwarded-Port: 443\r\nX-Forwarded-Proto: https\r\nX-Forwarded-Server: attacker-proxy\r\nX-Real-IP: 203.0.113.7\r\nConnection: close\r\n\r\n"
         );
         let response = raw_request(gateway_address, hostile.as_bytes());
-        assert!(response.starts_with("HTTP/1.1 200"), "routed request failed: {response:?}");
+        assert!(
+            response.starts_with("HTTP/1.1 200"),
+            "routed request failed: {response:?}"
+        );
         assert!(response.ends_with(expected_body));
         assert_characterized_response_headers(&response);
     }
@@ -193,6 +240,10 @@ fn compiled_pg_erd_listener_preserves_health_route_header_and_forwarding_boundar
         "declared body limit must fail before origin delivery: {oversize:?}"
     );
 
-    backend_thread.join().expect("backend fixture should complete");
-    frontend_thread.join().expect("frontend fixture should complete");
+    backend_thread
+        .join()
+        .expect("backend fixture should complete");
+    frontend_thread
+        .join()
+        .expect("frontend fixture should complete");
 }
