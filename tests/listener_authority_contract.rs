@@ -39,6 +39,8 @@ fn generic_gateway_rejects_overlapping_listener_authority() {
         ("0.0.0.0:6188", "[::ffff:127.0.0.1]:6188"),
         ("[::ffff:0.0.0.0]:6188", "127.0.0.1:6188"),
         ("127.0.0.1:6188", "[::ffff:0.0.0.0]:6188"),
+        ("[::ffff:0.0.0.0]:6188", "[::ffff:127.0.0.1]:6188"),
+        ("[::ffff:127.0.0.1]:6188", "[::ffff:0.0.0.0]:6188"),
     ] {
         assert_eq!(
             GatewayConfig::from_yaml(&generic_gateway_yaml(listener, metrics_listener)),
