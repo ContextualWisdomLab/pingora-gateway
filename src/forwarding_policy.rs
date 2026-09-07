@@ -97,12 +97,7 @@ impl ForwardingContext {
                 )
             })?;
 
-        Ok(Self::new(
-            client_ip,
-            original_host,
-            downstream_port,
-            scheme,
-        ))
+        Ok(Self::new(client_ip, original_host, downstream_port, scheme))
     }
 
     /// Removes request-controlled proxy identity and emits transport-derived compatibility fields.
