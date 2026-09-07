@@ -22,9 +22,9 @@ fn pg_erd_runtime_script() -> String {
         .and_then(|job| job.get("steps"))
         .and_then(Value::as_sequence)
         .and_then(|steps| {
-            steps.iter().find(|step| {
-                step.get("name").and_then(Value::as_str) == Some(PG_ERD_RUNTIME_STEP)
-            })
+            steps
+                .iter()
+                .find(|step| step.get("name").and_then(Value::as_str) == Some(PG_ERD_RUNTIME_STEP))
         })
         .and_then(|step| step.get("run"))
         .and_then(Value::as_str)

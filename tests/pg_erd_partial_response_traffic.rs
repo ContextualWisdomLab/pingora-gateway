@@ -74,7 +74,10 @@ fn wait_until_listening(address: SocketAddr, process: &mut Child) {
         if TcpStream::connect_timeout(&address, Duration::from_millis(100)).is_ok() {
             return;
         }
-        assert!(Instant::now() < deadline, "gateway did not start within 10s");
+        assert!(
+            Instant::now() < deadline,
+            "gateway did not start within 10s"
+        );
         thread::sleep(Duration::from_millis(25));
     }
 }
@@ -167,7 +170,9 @@ fn raw_request_until_terminal_after_body_prefix(
                 );
                 return (response, DownstreamTermination::ConnectionReset);
             }
-            Err(error) => panic!("partial downstream response should terminate, not stall: {error}"),
+            Err(error) => {
+                panic!("partial downstream response should terminate, not stall: {error}")
+            }
         }
     }
 }
@@ -184,8 +189,13 @@ fn read_request_headers(stream: &mut TcpStream) -> String {
     let mut bytes = Vec::new();
     let mut buffer = [0_u8; 1024];
     loop {
-        let read = stream.read(&mut buffer).expect("origin request should be readable");
-        assert!(read > 0, "gateway closed origin request before headers completed");
+        let read = stream
+            .read(&mut buffer)
+            .expect("origin request should be readable");
+        assert!(
+            read > 0,
+            "gateway closed origin request before headers completed"
+        );
         bytes.extend_from_slice(&buffer[..read]);
         if bytes.windows(4).any(|window| window == b"\r\n\r\n") {
             return String::from_utf8_lossy(&bytes).into_owned();
@@ -209,9 +219,7 @@ fn compiled_pg_erd_truncated_response_stays_committed_and_preserves_independent_
         // Otherwise an immediate FIN can race proxy forwarding and accidentally exercise a
         // pre-commit failure phase while still producing the same buffered bytes.
         stream
-            .write_all(
-                b"HTTP/1.1 200 OK\r\nContent-Length: 20\r\nConnection: close\r\n\r\npartial",
-            )
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 20\r\nConnection: close\r\n\r\npartial")
             .expect("partial backend response should be writable");
         release_backend_rx
             .recv_timeout(Duration::from_secs(5))
@@ -219,7 +227,9 @@ fn compiled_pg_erd_truncated_response_stays_committed_and_preserves_independent_
     });
 
     let frontend = TcpListener::bind("127.0.0.1:0").expect("frontend fixture should bind");
-    let frontend_address = frontend.local_addr().expect("frontend address should exist");
+    let frontend_address = frontend
+        .local_addr()
+        .expect("frontend address should exist");
     let frontend_origin = thread::spawn(move || {
         let (mut stream, _) = frontend
             .accept()
