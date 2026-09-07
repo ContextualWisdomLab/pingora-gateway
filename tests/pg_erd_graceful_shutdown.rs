@@ -99,8 +99,13 @@ fn read_request_headers(stream: &mut TcpStream) -> String {
     let mut bytes = Vec::new();
     let mut buffer = [0_u8; 1024];
     loop {
-        let read = stream.read(&mut buffer).expect("origin request should be readable");
-        assert!(read > 0, "gateway closed origin request before headers completed");
+        let read = stream
+            .read(&mut buffer)
+            .expect("origin request should be readable");
+        assert!(
+            read > 0,
+            "gateway closed origin request before headers completed"
+        );
         bytes.extend_from_slice(&buffer[..read]);
         if bytes.windows(4).any(|window| window == b"\r\n\r\n") {
             return String::from_utf8_lossy(&bytes).into_owned();
@@ -181,8 +186,7 @@ fn sigterm_drains_routed_pg_erd_request_before_process_exit() {
         .expect("routed request should reach backend before SIGTERM");
 
     let signal_sent_at = Instant::now();
-    let termination_deadline =
-        signal_sent_at + Duration::from_secs(V1_TERMINATION_BUDGET_SECONDS);
+    let termination_deadline = signal_sent_at + Duration::from_secs(V1_TERMINATION_BUDGET_SECONDS);
     let signal_status = Command::new("kill")
         .args(["-TERM", &process.0.id().to_string()])
         .status()
