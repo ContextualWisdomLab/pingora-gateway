@@ -26,7 +26,7 @@ All notable changes are tracked here. No release has been published yet.
 - Added request-body limits and a distrust-by-default forwarded-header policy.
 - Added low-cardinality metrics plus credential/cookie-safe access logging through the production path.
 - Overrode Pingora framework retry/drain defaults with one total upstream attempt, a 5-second SIGTERM grace period, and a 30-second graceful-shutdown timeout.
-- Added non-root/read-only-root OCI packaging and executable least-privilege runtime verification.
+- Added non-root/read-only-root OCI packaging with an explicit build-time allowlist for the generic and bounded pg-erd process identities. Exact-head OCI acceptance now builds and starts each image under uid/gid 65532, dropped capabilities and `no-new-privileges`; the supply-chain lane builds and vulnerability-scans both candidate images. This is unreleased source-defined acceptance until the current head reaches terminal hosted GREEN.
 - Added a committed dependency lock, fail-closed license/source/advisory policy, exact-source SBOM and image-vulnerability evidence.
 - Added an exact-head owned-production coverage gate that requires 100% lines and regions without filename/function/branch exclusions; repaired compiler-generated generic startup coverage and structurally impossible literal-header error regions rather than weakening the gate.
 - Added missing-public-rustdoc enforcement and documentation builds with warnings denied.
