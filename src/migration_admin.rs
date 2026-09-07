@@ -128,7 +128,10 @@ impl PgErdMigrationConfig {
     /// The route table and response-header policy are compiled into this bounded migration profile;
     /// configuration can bind only the concrete `backend` and `frontend` transport authorities.
     /// Any custom TLS trust bundle is read by Pingora delivery during this single materialization.
+    /// The public build boundary revalidates deterministic invariants so direct `Deserialize`
+    /// construction cannot bypass the same fail-closed runtime and network-authority contract.
     pub fn build_proxy(&self) -> Result<MigrationGatewayProxy, PgErdMigrationConfigError> {
+        self.validate()?;
         let delivery = self.build_delivery()?;
         let limits = RuntimeIsolationLimits::from_validated(
             self.max_request_body_bytes,
