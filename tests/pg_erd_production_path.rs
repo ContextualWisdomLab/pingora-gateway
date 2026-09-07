@@ -107,6 +107,7 @@ fn read_request(stream: &mut TcpStream) -> String {
 fn serve_origin(
     listener: TcpListener,
     expected_paths: &'static [&'static str],
+    expected_forwarded_port: u16,
     body: &'static str,
 ) {
     for expected_path in expected_paths {
@@ -122,6 +123,10 @@ fn serve_origin(
         assert!(lowered.contains("x-real-ip: 127.0.0.1\r\n"));
         assert!(lowered.contains("x-forwarded-host: app.example:8080\r\n"));
         assert!(lowered.contains("x-forwarded-proto: http\r\n"));
+        assert!(lowered.contains(&format!(
+            "x-forwarded-port: {expected_forwarded_port}\r\n"
+        )));
+        assert!(!lowered.contains("x-forwarded-port: 443\r\n"));
         assert!(!lowered.contains("x-forwarded-server:"));
         assert!(!lowered.contains("attacker.example"));
         write!(
@@ -162,10 +167,23 @@ fn compiled_pg_erd_listener_preserves_health_route_header_and_forwarding_boundar
     let metrics_address = reserve_loopback();
     assert_ne!(gateway_address, metrics_address);
 
-    let backend_thread =
-        thread::spawn(move || serve_origin(backend, &["/healthz", "/apiary"], "backend"));
-    let frontend_thread =
-        thread::spawn(move || serve_origin(frontend, &["/projects/42"], "frontend"));
+    let expected_forwarded_port = gateway_address.port();
+    let backend_thread = thread::spawn(move || {
+        serve_origin(
+            backend,
+            &["/healthz", "/apiary"],
+            expected_forwarded_port,
+            "backend",
+        )
+    });
+    let frontend_thread = thread::spawn(move || {
+        serve_origin(
+            frontend,
+            &["/projects/42"],
+            expected_forwarded_port,
+            "frontend",
+        )
+    });
     let config = write_config(
         gateway_address,
         metrics_address,
@@ -202,7 +220,7 @@ fn compiled_pg_erd_listener_preserves_health_route_header_and_forwarding_boundar
         ("/projects/42", "frontend"),
     ] {
         let hostile = format!(
-            "GET {path} HTTP/1.1\r\nHost: app.example:8080\r\nForwarded: for=203.0.113.7;proto=https\r\nX-Forwarded-For: 203.0.113.7\r\nX-Forwarded-Host: attacker.example\r\nX-Forwarded-Proto: https\r\nX-Forwarded-Server: attacker-proxy\r\nX-Real-IP: 203.0.113.7\r\nConnection: close\r\n\r\n"
+            "GET {path} HTTP/1.1\r\nHost: app.example:8080\r\nForwarded: for=203.0.113.7;proto=https\r\nX-Forwarded-For: 203.0.113.7\r\nX-Forwarded-Host: attacker.example\r\nX-Forwarded-Port: 443\r\nX-Forwarded-Proto: https\r\nX-Forwarded-Server: attacker-proxy\r\nX-Real-IP: 203.0.113.7\r\nConnection: close\r\n\r\n"
         );
         let response = raw_request(gateway_address, hostile.as_bytes());
         assert!(
