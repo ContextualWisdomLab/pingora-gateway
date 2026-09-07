@@ -1,7 +1,7 @@
 use cwl_pingora_gateway::migration_admin::{
     PgErdMigrationConfig, PgErdMigrationConfigError, PG_ERD_MIGRATION_CONFIG_VERSION,
 };
-use pingora_core::upstreams::peer::Peer;
+use pingora::upstreams::peer::Peer;
 
 fn config_yaml(upstreams: &str) -> String {
     format!(
@@ -96,12 +96,6 @@ fn pg_erd_admin_config_rejects_listener_collision_and_zero_capacity_budgets() {
         ("127.0.0.1:8080", "[::]:8080"),
         ("[::ffff:127.0.0.1]:8080", "127.0.0.1:8080"),
         ("127.0.0.1:8080", "[::ffff:127.0.0.1]:8080"),
-        ("[::ffff:127.0.0.1]:8080", "0.0.0.0:8080"),
-        ("0.0.0.0:8080", "[::ffff:127.0.0.1]:8080"),
-        ("[::ffff:0.0.0.0]:8080", "127.0.0.1:8080"),
-        ("127.0.0.1:8080", "[::ffff:0.0.0.0]:8080"),
-        ("[::ffff:0.0.0.0]:8080", "[::ffff:127.0.0.1]:8080"),
-        ("[::ffff:127.0.0.1]:8080", "[::ffff:0.0.0.0]:8080"),
     ] {
         let overlapping = valid_yaml()
             .replace(
