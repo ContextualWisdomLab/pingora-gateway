@@ -253,10 +253,9 @@ pub(crate) fn socket_authorities_overlap(left: SocketAddr, right: SocketAddr) ->
 
     let canonical = |ip: IpAddr| match ip {
         IpAddr::V4(ipv4) => CanonicalIpAuthority::V4(ipv4),
-        IpAddr::V6(ipv6) => ipv6.to_ipv4_mapped().map_or(
-            CanonicalIpAuthority::V6(ipv6),
-            CanonicalIpAuthority::V4,
-        ),
+        IpAddr::V6(ipv6) => ipv6
+            .to_ipv4_mapped()
+            .map_or(CanonicalIpAuthority::V6(ipv6), CanonicalIpAuthority::V4),
     };
 
     match (canonical(left.ip()), canonical(right.ip())) {
