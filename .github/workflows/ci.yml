@@ -154,13 +154,15 @@ jobs:
           curl --fail --silent --show-error --max-time 1 http://127.0.0.1:18080/livez >/dev/null
 
           GATEWAY_URL=http://127.0.0.1:18080 k6 run --quiet tests/load/gateway_smoke.js
+      - name: Require loopback latency summary
+        run: test -s k6-summary.json
       - name: Upload loopback latency evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: k6-loopback-${{ env.EXPECTED_SHA }}
           path: k6-summary.json
-          if-no-files-found: error
+          if-no-files-found: ignore
           retention-days: 7
 
   oci-runtime:
@@ -173,12 +175,21 @@ jobs:
           persist-credentials: false
       - name: Verify checkout identity
         run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
-      - name: Build candidate image
-        run: docker build --tag "cwl-pingora-gateway:${EXPECTED_SHA}" .
-      - name: Verify declared non-root identity
+      - name: Build admitted candidate images
         run: |
-          test "$(docker image inspect "cwl-pingora-gateway:${EXPECTED_SHA}" --format '{{.Config.User}}')" = "65532:65532"
-      - name: Exercise read-only least-privilege runtime
+          docker build --tag "cwl-pingora-gateway:${EXPECTED_SHA}" .
+          docker build \
+            --build-arg CWL_GATEWAY_BIN=cwl-pingora-pg-erd-migration \
+            --tag "cwl-pingora-pg-erd-migration:${EXPECTED_SHA}" \
+            .
+      - name: Verify declared non-root identities
+        run: |
+          for image in \
+            "cwl-pingora-gateway:${EXPECTED_SHA}" \
+            "cwl-pingora-pg-erd-migration:${EXPECTED_SHA}"; do
+            test "$(docker image inspect "${image}" --format '{{.Config.User}}')" = "65532:65532"
+          done
+      - name: Exercise generic read-only least-privilege runtime
         shell: bash
         run: |
           set -euo pipefail
@@ -207,26 +218,25 @@ jobs:
               exit 0
             fi
             if ! docker inspect "${cid}" --format '{{.State.Running}}' | grep -qx true; then
-              echo "gateway container exited before becoming live" >&2
+              echo "generic gateway container exited before becoming live" >&2
               exit 1
             fi
             sleep 0.25
           done
-          echo "gateway container did not become live under read-only least-privilege runtime" >&2
+          echo "generic gateway container did not become live under read-only least-privilege runtime" >&2
           exit 1
-      - name: Exercise pg-erd migration read-only least-privilege runtime
+      - name: Exercise pg-erd read-only least-privilege runtime
         shell: bash
         run: |
           set -euo pipefail
-          image="cwl-pingora-gateway:${EXPECTED_SHA}"
+          image="cwl-pingora-pg-erd-migration:${EXPECTED_SHA}"
           cid="$(docker run --detach \
             --read-only \
             --user 65532:65532 \
             --cap-drop ALL \
             --security-opt no-new-privileges:true \
-            --entrypoint /usr/local/bin/cwl-pingora-pg-erd-migration \
-            --publish 127.0.0.1:6288:6288 \
-            --publish 127.0.0.1:6289:6289 \
+            --publish 127.0.0.1:6288:6188 \
+            --publish 127.0.0.1:6289:6189 \
             --mount "type=bind,src=${PWD}/examples/pg-erd-migration.yaml,dst=/etc/cwl/pg-erd-migration.yaml,readonly" \
             "${image}" \
             --config /etc/cwl/pg-erd-migration.yaml)"
@@ -241,15 +251,9 @@ jobs:
           docker inspect "${cid}" --format '{{json .HostConfig.SecurityOpt}}' | grep -Fq 'no-new-privileges'
 
           for _ in $(seq 1 80); do
-            live_ok=false
-            metrics_ok=false
-            if curl --fail --silent --show-error --max-time 1 http://127.0.0.1:6288/livez >/dev/null; then
-              live_ok=true
-            fi
-            if curl --fail --silent --show-error --max-time 1 http://127.0.0.1:6289/metrics >/dev/null; then
-              metrics_ok=true
-            fi
-            if [ "${live_ok}" = true ] && [ "${metrics_ok}" = true ]; then
+            if curl --fail --silent --show-error --max-time 1 http://127.0.0.1:6288/livez >/dev/null \
+              && metrics_content_type="$(curl --fail --silent --show-error --max-time 1 --output /dev/null --write-out '%{content_type}' http://127.0.0.1:6289/metrics)" \
+              && [[ "${metrics_content_type}" == text/plain* ]]; then
               exit 0
             fi
             if ! docker inspect "${cid}" --format '{{.State.Running}}' | grep -qx true; then
@@ -258,5 +262,5 @@ jobs:
             fi
             sleep 0.25
           done
-          echo "pg-erd migration container did not become live under read-only least-privilege runtime" >&2
+          echo "pg-erd migration container did not expose live and Prometheus metrics listeners under read-only least-privilege runtime" >&2
           exit 1
