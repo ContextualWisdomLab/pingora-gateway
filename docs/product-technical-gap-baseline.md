@@ -45,7 +45,7 @@ Merged #64 replaced Python `ThreadingHTTPServer` inside the measured k6 round tr
 
 The readiness probe remains direct to `127.0.0.1:18081/fixture-ready` and does not traverse or warm the measured gateway route. The acceptance contract remains 400 requests / 4 VUs, exact status/body checks, zero failed HTTP requests, and `http_req_duration p(95) < 20 ms`; no sample reduction, cache warm-up, or measurement exclusion is accepted.
 
-#64 exact CI `34045381577` and Supply Chain `34045381591` were terminal GREEN before integration. Exact load artifact `9993754723`, digest `sha256:0c545787f21d264fd012d9b34f16d4272c5c8afeeccd3795ac256c70487d321e`, recorded 400/400 HTTP-200 checks, 400/400 body-identity checks, `http_req_failed=0`, and p95 `0.9037063 ms`. This is Rust-only loopback regression evidence, not an Internet/TLS/H2/H3/multi-hop production SLO.
+`#64` exact CI `34045381577` and Supply Chain `34045381591` were terminal GREEN before integration. Exact load artifact `9993754723`, digest `sha256:0c545787f21d264fd012d9b34f16d4272c5c8afeeccd3795ac256c70487d321e`, recorded 400/400 HTTP-200 checks, 400/400 body-identity checks, `http_req_failed=0`, and p95 `0.9037063 ms`. This is Rust-only loopback regression evidence, not an Internet/TLS/H2/H3/multi-hop production SLO.
 
 The predecessor #64 hosted RED on `bad9e0ed158d633c259861106f50e223247370dd` remains RCA evidence: gateway release compilation succeeded, then `rustfmt --check` exposed three layout-only fixture diffs before direct fixture tests or k6. The minimal formatter-only repair produced `1b6c5307...`. The later always-run evidence upload did not obscure the causal formatter failure; successful traffic still requires a non-empty summary.
 
