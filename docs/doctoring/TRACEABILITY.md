@@ -25,7 +25,8 @@ This file links material technical/security claims to primary standards or upstr
 | Pingora 0.8.1 is the latest release observed on 2026-09-01 and bounds default HTTP/2 server limits | Cloudflare Pingora GitHub Releases, 0.8.1, 2026-06-04 |
 | The pinned upstream head is seven commits after the prior security-resolution pin `6463ad6407a1d3fe256f1951dd0ecb054477e3f6`; the relevant retry/grace configuration remains unchanged at the new head | GitHub compare `6463ad6...09696b5` plus the exact `ServerConf` source at `09696b5` |
 | Rust 1.98.1 is the current stable point release observed on 2026-09-07 and fixes a Rust 1.98.0 vtable-generation miscompilation that could place a null pointer where a trait-object function pointer was required | Rust Release Team, Rust 1.98.1 announcement, 2026-09-03; this external authority does not by itself promote the repository's separately gated compiler prerequisite |
-| OCI runtime-spec 1.3.0 is the latest released runtime specification observed on 2026-09-01 | Open Container Initiative runtime-spec v1.3.0 release notice, 2025-11-04; runtime hardening claims still require executable container evidence |
+| OCI runtime-spec 1.3.0 is the latest released runtime specification observed on 2026-09-07 | Open Container Initiative runtime-spec v1.3.0 release notice, 2025-11-04; runtime hardening claims still require executable container evidence |
+| OCI image-spec 1.1.1 is the latest released image specification observed on 2026-09-07 | Open Container Initiative image-spec v1.1.1 release notice, 2025-04-02; image-format conformance does not prove non-root, read-only-root, capability or `no-new-privileges` runtime behavior, which remains an executable acceptance concern |
 | `lru` versions before 0.18.2 are affected by RUSTSEC-2026-0253 | RustSec advisory RUSTSEC-2026-0253; the upstream pin includes the first-fixed `lru` dependency change, but release must use a committed audited lock |
 
 ## References
@@ -75,6 +76,8 @@ Rescorla, E. (2026). *The Transport Layer Security (TLS) Protocol Version 1.3* (
 Salz, R., & Aviram, N. (2026). *New protocols using TLS must require TLS 1.3* (RFC 9852, BCP 195). RFC Editor. https://www.rfc-editor.org/rfc/rfc9852
 
 Petersson, A., & Nilsson, M. (2014). *Forwarded HTTP extension* (RFC 7239). RFC Editor. https://www.rfc-editor.org/rfc/rfc7239
+
+Open Container Initiative. (2025, April 2). *OCI image-spec v1.1.1 release notice*. https://opencontainers.org/release-notices/v1-1-1-image-spec/
 
 Open Container Initiative. (2025, November 4). *OCI runtime-spec v1.3.0 release notice*. https://opencontainers.org/release-notices/v1-3-0-runtime-spec/
 
