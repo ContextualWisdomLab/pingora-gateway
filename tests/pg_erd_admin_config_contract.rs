@@ -96,7 +96,10 @@ fn pg_erd_admin_config_rejects_listener_collision_and_zero_capacity_budgets() {
     );
 
     for (field, value) in [
-        ("max_request_body_bytes: 1048576", "max_request_body_bytes: 0"),
+        (
+            "max_request_body_bytes: 1048576",
+            "max_request_body_bytes: 0",
+        ),
         ("max_in_flight_requests: 128", "max_in_flight_requests: 0"),
     ] {
         let invalid = valid_yaml().replace(field, value);
@@ -109,10 +112,7 @@ fn pg_erd_admin_config_rejects_listener_collision_and_zero_capacity_budgets() {
 
 #[test]
 fn pg_erd_admin_config_rejects_zero_port_network_authority() {
-    let zero_listener = valid_yaml().replace(
-        "listener: 127.0.0.1:8080",
-        "listener: 127.0.0.1:0",
-    );
+    let zero_listener = valid_yaml().replace("listener: 127.0.0.1:8080", "listener: 127.0.0.1:0");
     assert_eq!(
         PgErdMigrationConfig::from_yaml(&zero_listener),
         Err(PgErdMigrationConfigError::ZeroListenerPort)
@@ -127,10 +127,8 @@ fn pg_erd_admin_config_rejects_zero_port_network_authority() {
         Err(PgErdMigrationConfigError::ZeroMetricsListenerPort)
     );
 
-    let zero_backend = valid_yaml().replace(
-        "    address: 127.0.0.1:8000",
-        "    address: 127.0.0.1:0",
-    );
+    let zero_backend =
+        valid_yaml().replace("    address: 127.0.0.1:8000", "    address: 127.0.0.1:0");
     assert_eq!(
         PgErdMigrationConfig::from_yaml(&zero_backend),
         Err(PgErdMigrationConfigError::ZeroTransportAuthorityPort {

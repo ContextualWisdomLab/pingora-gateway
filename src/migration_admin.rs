@@ -154,10 +154,7 @@ impl PgErdMigrationConfig {
             return Err(PgErdMigrationConfigError::InvalidUpstreamKeepalivePoolSize);
         }
 
-        RuntimeIsolationLimits::try_new(
-            self.max_request_body_bytes,
-            self.max_in_flight_requests,
-        )?;
+        RuntimeIsolationLimits::try_new(self.max_request_body_bytes, self.max_in_flight_requests)?;
         self.validate_transport_authority(&pg_erd_migration_plan())
     }
 
@@ -189,9 +186,7 @@ impl PgErdMigrationConfig {
                 });
             }
             if !plan.contains_upstream(&upstream_name) {
-                return Err(PgErdMigrationConfigError::UnknownTransportAuthority {
-                    upstream_name,
-                });
+                return Err(PgErdMigrationConfigError::UnknownTransportAuthority { upstream_name });
             }
         }
         Ok(())

@@ -19,5 +19,7 @@ pub(crate) async fn respond_healthy(session: &mut Session) -> pingora::Result<()
     response
         .insert_header("Cache-Control", "no-store")
         .expect("literal Cache-Control response header must be valid");
-    session.write_response_header(Box::new(response), true).await
+    session
+        .write_response_header(Box::new(response), true)
+        .await
 }
