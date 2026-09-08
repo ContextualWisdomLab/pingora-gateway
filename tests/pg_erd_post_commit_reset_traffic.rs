@@ -72,6 +72,8 @@ fn reserve_gateway_addresses() -> (TcpListener, TcpListener, SocketAddr, SocketA
     (gateway, metrics, gateway_address, metrics_address)
 }
 
+/// Writes only the admitted migration transport configuration needed to isolate
+/// post-commit reset behavior from product policy or dynamic route authority.
 fn write_config(
     listener: SocketAddr,
     metrics_listener: SocketAddr,
@@ -87,6 +89,8 @@ fn write_config(
     file
 }
 
+/// Waits for one listener while failing immediately if the child exits, so a
+/// startup defect cannot be misreported as post-commit transport behavior.
 fn wait_until_listening(address: SocketAddr, process: &mut Child) {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
@@ -107,6 +111,8 @@ fn wait_until_listening(address: SocketAddr, process: &mut Child) {
     }
 }
 
+/// Starts the compiled pg-erd composition root and proves both traffic and
+/// metrics listeners are live before the characterized reset is injected.
 fn start_gateway(
     config: &NamedTempFile,
     gateway_address: SocketAddr,
@@ -124,6 +130,8 @@ fn start_gateway(
     GatewayProcess(child)
 }
 
+/// Sends a small raw HTTP/1.1 request with a finite downstream read budget for
+/// readiness, metrics and independent-route recovery probes.
 fn raw_request(address: SocketAddr, request: &[u8]) -> String {
     let mut downstream = TcpStream::connect(address).expect("gateway should accept traffic");
     downstream
@@ -139,6 +147,8 @@ fn raw_request(address: SocketAddr, request: &[u8]) -> String {
     response
 }
 
+/// Holds the backend reset until the downstream has observed the committed
+/// response header and `partial` prefix, then records EOF versus propagated RST.
 fn raw_request_until_committed_then_reset(
     address: SocketAddr,
     request: &[u8],
@@ -188,6 +198,7 @@ fn raw_request_until_committed_then_reset(
     }
 }
 
+/// Builds the fixed-host HTTP/1.1 request used by non-reset control probes.
 fn get(address: SocketAddr, path: &str) -> String {
     raw_request(
         address,
@@ -262,6 +273,8 @@ fn contains_exact_metric_sample(metrics: &str, sample: &str) -> bool {
         .any(|line| line.trim_end_matches('\r') == sample)
 }
 
+/// Configures Linux abortive-close semantics on the established origin socket
+/// so this phase exercises a real TCP reset after response commitment.
 fn reset_on_close(stream: &TcpStream) {
     let linger = Linger {
         onoff: 1,
@@ -286,12 +299,16 @@ fn reset_on_close(stream: &TcpStream) {
     );
 }
 
+/// Rejects lookalike response fields so only the actual `Content-Length`
+/// authority can satisfy the committed-framing oracle.
 #[test]
 fn exact_response_header_matching_rejects_content_length_lookalikes() {
     let headers = "HTTP/1.1 200 OK\r\nX-Content-Length: 20\r\ncOnTeNt-LeNgTh: 7\r\n\r\n";
     assert_eq!(header_values(headers, "Content-Length"), vec!["7"]);
 }
 
+/// Rejects protocol-case and numeric-prefix lookalikes that could otherwise
+/// manufacture committed or recovery status evidence.
 #[test]
 fn exact_status_code_rejects_case_and_numeric_prefix_lookalikes() {
     assert_eq!(exact_http_1_1_status_code("HTTP/1.1 200 OK\r\n"), Some(200));
@@ -299,6 +316,8 @@ fn exact_status_code_rejects_case_and_numeric_prefix_lookalikes() {
     assert_eq!(exact_http_1_1_status_code("HTTP/1.1 2000 OK\r\n"), None);
 }
 
+/// Rejects numeric-prefix metric values so a larger counter cannot satisfy the
+/// expected single post-commit transport error.
 #[test]
 fn exact_metric_sample_rejects_numeric_prefix_lookalikes() {
     let metrics = "# TYPE cwl_pingora_gateway_request_errors_total counter\ncwl_pingora_gateway_request_errors_total 10\n";
@@ -308,6 +327,8 @@ fn exact_metric_sample_rejects_numeric_prefix_lookalikes() {
     ));
 }
 
+/// Proves an origin RST after downstream commitment preserves the first status
+/// and framing, terminates the short body, records one error and spares sibling routing.
 #[test]
 fn compiled_pg_erd_post_commit_reset_preserves_committed_status_and_independent_routing() {
     let backend = TcpListener::bind("127.0.0.1:0").expect("backend fixture should bind");
