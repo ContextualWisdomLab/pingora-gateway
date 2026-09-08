@@ -14,6 +14,7 @@ use cwl_pingora_gateway::startup::GatewayCommand;
 use pingora::prelude::{http_proxy_service, Server};
 use pingora::server::RunArgs;
 
+/// Loads the bounded migration Admin Config, materializes peers, then grants listener authority.
 fn main() -> ExitCode {
     env_logger::init();
 
@@ -61,6 +62,7 @@ fn main() -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// Emits a bounded startup error and returns the stable configuration/startup failure code.
 fn exit_with_error(message: &str) -> ExitCode {
     eprintln!("{message}");
     ExitCode::from(2)
