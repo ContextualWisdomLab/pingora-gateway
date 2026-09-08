@@ -14,6 +14,8 @@ use std::time::{Duration, Instant};
 
 use tempfile::NamedTempFile;
 
+const MAX_ORIGIN_REQUEST_HEADER_BYTES: usize = 64 * 1024;
+
 struct GatewayProcess {
     child: Option<Child>,
     stderr: NamedTempFile,
@@ -164,18 +166,27 @@ fn raw_request(address: SocketAddr, request: &[u8]) -> String {
     response
 }
 
+/// Reads one origin-side request header block under a finite timeout and byte
+/// budget so a broken forwarding path fails deterministically instead of hanging CI.
 fn read_request_headers(stream: &mut TcpStream) -> String {
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .expect("origin request timeout should be configurable");
     let mut bytes = Vec::new();
     let mut buffer = [0_u8; 1024];
     loop {
         let read = stream
             .read(&mut buffer)
-            .expect("origin request should be readable");
+            .expect("origin request should be readable before the fixture deadline");
         assert!(
             read > 0,
             "gateway closed origin request before headers completed"
         );
         bytes.extend_from_slice(&buffer[..read]);
+        assert!(
+            bytes.len() <= MAX_ORIGIN_REQUEST_HEADER_BYTES,
+            "gateway origin request headers exceeded the fixture bound"
+        );
         if bytes.windows(4).any(|window| window == b"\r\n\r\n") {
             return String::from_utf8_lossy(&bytes).into_owned();
         }
