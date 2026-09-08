@@ -188,10 +188,10 @@ fn pg_erd_admin_config_build_proxy_revalidates_direct_deserialization() {
     );
     let config: PgErdMigrationConfig = serde_yaml::from_str(&incomplete_v2)
         .expect("direct deserialization may construct an incomplete version-2 value");
-    assert_eq!(
+    assert!(matches!(
         config.build_proxy(),
         Err(PgErdMigrationConfigError::MissingUpstreamResponseBodyLifetime)
-    );
+    ));
 }
 
 #[test]
