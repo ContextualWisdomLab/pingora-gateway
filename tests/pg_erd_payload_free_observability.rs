@@ -246,8 +246,7 @@ fn compiled_pg_erd_shared_access_log_excludes_request_sensitive_material() {
             .next()
             .expect("origin request should contain a request line");
         assert_eq!(
-            request_line,
-            "GET /api/log-contract?customer=query-secret HTTP/1.1",
+            request_line, "GET /api/log-contract?customer=query-secret HTTP/1.1",
             "request target and query sentinel must be preserved exactly"
         );
         assert_eq!(
