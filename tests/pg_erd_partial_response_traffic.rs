@@ -286,8 +286,18 @@ fn compiled_pg_erd_truncated_response_stays_committed_and_preserves_independent_
         headers.starts_with("http/1.1 200"),
         "a post-header upstream failure cannot be rewritten as a new status: {headers:?}"
     );
-    assert!(
-        headers.contains("content-length: 20"),
+    let content_length_headers: Vec<_> = headers
+        .lines()
+        .filter(|line| line.starts_with("content-length:"))
+        .collect();
+    assert_eq!(
+        content_length_headers.len(),
+        1,
+        "the committed response must retain exactly one Content-Length field: {headers:?}"
+    );
+    assert_eq!(
+        content_length_headers[0],
+        "content-length: 20",
         "the committed response must retain its declared framing for this fixture: {headers:?}"
     );
     let body = &partial[header_end..];
