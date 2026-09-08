@@ -326,8 +326,7 @@ fn compiled_pg_erd_shared_access_log_excludes_request_sensitive_material() {
         .expect("shared access log should contain the completion message")
         .1;
     assert_eq!(
-        completion,
-        "status=200 outcome=ok request_body_bytes=0",
+        completion, "status=200 outcome=ok request_body_bytes=0",
         "shared access logging should contain only bounded transport facts: {access_log:?}"
     );
 
