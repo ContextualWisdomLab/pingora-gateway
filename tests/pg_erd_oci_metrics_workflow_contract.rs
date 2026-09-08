@@ -32,6 +32,7 @@ fn pg_erd_runtime_script() -> String {
         .to_string()
 }
 
+/// Requires the pg-erd OCI gate to prove Prometheus media-type identity, not only HTTP reachability.
 #[test]
 fn pg_erd_metrics_acceptance_proves_prometheus_media_type() {
     let script = pg_erd_runtime_script();
