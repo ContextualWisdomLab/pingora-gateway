@@ -99,7 +99,10 @@ fn wait_until_listening(address: SocketAddr, process: &mut Child) {
         if TcpStream::connect_timeout(&address, Duration::from_millis(100)).is_ok() {
             return;
         }
-        assert!(Instant::now() < deadline, "gateway did not start within 10s");
+        assert!(
+            Instant::now() < deadline,
+            "gateway did not start within 10s"
+        );
         thread::sleep(Duration::from_millis(25));
     }
 }
@@ -236,6 +239,21 @@ fn header_values<'a>(headers: &'a str, name: &str) -> Vec<&'a str> {
         .collect()
 }
 
+/// Parses only an exact HTTP/1.1 three-digit status token so case changes or
+/// numeric-prefix lookalikes cannot satisfy the response-status oracle.
+fn exact_http_1_1_status_code(response: &str) -> Option<u16> {
+    let status_line = response.split("\r\n").next()?;
+    let mut fields = status_line.split_ascii_whitespace();
+    if fields.next()? != "HTTP/1.1" {
+        return None;
+    }
+    let status = fields.next()?;
+    if status.len() != 3 || !status.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    status.parse().ok()
+}
+
 /// Requires a complete Prometheus sample line so numeric-prefix values cannot
 /// manufacture the expected exact counter sample.
 fn contains_exact_metric_sample(metrics: &str, sample: &str) -> bool {
@@ -272,6 +290,13 @@ fn reset_on_close(stream: &TcpStream) {
 fn exact_response_header_matching_rejects_content_length_lookalikes() {
     let headers = "HTTP/1.1 200 OK\r\nX-Content-Length: 20\r\ncOnTeNt-LeNgTh: 7\r\n\r\n";
     assert_eq!(header_values(headers, "Content-Length"), vec!["7"]);
+}
+
+#[test]
+fn exact_status_code_rejects_case_and_numeric_prefix_lookalikes() {
+    assert_eq!(exact_http_1_1_status_code("HTTP/1.1 200 OK\r\n"), Some(200));
+    assert_eq!(exact_http_1_1_status_code("http/1.1 200 OK\r\n"), None);
+    assert_eq!(exact_http_1_1_status_code("HTTP/1.1 2000 OK\r\n"), None);
 }
 
 #[test]
@@ -356,8 +381,9 @@ fn compiled_pg_erd_post_commit_reset_preserves_committed_status_and_independent_
         .map(|position| position + 4)
         .expect("post-commit reset response must contain the committed header block");
     let headers = String::from_utf8_lossy(&partial[..header_end]);
-    assert!(
-        headers.to_ascii_lowercase().starts_with("http/1.1 200"),
+    assert_eq!(
+        exact_http_1_1_status_code(&headers),
+        Some(200),
         "a reset after downstream commitment cannot be rewritten as a second status: {headers:?}"
     );
     assert_eq!(
@@ -373,8 +399,9 @@ fn compiled_pg_erd_post_commit_reset_preserves_committed_status_and_independent_
     );
 
     let readiness = get(gateway_address, "/readyz");
-    assert!(
-        readiness.starts_with("HTTP/1.1 200"),
+    assert_eq!(
+        exact_http_1_1_status_code(&readiness),
+        Some(200),
         "one post-commit upstream reset must not poison process readiness: {readiness:?}"
     );
 
@@ -385,8 +412,9 @@ fn compiled_pg_erd_post_commit_reset_preserves_committed_status_and_independent_
     );
 
     let recovered = get(gateway_address, "/after-post-commit-reset");
-    assert!(
-        recovered.starts_with("HTTP/1.1 200"),
+    assert_eq!(
+        exact_http_1_1_status_code(&recovered),
+        Some(200),
         "an independent characterized route must remain usable after a post-commit reset: {recovered:?}"
     );
     assert!(recovered.ends_with("\r\n\r\nrecovered"));
