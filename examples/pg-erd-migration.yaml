@@ -1,12 +1,12 @@
 version: 1
-listener: 0.0.0.0:6288
-metrics_listener: 0.0.0.0:6289
+listener: 0.0.0.0:6188
+metrics_listener: 0.0.0.0:6189
 max_request_body_bytes: 1048576
-max_in_flight_requests: 64
+max_in_flight_requests: 128
 upstream_keepalive_pool_size: 32
 upstreams:
   - name: backend
-    address: 127.0.0.1:6290
+    address: 127.0.0.1:18081
     tls: false
     timeouts:
       connection_ms: 500
@@ -15,7 +15,7 @@ upstreams:
       write_ms: 2000
       idle_ms: 5000
   - name: frontend
-    address: 127.0.0.1:6291
+    address: 127.0.0.1:18082
     tls: false
     timeouts:
       connection_ms: 500

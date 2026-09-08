@@ -11,27 +11,32 @@ use log::{Log, Metadata, Record};
 const REDACTED_PINGORA_DIAGNOSTIC: &str =
     "Pingora diagnostic message redacted by gateway payload-minimization policy";
 
+/// Wraps the configured `env_logger` filter while enforcing Pingora-message redaction.
 struct PayloadSafeLogger {
     inner: env_logger::Logger,
 }
 
 impl PayloadSafeLogger {
+    /// Builds the inner logger from the operator's ordinary `RUST_LOG` environment contract.
     fn from_default_env() -> Self {
         Self {
             inner: env_logger::Builder::from_env(env_logger::Env::default()).build(),
         }
     }
 
+    /// Returns the exact maximum level selected by the configured inner filter.
     fn max_level(&self) -> log::LevelFilter {
         self.inner.filter()
     }
 }
 
 impl Log for PayloadSafeLogger {
+    /// Delegates record admission so payload minimization does not broaden operator verbosity.
     fn enabled(&self, metadata: &Metadata<'_>) -> bool {
         self.inner.enabled(metadata)
     }
 
+    /// Redacts Pingora-family message bodies before handing admitted records to the formatter.
     fn log(&self, record: &Record<'_>) {
         if is_pingora_dependency_target(record.target()) {
             self.inner.log(
@@ -47,11 +52,13 @@ impl Log for PayloadSafeLogger {
         self.inner.log(record);
     }
 
+    /// Flushes through to the configured inner logger without changing record semantics.
     fn flush(&self) {
         self.inner.flush();
     }
 }
 
+/// Classifies only Pingora crate/namespace targets for dependency-message redaction.
 fn is_pingora_dependency_target(target: &str) -> bool {
     target == "pingora" || target.starts_with("pingora_") || target.starts_with("pingora::")
 }
@@ -78,10 +85,11 @@ pub fn init_runtime_logging() {
 
 #[cfg(test)]
 mod tests {
-    use log::Log;
+    use log::{Level, Log, Metadata};
 
     use super::{is_pingora_dependency_target, PayloadSafeLogger};
 
+    /// Proves dependency-target matching neither misses Pingora crates nor absorbs app targets.
     #[test]
     fn pingora_family_targets_are_classified_without_absorbing_application_targets() {
         for target in [
@@ -111,6 +119,19 @@ mod tests {
         }
     }
 
+    /// Proves the wrapper preserves the inner logger's configured target/level admission decision.
+    #[test]
+    fn payload_safe_logger_enabled_delegates_to_the_configured_filter() {
+        let logger = PayloadSafeLogger::from_default_env();
+        let metadata = Metadata::builder()
+            .level(Level::Error)
+            .target("cwl_pingora_gateway::test")
+            .build();
+
+        assert_eq!(logger.enabled(&metadata), logger.inner.enabled(&metadata));
+    }
+
+    /// Proves flushing the wrapper remains a side-effect-free delegation boundary.
     #[test]
     fn payload_safe_logger_flush_delegates_without_side_effects() {
         PayloadSafeLogger::from_default_env().flush();

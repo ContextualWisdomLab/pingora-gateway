@@ -5,7 +5,9 @@
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use pingora::prelude::{Error, ErrorType, HttpPeer, ProxyHttp, RequestHeader, Session};
+use pingora::prelude::{
+    Error, ErrorType, HttpPeer, ProxyHttp, RequestHeader, ResponseHeader, Session,
+};
 use thiserror::Error;
 
 use crate::edge_contract::{GatewayConfig, GatewayConfigError};
@@ -13,12 +15,15 @@ use crate::observability::{record_backpressure_rejection, record_request};
 use crate::pingora_delivery::{
     build_peer_from_validated, reject_uncharacterized_http1_protocol_transition, PeerBuildError,
 };
-use crate::process_health::respond_healthy;
-pub use crate::process_health::{LIVENESS_PATH, READINESS_PATH};
 use crate::runtime_isolation::{
     BodyLimitExceeded, RequestAdmission, RequestAdmissionBudget, RequestBodyBudget,
     RuntimeIsolationLimits,
 };
+
+/// Stable process-local liveness endpoint.
+pub const LIVENESS_PATH: &str = "/livez";
+/// Stable readiness endpoint reached through the production Pingora serving path.
+pub const READINESS_PATH: &str = "/readyz";
 
 /// Per-request delivery state. Product domain state does not belong here.
 #[derive(Debug)]
@@ -28,6 +33,10 @@ pub struct RequestContext {
 }
 
 impl RequestContext {
+    /// Creates isolation state without consuming an in-flight lease.
+    ///
+    /// Admission is deferred until a non-health application request enters the proxy path so
+    /// process-local health checks remain observable even when the application budget is full.
     fn new(limits: RuntimeIsolationLimits) -> Self {
         Self {
             request_body: RequestBodyBudget::new(limits),
@@ -81,6 +90,28 @@ impl GatewayProxy {
         self.upstream_peer.clone()
     }
 
+    /// Answers process-local health probes without contacting the configured upstream.
+    ///
+    /// Health responses intentionally bypass application admission so operators can distinguish a
+    /// live but saturated gateway from an unavailable process.
+    async fn respond_healthy(session: &mut Session) -> pingora::Result<()> {
+        let mut response = ResponseHeader::build(200, None)
+            .expect("literal HTTP 200 response header must be valid");
+        response
+            .insert_header("Content-Length", "0")
+            .expect("literal Content-Length response header must be valid");
+        response
+            .insert_header("Cache-Control", "no-store")
+            .expect("literal Cache-Control response header must be valid");
+        session
+            .write_response_header(Box::new(response), true)
+            .await
+    }
+
+    /// Acquires the shared in-flight lease before application request processing begins.
+    ///
+    /// Saturation fails locally with 503 and records bounded telemetry; no upstream selection or
+    /// connection attempt occurs without a lease.
     fn admit_request(&self, ctx: &mut RequestContext) -> pingora::Result<()> {
         if let Some(admission) = self.admission_budget.acquire() {
             ctx.admission = Some(admission);
@@ -94,6 +125,10 @@ impl GatewayProxy {
         ))
     }
 
+    /// Rejects an oversized declared body before streaming additional request bytes upstream.
+    ///
+    /// Chunked or otherwise undeclared bodies remain bounded independently by `RequestBodyBudget`
+    /// as body progress arrives.
     fn reject_oversize_declared_body(
         session: &Session,
         ctx: &RequestContext,
@@ -113,6 +148,10 @@ impl GatewayProxy {
     }
 }
 
+/// Maps request-body budget violations to the stable downstream 413 contract.
+///
+/// Observed and configured byte counts stay out of the client-visible error text so this adapter
+/// does not expand the gateway's externally observable resource-policy surface.
 fn body_rejection_to_pingora(rejection: BodyLimitExceeded) -> Box<Error> {
     let _ = (rejection.observed, rejection.limit);
     Error::explain(
@@ -121,6 +160,10 @@ fn body_rejection_to_pingora(rejection: BodyLimitExceeded) -> Box<Error> {
     )
 }
 
+/// Removes request-controlled proxy identity and emits only the generic-v1 scheme claim.
+///
+/// Generic v1 intentionally makes no client-IP or trusted-proxy provenance claim; those semantics
+/// require a separately characterized and versioned edge contract.
 fn sanitize_forwarding_headers(upstream_request: &mut RequestHeader) -> pingora::Result<()> {
     for header in [
         "Forwarded",
@@ -133,7 +176,9 @@ fn sanitize_forwarding_headers(upstream_request: &mut RequestHeader) -> pingora:
     ] {
         upstream_request.remove_header(header);
     }
-    upstream_request.insert_header("Forwarded", "proto=http")?;
+    upstream_request
+        .insert_header("Forwarded", "proto=http")
+        .expect("literal gateway-owned Forwarded header must be valid");
     Ok(())
 }
 
@@ -155,7 +200,7 @@ impl ProxyHttp for GatewayProxy {
     {
         match session.req_header().uri.path() {
             LIVENESS_PATH | READINESS_PATH => {
-                respond_healthy(session).await?;
+                Self::respond_healthy(session).await?;
                 Ok(true)
             }
             _ => {

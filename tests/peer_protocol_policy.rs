@@ -8,6 +8,7 @@ use cwl_pingora_gateway::edge_contract::{UpstreamConfig, UpstreamTimeouts};
 use cwl_pingora_gateway::pingora_delivery::build_peer;
 use pingora::upstreams::peer::HttpUpstreamRequestPolicy;
 
+/// Builds the smallest valid clear-text upstream needed to inspect immutable peer policy.
 fn cleartext_upstream() -> UpstreamConfig {
     UpstreamConfig {
         name: "origin".to_string(),
@@ -27,6 +28,7 @@ fn cleartext_upstream() -> UpstreamConfig {
     }
 }
 
+/// Locks defense in depth: immutable peers must deny HTTP/1 upgrades beneath request admission.
 #[test]
 fn validated_peer_denies_http1_upgrades_at_transport_boundary() {
     let peer = build_peer(&cleartext_upstream()).expect("valid upstream should build a peer");
