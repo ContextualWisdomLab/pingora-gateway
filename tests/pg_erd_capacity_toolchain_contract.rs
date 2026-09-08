@@ -6,8 +6,7 @@ fn contains_cargo_toolchain_selector(source: &str) -> bool {
     logical_source.lines().any(|line| {
         let mut previous_was_cargo = false;
         for token in line.split(|character: char| {
-            character.is_ascii_whitespace()
-                || matches!(character, ';' | '&' | '|' | '(' | ')')
+            character.is_ascii_whitespace() || matches!(character, ';' | '&' | '|' | '(' | ')')
         }) {
             if token.is_empty() {
                 continue;
