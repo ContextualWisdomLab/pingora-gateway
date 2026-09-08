@@ -193,6 +193,28 @@ fn read_request_headers(stream: &mut TcpStream) -> String {
     }
 }
 
+/// Selects exact HTTP field names case-insensitively while rejecting lookalike
+/// fields such as `X-Forwarded-Host` that contain `Host` only as a suffix.
+fn header_values<'a>(request: &'a str, name: &str) -> Vec<&'a str> {
+    request
+        .split("\r\n")
+        .skip(1)
+        .take_while(|line| !line.is_empty())
+        .filter_map(|line| line.split_once(':'))
+        .filter_map(|(field_name, value)| {
+            field_name
+                .eq_ignore_ascii_case(name)
+                .then_some(value.trim())
+        })
+        .collect()
+}
+
+#[test]
+fn exact_header_matching_rejects_forwarded_host_lookalikes() {
+    let request = "GET / HTTP/1.1\r\nX-Forwarded-Host: tenant-secret.example:8080\r\nhOsT: expected.example\r\n\r\n";
+    assert_eq!(header_values(request, "Host"), vec!["expected.example"]);
+}
+
 #[test]
 fn compiled_pg_erd_shared_access_log_excludes_request_sensitive_material() {
     let backend = TcpListener::bind("127.0.0.1:0").expect("backend fixture should bind");
@@ -202,12 +224,27 @@ fn compiled_pg_erd_shared_access_log_excludes_request_sensitive_material() {
             .accept()
             .expect("routed request should reach the characterized backend authority");
         let request = read_request_headers(&mut stream);
-        let lower = request.to_ascii_lowercase();
-        assert!(lower.starts_with("get /api/log-contract?customer=query-secret http/1.1\r\n"));
-        assert!(lower.contains("host: tenant-secret.example:8080\r\n"));
-        assert!(lower.contains("authorization: bearer authorization-secret\r\n"));
-        assert!(lower.contains("cookie: session=cookie-secret\r\n"));
-        assert!(lower.contains("x-product-context: product-secret\r\n"));
+        assert!(
+            request
+                .to_ascii_lowercase()
+                .starts_with("get /api/log-contract?customer=query-secret http/1.1\r\n")
+        );
+        assert_eq!(
+            header_values(&request, "Host"),
+            vec!["tenant-secret.example:8080"]
+        );
+        assert_eq!(
+            header_values(&request, "Authorization"),
+            vec!["Bearer authorization-secret"]
+        );
+        assert_eq!(
+            header_values(&request, "Cookie"),
+            vec!["session=cookie-secret"]
+        );
+        assert_eq!(
+            header_values(&request, "X-Product-Context"),
+            vec!["product-secret"]
+        );
         stream
             .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
             .expect("backend response should be writable");
