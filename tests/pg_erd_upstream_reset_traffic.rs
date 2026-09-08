@@ -228,18 +228,9 @@ fn reset_on_close(stream: &TcpStream) {
 /// protocol evidence for the reset and recovery assertions.
 #[test]
 fn exact_status_code_rejects_case_and_numeric_prefix_lookalikes() {
-    assert_eq!(
-        exact_http_1_1_status_code("HTTP/1.1 502 Bad Gateway\r\n"),
-        Some(502)
-    );
-    assert_eq!(
-        exact_http_1_1_status_code("http/1.1 502 Bad Gateway\r\n"),
-        None
-    );
-    assert_eq!(
-        exact_http_1_1_status_code("HTTP/1.1 5020 Bad Gateway\r\n"),
-        None
-    );
+    assert_eq!(exact_http_1_1_status_code("HTTP/1.1 502 Bad Gateway\r\n"), Some(502));
+    assert_eq!(exact_http_1_1_status_code("http/1.1 502 Bad Gateway\r\n"), None);
+    assert_eq!(exact_http_1_1_status_code("HTTP/1.1 5020 Bad Gateway\r\n"), None);
 }
 
 /// Rejects numeric-prefix metric values so the expected single transport error
