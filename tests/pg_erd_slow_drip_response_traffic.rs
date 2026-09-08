@@ -15,6 +15,8 @@ use tempfile::NamedTempFile;
 
 const MAX_REQUEST_HEADER_BYTES: usize = 64 * 1024;
 const SOCKET_IO_TIMEOUT: Duration = Duration::from_secs(5);
+const PRE_RESPONSE_HEADER_DELAY: Duration = Duration::from_millis(150);
+const RESPONSE_BODY_LIFETIME: Duration = Duration::from_millis(300);
 
 struct GatewayProcess(Child);
 
@@ -230,6 +232,10 @@ fn compiled_pg_erd_terminates_continuous_response_drip_without_poisoning_other_r
             .expect("routed request should reach the characterized backend authority");
         let request = read_request_headers(&mut stream);
         assert!(request.starts_with("GET /api/slow-drip HTTP/1.1\r\n"));
+
+        // The delay stays below read_ms but makes a request-start lifetime distinguishable from the
+        // selected first-final-response-header lifetime on the real listener path.
+        thread::sleep(PRE_RESPONSE_HEADER_DELAY);
         stream
             .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 20\r\nConnection: close\r\n\r\n")
             .expect("backend response header should be writable");
@@ -300,11 +306,11 @@ fn compiled_pg_erd_terminates_continuous_response_drip_without_poisoning_other_r
     );
     assert!(
         elapsed < Duration::from_secs(1),
-        "the 300ms response-body budget must stop a continuously progressing response instead of allowing the full 1.2s drip: {elapsed:?}"
+        "the response-body budget must stop the delayed-header continuous drip instead of allowing it to run to completion: {elapsed:?}"
     );
     assert!(
-        elapsed >= Duration::from_millis(300),
-        "termination must be caused by the 300ms body-progress budget, not by an immediate post-header failure: {elapsed:?}"
+        elapsed >= PRE_RESPONSE_HEADER_DELAY + RESPONSE_BODY_LIFETIME,
+        "termination must occur only after the 150ms pre-header delay plus the 300ms body-progress budget, proving the budget starts at the response header: {elapsed:?}"
     );
 
     let header_end = partial
