@@ -91,7 +91,10 @@ fn wait_until_listening(address: SocketAddr, process: &mut Child) {
         if TcpStream::connect_timeout(&address, Duration::from_millis(100)).is_ok() {
             return;
         }
-        assert!(Instant::now() < deadline, "gateway did not start within 10s");
+        assert!(
+            Instant::now() < deadline,
+            "gateway did not start within 10s"
+        );
         thread::sleep(Duration::from_millis(25));
     }
 }
