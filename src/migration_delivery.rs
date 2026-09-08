@@ -86,14 +86,10 @@ impl MigrationDeliveryPlan {
         for upstream in upstreams {
             let upstream_name = upstream.name.trim().to_string();
             if !configured_names.insert(upstream_name.clone()) {
-                return Err(MigrationDeliveryError::DuplicateConfiguredUpstream {
-                    upstream_name,
-                });
+                return Err(MigrationDeliveryError::DuplicateConfiguredUpstream { upstream_name });
             }
             if !plan.contains_upstream(&upstream_name) {
-                return Err(MigrationDeliveryError::UnknownConfiguredUpstream {
-                    upstream_name,
-                });
+                return Err(MigrationDeliveryError::UnknownConfiguredUpstream { upstream_name });
             }
 
             let peer = build_peer(&upstream).map_err(|source| {
