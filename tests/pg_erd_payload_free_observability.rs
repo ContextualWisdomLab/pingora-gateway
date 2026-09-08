@@ -241,9 +241,14 @@ fn compiled_pg_erd_shared_access_log_excludes_request_sensitive_material() {
             .accept()
             .expect("routed request should reach the characterized backend authority");
         let request = read_request_headers(&mut stream);
-        assert!(request
-            .to_ascii_lowercase()
-            .starts_with("get /api/log-contract?customer=query-secret http/1.1\r\n"));
+        let request_line = request
+            .split("\r\n")
+            .next()
+            .expect("origin request should contain a request line");
+        assert_eq!(
+            request_line, "GET /api/log-contract?customer=query-secret HTTP/1.1",
+            "request target and query sentinel must be preserved exactly"
+        );
         assert_eq!(
             header_values(&request, "Host"),
             vec!["tenant-secret.example:8080"]
@@ -316,8 +321,12 @@ fn compiled_pg_erd_shared_access_log_excludes_request_sensitive_material() {
         "the shared observability target should emit one completion record: {stderr:?}"
     );
     let access_log = request_logs[0];
-    assert!(
-        access_log.contains("gateway_request status=200 outcome=ok request_body_bytes=0"),
+    let completion = access_log
+        .split_once("gateway_request ")
+        .expect("shared access log should contain the completion message")
+        .1;
+    assert_eq!(
+        completion, "status=200 outcome=ok request_body_bytes=0",
         "shared access logging should contain only bounded transport facts: {access_log:?}"
     );
 
