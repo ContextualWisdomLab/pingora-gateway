@@ -83,10 +83,17 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ca-certificates cmake curl libssl-dev pkg-config
       - name: Install Rust 1.98.0
         run: |
-          rustup toolchain install 1.98.0 --profile minimal
+          rustup toolchain install 1.98.0 --profile minimal --component rustfmt
           rustup default 1.98.0
-      - name: Build exact gateway candidate
-        run: cargo build --release --locked --bin cwl-pingora-gateway
+      - name: Build exact gateway and Rust fixture candidates
+        run: |
+          set -euo pipefail
+          cargo build --release --locked --bin cwl-pingora-gateway --bin cwl-pingora-pg-erd-migration
+          rustfmt --edition 2021 --check tests/load/load_origin.rs
+          rustc --edition 2021 -D warnings --test tests/load/load_origin.rs -o /tmp/load_origin_tests
+          /tmp/load_origin_tests
+          rustc --edition 2021 -D warnings -C opt-level=3 -C debuginfo=0 \
+            --out-dir /tmp tests/load/load_origin.rs
       - name: Install checksum-pinned k6 2.2.0
         shell: bash
         run: |
@@ -103,7 +110,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 tests/load/upstream_fixture.py >/tmp/upstream-fixture.log 2>&1 &
+          /tmp/load_origin >/tmp/upstream-fixture.log 2>&1 &
           upstream_pid=$!
           gateway_pid=""
 
@@ -118,7 +125,7 @@ jobs:
             if [ "$status" -ne 0 ]; then
               echo "--- gateway log ---"
               cat /tmp/gateway-load.log || true
-              echo "--- upstream fixture log ---"
+              echo "--- Rust origin log ---"
               cat /tmp/upstream-fixture.log || true
             fi
           }
@@ -143,14 +150,14 @@ jobs:
                 idle_ms: 5000
           EOF
 
-          # Prove the measured origin has bound before gateway startup and measured traffic.
+          # Prove the measured Rust origin has bound before gateway startup and measured traffic.
           # This is fixture liveness, not a gateway-route warm-up.
           for _ in $(seq 1 80); do
             if curl --fail --silent --show-error --max-time 1 http://127.0.0.1:18081/fixture-ready >/dev/null; then
               break
             fi
             if ! kill -0 "$upstream_pid" 2>/dev/null; then
-              echo "upstream fixture exited before becoming ready" >&2
+              echo "Rust origin exited before becoming ready" >&2
               exit 1
             fi
             sleep 0.05
@@ -181,6 +188,126 @@ jobs:
         with:
           name: k6-loopback-${{ env.EXPECTED_SHA }}
           path: k6-summary.json
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Run routed pg-erd loopback traffic
+        shell: bash
+        run: |
+          set -euo pipefail
+          backend_pid=""
+          frontend_pid=""
+          pg_erd_pid=""
+          cleanup() {
+            status=$?
+            for pid in "$pg_erd_pid" "$backend_pid" "$frontend_pid"; do
+              if [ -n "$pid" ]; then
+                kill "$pid" >/dev/null 2>&1 || true
+                wait "$pid" >/dev/null 2>&1 || true
+              fi
+            done
+            if [ "$status" -ne 0 ]; then
+              echo "--- pg-erd log ---"
+              cat /tmp/pingora-pg-erd-load.log || true
+              echo "--- backend Rust origin log ---"
+              cat /tmp/pg-erd-backend.log || true
+              echo "--- frontend Rust origin log ---"
+              cat /tmp/pg-erd-frontend.log || true
+            fi
+          }
+          trap cleanup EXIT
+
+          UPSTREAM_PORT=18181 UPSTREAM_PAYLOAD=backend-ok \
+            /tmp/load_origin >/tmp/pg-erd-backend.log 2>&1 &
+          backend_pid=$!
+          UPSTREAM_PORT=18183 UPSTREAM_PAYLOAD=frontend-ok \
+            /tmp/load_origin >/tmp/pg-erd-frontend.log 2>&1 &
+          frontend_pid=$!
+
+          cat >/tmp/pg-erd-load.yaml <<'EOF'
+          version: 1
+          listener: 127.0.0.1:18180
+          metrics_listener: 127.0.0.1:18182
+          max_request_body_bytes: 1048576
+          max_in_flight_requests: 128
+          upstream_keepalive_pool_size: 32
+          upstreams:
+            - name: backend
+              address: 127.0.0.1:18181
+              tls: false
+              timeouts:
+                connection_ms: 500
+                total_connection_ms: 1000
+                read_ms: 1000
+                write_ms: 2000
+                idle_ms: 5000
+            - name: frontend
+              address: 127.0.0.1:18183
+              tls: false
+              timeouts:
+                connection_ms: 500
+                total_connection_ms: 1000
+                read_ms: 1000
+                write_ms: 2000
+                idle_ms: 5000
+          routes:
+            - prefix: /api/
+              upstream: backend
+            - prefix: /
+              upstream: frontend
+          EOF
+
+          for origin in 18181 18183; do
+            ready=0
+            for _ in $(seq 1 80); do
+              if curl --fail --silent --show-error --max-time 1 "http://127.0.0.1:${origin}/fixture-ready" >/dev/null; then
+                ready=1
+                break
+              fi
+              origin_pid="$backend_pid"
+              if [ "$origin" = "18183" ]; then
+                origin_pid="$frontend_pid"
+              fi
+              if ! kill -0 "$origin_pid" 2>/dev/null; then
+                echo "Rust origin ${origin} exited before becoming ready" >&2
+                exit 1
+              fi
+              sleep 0.05
+            done
+            if [ "$ready" -ne 1 ]; then
+              echo "Rust origin ${origin} never became ready" >&2
+              exit 1
+            fi
+          done
+
+          target/release/cwl-pingora-pg-erd-migration --config /tmp/pg-erd-load.yaml >/tmp/pingora-pg-erd-load.log 2>&1 &
+          pg_erd_pid=$!
+          ready=0
+          for _ in $(seq 1 80); do
+            if curl --fail --silent --show-error --max-time 1 http://127.0.0.1:18180/livez >/dev/null; then
+              ready=1
+              break
+            fi
+            if ! kill -0 "$pg_erd_pid" 2>/dev/null; then
+              echo "pg-erd candidate exited before becoming live" >&2
+              exit 1
+            fi
+            sleep 0.1
+          done
+          if [ "$ready" -ne 1 ]; then
+            echo "pg-erd candidate never became live" >&2
+            exit 1
+          fi
+
+          PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
+            k6 run --quiet tests/load/pg_erd_gateway_smoke.js
+      - name: Require routed pg-erd latency summary
+        run: test -s k6-pg-erd-summary.json
+      - name: Upload routed pg-erd exact-SHA load evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: k6-pg-erd-loopback-${{ env.EXPECTED_SHA }}
+          path: k6-pg-erd-summary.json
           if-no-files-found: ignore
           retention-days: 7
 
