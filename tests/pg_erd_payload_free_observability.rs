@@ -209,10 +209,27 @@ fn header_values<'a>(request: &'a str, name: &str) -> Vec<&'a str> {
         .collect()
 }
 
+/// Requires a complete Prometheus sample line so a value such as `10` cannot
+/// satisfy an oracle that expects the exact counter value `1`.
+fn contains_exact_metric_sample(metrics: &str, sample: &str) -> bool {
+    metrics
+        .lines()
+        .any(|line| line.trim_end_matches('\r') == sample)
+}
+
 #[test]
 fn exact_header_matching_rejects_forwarded_host_lookalikes() {
     let request = "GET / HTTP/1.1\r\nX-Forwarded-Host: tenant-secret.example:8080\r\nhOsT: expected.example\r\n\r\n";
     assert_eq!(header_values(request, "Host"), vec!["expected.example"]);
+}
+
+#[test]
+fn exact_metric_sample_rejects_numeric_prefix_lookalikes() {
+    let metrics = "# TYPE cwl_pingora_gateway_requests_total counter\ncwl_pingora_gateway_requests_total 10\n";
+    assert!(!contains_exact_metric_sample(
+        metrics,
+        "cwl_pingora_gateway_requests_total 1"
+    ));
 }
 
 #[test]
@@ -284,8 +301,8 @@ fn compiled_pg_erd_shared_access_log_excludes_request_sensitive_material() {
         b"GET /metrics HTTP/1.1\r\nHost: metrics\r\nConnection: close\r\n\r\n",
     );
     assert!(
-        metrics.contains("cwl_pingora_gateway_requests_total 1"),
-        "metrics scrape should prove the proxied request reached shared completion recording: {metrics:?}"
+        contains_exact_metric_sample(&metrics, "cwl_pingora_gateway_requests_total 1"),
+        "metrics scrape should prove exactly one proxied request reached shared completion recording: {metrics:?}"
     );
     process
         .wait_until_stderr_contains("gateway_request status=200 outcome=ok request_body_bytes=0");
