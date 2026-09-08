@@ -127,10 +127,37 @@ fn malformed_header_authority_is_rejected_before_activation() {
                 header_name: "X-Test".to_string(),
             },
         ),
+        (
+            ResponseHeaderRule {
+                name: "X-Test".to_string(),
+                value: "safe\0value".to_string(),
+            },
+            HeaderPolicyError::InvalidHeaderValue {
+                header_name: "X-Test".to_string(),
+            },
+        ),
+        (
+            ResponseHeaderRule {
+                name: "X-Test".to_string(),
+                value: "safe\u{7f}value".to_string(),
+            },
+            HeaderPolicyError::InvalidHeaderValue {
+                header_name: "X-Test".to_string(),
+            },
+        ),
     ] {
         assert_eq!(
             ResponseHeaderPolicy::try_new(vec![rule]).expect_err("invalid header must fail"),
             expected
         );
     }
+}
+
+#[test]
+fn horizontal_tab_remains_admitted_inside_a_non_empty_header_value() {
+    ResponseHeaderPolicy::try_new(vec![ResponseHeaderRule {
+        name: "X-Test".to_string(),
+        value: "left\tright".to_string(),
+    }])
+    .expect("HTTP field values may contain horizontal tab outside an empty OWS-only value");
 }
