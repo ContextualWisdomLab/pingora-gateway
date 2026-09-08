@@ -14,6 +14,8 @@ use std::time::{Duration, Instant};
 
 use tempfile::NamedTempFile;
 
+const MAX_ORIGIN_REQUEST_HEADER_BYTES: usize = 64 * 1024;
+
 struct GatewayProcess {
     child: Option<Child>,
     stderr: NamedTempFile,
@@ -35,7 +37,9 @@ impl GatewayProcess {
                 .try_wait()
                 .expect("gateway process state should be readable")
             {
-                panic!("gateway exited before expected log {needle:?}: {status}; stderr={captured:?}");
+                panic!(
+                    "gateway exited before expected log {needle:?}: {status}; stderr={captured:?}"
+                );
             }
             assert!(
                 Instant::now() < deadline,
@@ -50,7 +54,9 @@ impl GatewayProcess {
             .child
             .take()
             .expect("gateway child should still be owned");
-        child.kill().expect("gateway should be terminable after traffic");
+        child
+            .kill()
+            .expect("gateway should be terminable after traffic");
         child
             .wait()
             .expect("gateway should terminate after traffic capture");
@@ -67,11 +73,22 @@ impl Drop for GatewayProcess {
     }
 }
 
-fn reserve_loopback() -> SocketAddr {
-    TcpListener::bind("127.0.0.1:0")
-        .expect("loopback port should be reservable")
+/// Reserves both process listeners at once so sequential bind-and-drop cannot
+/// reuse the first ephemeral port and manufacture an Admin Config collision.
+fn reserve_gateway_addresses() -> (TcpListener, TcpListener, SocketAddr, SocketAddr) {
+    let gateway = TcpListener::bind("127.0.0.1:0").expect("gateway port should be reservable");
+    let metrics = TcpListener::bind("127.0.0.1:0").expect("metrics port should be reservable");
+    let gateway_address = gateway
         .local_addr()
-        .expect("reservation should expose an address")
+        .expect("gateway reservation should expose an address");
+    let metrics_address = metrics
+        .local_addr()
+        .expect("metrics reservation should expose an address");
+    assert_ne!(
+        gateway_address, metrics_address,
+        "traffic and metrics reservations must remain distinct"
+    );
+    (gateway, metrics, gateway_address, metrics_address)
 }
 
 fn write_config(
@@ -101,7 +118,10 @@ fn wait_until_listening(address: SocketAddr, process: &mut Child) {
         if TcpStream::connect_timeout(&address, Duration::from_millis(100)).is_ok() {
             return;
         }
-        assert!(Instant::now() < deadline, "gateway did not start within 10s");
+        assert!(
+            Instant::now() < deadline,
+            "gateway did not start within 10s"
+        );
         thread::sleep(Duration::from_millis(25));
     }
 }
@@ -146,17 +166,70 @@ fn raw_request(address: SocketAddr, request: &[u8]) -> String {
     response
 }
 
+/// Reads one origin-side request header block under a finite timeout and byte
+/// budget so a broken forwarding path fails deterministically instead of hanging CI.
 fn read_request_headers(stream: &mut TcpStream) -> String {
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .expect("origin request timeout should be configurable");
     let mut bytes = Vec::new();
     let mut buffer = [0_u8; 1024];
     loop {
-        let read = stream.read(&mut buffer).expect("origin request should be readable");
-        assert!(read > 0, "gateway closed origin request before headers completed");
+        let read = stream
+            .read(&mut buffer)
+            .expect("origin request should be readable before the fixture deadline");
+        assert!(
+            read > 0,
+            "gateway closed origin request before headers completed"
+        );
         bytes.extend_from_slice(&buffer[..read]);
+        assert!(
+            bytes.len() <= MAX_ORIGIN_REQUEST_HEADER_BYTES,
+            "gateway origin request headers exceeded the fixture bound"
+        );
         if bytes.windows(4).any(|window| window == b"\r\n\r\n") {
             return String::from_utf8_lossy(&bytes).into_owned();
         }
     }
+}
+
+/// Selects exact HTTP field names case-insensitively while rejecting lookalike
+/// fields such as `X-Forwarded-Host` that contain `Host` only as a suffix.
+fn header_values<'a>(request: &'a str, name: &str) -> Vec<&'a str> {
+    request
+        .split("\r\n")
+        .skip(1)
+        .take_while(|line| !line.is_empty())
+        .filter_map(|line| line.split_once(':'))
+        .filter_map(|(field_name, value)| {
+            field_name
+                .eq_ignore_ascii_case(name)
+                .then_some(value.trim())
+        })
+        .collect()
+}
+
+/// Requires a complete Prometheus sample line so a value such as `10` cannot
+/// satisfy an oracle that expects the exact counter value `1`.
+fn contains_exact_metric_sample(metrics: &str, sample: &str) -> bool {
+    metrics
+        .lines()
+        .any(|line| line.trim_end_matches('\r') == sample)
+}
+
+#[test]
+fn exact_header_matching_rejects_forwarded_host_lookalikes() {
+    let request = "GET / HTTP/1.1\r\nX-Forwarded-Host: tenant-secret.example:8080\r\nhOsT: expected.example\r\n\r\n";
+    assert_eq!(header_values(request, "Host"), vec!["expected.example"]);
+}
+
+#[test]
+fn exact_metric_sample_rejects_numeric_prefix_lookalikes() {
+    let metrics = "# TYPE cwl_pingora_gateway_requests_total counter\ncwl_pingora_gateway_requests_total 10\n";
+    assert!(!contains_exact_metric_sample(
+        metrics,
+        "cwl_pingora_gateway_requests_total 1"
+    ));
 }
 
 #[test]
@@ -168,30 +241,45 @@ fn compiled_pg_erd_shared_access_log_excludes_request_sensitive_material() {
             .accept()
             .expect("routed request should reach the characterized backend authority");
         let request = read_request_headers(&mut stream);
-        let lower = request.to_ascii_lowercase();
-        assert!(lower.starts_with(
-            "get /api/log-contract?customer=query-secret http/1.1\r\n"
-        ));
-        assert!(lower.contains("host: tenant-secret.example:8080\r\n"));
-        assert!(lower.contains("authorization: bearer authorization-secret\r\n"));
-        assert!(lower.contains("cookie: session=cookie-secret\r\n"));
-        assert!(lower.contains("x-product-context: product-secret\r\n"));
+        assert!(request
+            .to_ascii_lowercase()
+            .starts_with("get /api/log-contract?customer=query-secret http/1.1\r\n"));
+        assert_eq!(
+            header_values(&request, "Host"),
+            vec!["tenant-secret.example:8080"]
+        );
+        assert_eq!(
+            header_values(&request, "Authorization"),
+            vec!["Bearer authorization-secret"]
+        );
+        assert_eq!(
+            header_values(&request, "Cookie"),
+            vec!["session=cookie-secret"]
+        );
+        assert_eq!(
+            header_values(&request, "X-Product-Context"),
+            vec!["product-secret"]
+        );
         stream
             .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
             .expect("backend response should be writable");
     });
 
     let frontend = TcpListener::bind("127.0.0.1:0").expect("frontend fixture should bind");
-    let frontend_address = frontend.local_addr().expect("frontend address should exist");
+    let frontend_address = frontend
+        .local_addr()
+        .expect("frontend address should exist");
 
-    let gateway_address = reserve_loopback();
-    let metrics_address = reserve_loopback();
+    let (gateway_reservation, metrics_reservation, gateway_address, metrics_address) =
+        reserve_gateway_addresses();
     let config = write_config(
         gateway_address,
         metrics_address,
         backend_address,
         frontend_address,
     );
+    drop(gateway_reservation);
+    drop(metrics_reservation);
     let mut process = start_gateway(&config, gateway_address, metrics_address);
 
     let response = raw_request(
@@ -211,12 +299,11 @@ fn compiled_pg_erd_shared_access_log_excludes_request_sensitive_material() {
         b"GET /metrics HTTP/1.1\r\nHost: metrics\r\nConnection: close\r\n\r\n",
     );
     assert!(
-        metrics.contains("cwl_pingora_gateway_requests_total 1"),
-        "metrics scrape should prove the proxied request reached shared completion recording: {metrics:?}"
+        contains_exact_metric_sample(&metrics, "cwl_pingora_gateway_requests_total 1"),
+        "metrics scrape should prove exactly one proxied request reached shared completion recording: {metrics:?}"
     );
-    process.wait_until_stderr_contains(
-        "gateway_request status=200 outcome=ok request_body_bytes=0",
-    );
+    process
+        .wait_until_stderr_contains("gateway_request status=200 outcome=ok request_body_bytes=0");
 
     let stderr = process.capture_stderr();
     let request_logs: Vec<_> = stderr
