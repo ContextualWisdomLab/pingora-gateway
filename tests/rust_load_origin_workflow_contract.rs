@@ -25,6 +25,16 @@ fn load_steps() -> Vec<Value> {
         .clone()
 }
 
+/// Collapses YAML-preserved shell whitespace and line continuations so the
+/// regression checks command semantics rather than incidental formatting.
+fn normalize_shell(scripts: &str) -> String {
+    scripts
+        .replace("\\\n", " ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 #[test]
 fn measured_load_job_uses_only_the_bounded_rust_origin() {
     let steps = load_steps();
@@ -33,37 +43,47 @@ fn measured_load_job_uses_only_the_bounded_rust_origin() {
         .filter_map(|step| step.get("run").and_then(Value::as_str))
         .collect::<Vec<_>>()
         .join("\n");
+    let normalized_scripts = normalize_shell(&scripts);
 
     assert!(
-        scripts.contains("rustfmt --edition 2021 --check tests/load/load_origin.rs"),
+        normalized_scripts.contains("rustfmt --edition 2021 --check tests/load/load_origin.rs"),
         "load lane must format-check the Rust origin before measured traffic"
     );
     assert!(
-        scripts.contains("rustc --edition 2021 -D warnings --test tests/load/load_origin.rs"),
+        normalized_scripts.contains("rustc --edition 2021 -D warnings --test tests/load/load_origin.rs"),
         "load lane must run the Rust origin's direct fixture contract"
     );
     assert!(
-        scripts.contains("rustc --edition 2021 -D warnings -C opt-level=3 -C debuginfo=0"),
+        normalized_scripts.contains("rustc --edition 2021 -D warnings -C opt-level=3 -C debuginfo=0"),
         "measured origin must be optimized Rust rather than an interpreter fixture"
     );
     assert!(
-        !scripts.to_ascii_lowercase().contains("python"),
+        !normalized_scripts.to_ascii_lowercase().contains("python"),
         "Python must not sit anywhere inside the measured load job"
     );
     assert!(
-        scripts.contains("/tmp/load_origin >/tmp/upstream-fixture.log 2>&1 &"),
+        normalized_scripts.contains("/tmp/load_origin >/tmp/upstream-fixture.log 2>&1 &"),
         "generic measured traffic must use the bounded Rust origin"
     );
     assert!(
-        scripts.contains(
+        normalized_scripts.contains(
             "UPSTREAM_PORT=18181 UPSTREAM_PAYLOAD=backend-ok /tmp/load_origin >/tmp/pg-erd-backend.log 2>&1 &"
         ),
         "pg-erd backend measured traffic must use the bounded Rust origin"
     );
     assert!(
-        scripts.contains(
+        normalized_scripts.contains(
             "UPSTREAM_PORT=18183 UPSTREAM_PAYLOAD=frontend-ok /tmp/load_origin >/tmp/pg-erd-frontend.log 2>&1 &"
         ),
         "pg-erd frontend measured traffic must use the bounded Rust origin"
+    );
+}
+
+#[test]
+fn shell_normalization_preserves_command_tokens() {
+    let scripts = "UPSTREAM_PORT=18181 UPSTREAM_PAYLOAD=backend-ok \\\n        /tmp/load_origin >/tmp/pg-erd-backend.log 2>&1 &";
+    assert_eq!(
+        normalize_shell(scripts),
+        "UPSTREAM_PORT=18181 UPSTREAM_PAYLOAD=backend-ok /tmp/load_origin >/tmp/pg-erd-backend.log 2>&1 &"
     );
 }
