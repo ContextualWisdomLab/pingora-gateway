@@ -221,7 +221,9 @@ fn read_request(stream: &mut impl Read) -> String {
     let mut request = Vec::new();
     let mut buffer = [0_u8; 1024];
     while !request.windows(4).any(|window| window == b"\r\n\r\n") {
-        let read = stream.read(&mut buffer).expect("request should be readable");
+        let read = stream
+            .read(&mut buffer)
+            .expect("request should be readable");
         assert!(read > 0, "gateway closed the upstream request prematurely");
         request.extend_from_slice(&buffer[..read]);
         assert!(
@@ -276,7 +278,9 @@ fn pg_erd_migration_uses_explicit_ca_and_sni_for_characterized_tls_backend() {
     let acceptor = tls_acceptor(&certificates);
 
     let backend = thread::spawn(move || {
-        let (stream, _) = backend_listener.accept().expect("gateway should connect to backend");
+        let (stream, _) = backend_listener
+            .accept()
+            .expect("gateway should connect to backend");
         set_socket_deadlines(&stream);
         let mut stream = acceptor
             .accept(stream)
@@ -341,7 +345,9 @@ fn pg_erd_migration_rejects_tls_hostname_mismatch_without_poisoning_other_routes
     let acceptor = tls_acceptor(&certificates);
 
     let backend = thread::spawn(move || {
-        let (stream, _) = backend_listener.accept().expect("gateway should connect to backend");
+        let (stream, _) = backend_listener
+            .accept()
+            .expect("gateway should connect to backend");
         set_socket_deadlines(&stream);
         if let Ok(mut stream) = acceptor.accept(stream) {
             let mut byte = [0_u8; 1];
