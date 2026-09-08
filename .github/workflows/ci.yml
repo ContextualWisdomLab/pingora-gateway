@@ -249,11 +249,6 @@ jobs:
                 read_ms: 1000
                 write_ms: 2000
                 idle_ms: 5000
-          routes:
-            - prefix: /api/
-              upstream: backend
-            - prefix: /
-              upstream: frontend
           EOF
 
           for origin in 18181 18183; do
