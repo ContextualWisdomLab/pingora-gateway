@@ -196,11 +196,7 @@ impl PgErdMigrationConfig {
             if !plan.contains_upstream(&upstream_name) {
                 return Err(PgErdMigrationConfigError::UnknownTransportAuthority { upstream_name });
             }
-            validate_upstream_authority_separation(
-                self.listener,
-                self.metrics_listener,
-                upstream,
-            )?;
+            validate_upstream_authority_separation(self.listener, self.metrics_listener, upstream)?;
         }
         Ok(())
     }
