@@ -341,8 +341,8 @@ mod tests {
 
     use super::{
         body_rejection_to_pingora, enforce_response_body_lifetime,
-        response_body_lifetime_to_pingora, start_response_body_lifetime, MigrationGatewayProxyError,
-        MigrationRequestContext,
+        response_body_lifetime_to_pingora, start_response_body_lifetime,
+        MigrationGatewayProxyError, MigrationRequestContext,
     };
     use crate::runtime_isolation::{
         BodyLimitExceeded, ResponseBodyLifetimeExceeded, RuntimeIsolationLimits,
@@ -392,8 +392,9 @@ mod tests {
 
         assert!(enforce_response_body_lifetime(&None, &ctx, expired).is_ok());
         assert!(enforce_response_body_lifetime(&Some(Bytes::new()), &ctx, expired).is_ok());
-        assert!(enforce_response_body_lifetime(&Some(Bytes::from_static(b"x")), &ctx, expired)
-            .is_err());
+        assert!(
+            enforce_response_body_lifetime(&Some(Bytes::from_static(b"x")), &ctx, expired).is_err()
+        );
     }
 
     #[test]
