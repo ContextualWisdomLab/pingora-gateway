@@ -32,10 +32,11 @@ jobs:
         run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
       - name: Install native dependencies
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ca-certificates cmake curl libssl-dev pkg-config
-      - name: Install Rust 1.98.0
+      - name: Install Rust 1.98.1
         run: |
-          rustup toolchain install 1.98.0 --profile minimal --component rustfmt
-          rustup default 1.98.0
+          rustup toolchain install 1.98.1 --profile minimal --component rustfmt
+          rustup default 1.98.1
+          rustc --version --verbose | grep -Fx 'release: 1.98.1'
       - name: Build exact pg-erd candidate and Rust origin fixture
         shell: bash
         run: |

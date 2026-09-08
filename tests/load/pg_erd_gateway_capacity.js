@@ -10,6 +10,8 @@ export const options = {
     http_req_duration: ['p(95)<20'],
     'http_req_duration{route:backend}': ['p(95)<20'],
     'http_req_duration{route:frontend}': ['p(95)<20'],
+    'http_reqs{route:backend}': ['count>=792'],
+    'http_reqs{route:frontend}': ['count>=792'],
   },
 };
 
@@ -18,6 +20,8 @@ const gatewayUrl = __ENV.PG_ERD_GATEWAY_URL || 'http://127.0.0.1:18280';
 /**
  * Alternates the characterized backend and frontend routes while preserving the
  * same bounded-origin round-trip threshold for each route family independently.
+ * With 16 VUs and 1600 shared iterations, per-VU alternation can skew either
+ * route by at most one sample per VU, so each route must retain at least 792.
  */
 export default function () {
   const backendRoute = (__VU + __ITER) % 2 === 0;
