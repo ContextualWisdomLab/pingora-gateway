@@ -241,11 +241,9 @@ fn compiled_pg_erd_shared_access_log_excludes_request_sensitive_material() {
             .accept()
             .expect("routed request should reach the characterized backend authority");
         let request = read_request_headers(&mut stream);
-        assert!(
-            request
-                .to_ascii_lowercase()
-                .starts_with("get /api/log-contract?customer=query-secret http/1.1\r\n")
-        );
+        assert!(request
+            .to_ascii_lowercase()
+            .starts_with("get /api/log-contract?customer=query-secret http/1.1\r\n"));
         assert_eq!(
             header_values(&request, "Host"),
             vec!["tenant-secret.example:8080"]
