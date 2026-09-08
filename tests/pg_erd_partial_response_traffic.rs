@@ -15,9 +15,11 @@ use std::time::{Duration, Instant};
 
 use tempfile::NamedTempFile;
 
+/// Owns the compiled migration child so assertion failures cannot leak a listening test process.
 struct GatewayProcess(Child);
 
 impl Drop for GatewayProcess {
+    /// Terminates and reaps the child on every teardown path, including a partial-response panic.
     fn drop(&mut self) {
         let _ = self.0.kill();
         let _ = self.0.wait();
@@ -30,6 +32,7 @@ enum DownstreamTermination {
     ConnectionReset,
 }
 
+/// Selects distinct traffic and metrics authorities while both ephemeral reservations remain held.
 fn reserve_distinct_loopback_addresses() -> (SocketAddr, SocketAddr) {
     // Hold both ephemeral reservations at once so listener and metrics authority cannot
     // accidentally collapse to the same port before the migration process binds them.
@@ -47,6 +50,7 @@ fn reserve_distinct_loopback_addresses() -> (SocketAddr, SocketAddr) {
     addresses
 }
 
+/// Writes the bounded pg-erd fixture used to separate post-commit truncation from read-stall failure.
 fn write_config(
     listener: SocketAddr,
     metrics_listener: SocketAddr,
@@ -62,6 +66,7 @@ fn write_config(
     file
 }
 
+/// Waits for one gateway listener without treating an early process exit as startup success.
 fn wait_until_listening(address: SocketAddr, process: &mut Child) {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
@@ -82,6 +87,7 @@ fn wait_until_listening(address: SocketAddr, process: &mut Child) {
     }
 }
 
+/// Starts the compiled pg-erd binary and requires both traffic and metrics authorities to bind.
 fn start_gateway(
     config: &NamedTempFile,
     gateway_address: SocketAddr,
@@ -99,6 +105,7 @@ fn start_gateway(
     GatewayProcess(child)
 }
 
+/// Sends one connection-closing HTTP/1.1 request and captures the complete downstream response.
 fn raw_request(address: SocketAddr, request: &[u8]) -> String {
     let mut downstream = TcpStream::connect(address).expect("gateway should accept traffic");
     downstream
@@ -114,6 +121,7 @@ fn raw_request(address: SocketAddr, request: &[u8]) -> String {
     response
 }
 
+/// Releases the origin only after the downstream has observed the committed header and body prefix.
 fn raw_request_until_terminal_after_body_prefix(
     address: SocketAddr,
     request: &[u8],
@@ -177,6 +185,7 @@ fn raw_request_until_terminal_after_body_prefix(
     }
 }
 
+/// Issues a fixture GET with the characterized downstream authority and explicit connection close.
 fn get(address: SocketAddr, path: &str) -> String {
     raw_request(
         address,
@@ -185,6 +194,7 @@ fn get(address: SocketAddr, path: &str) -> String {
     )
 }
 
+/// Reads only through the origin header terminator so the fixture can control the failure phase.
 fn read_request_headers(stream: &mut TcpStream) -> String {
     let mut bytes = Vec::new();
     let mut buffer = [0_u8; 1024];
@@ -203,6 +213,7 @@ fn read_request_headers(stream: &mut TcpStream) -> String {
     }
 }
 
+/// Proves a post-commit origin truncation preserves framing, terminates downstream and keeps recovery usable.
 #[test]
 fn compiled_pg_erd_truncated_response_stays_committed_and_preserves_independent_routing() {
     let (release_backend_tx, release_backend_rx) = mpsc::channel();
