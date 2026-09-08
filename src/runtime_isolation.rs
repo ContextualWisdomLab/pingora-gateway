@@ -89,6 +89,18 @@ impl RuntimeIsolationLimits {
         }
     }
 
+    pub(crate) fn from_validated_with_response_body_limit(
+        max_request_body_bytes: u64,
+        max_in_flight_requests: usize,
+        max_upstream_response_body_ms: u64,
+    ) -> Self {
+        Self {
+            max_request_body_bytes,
+            max_in_flight_requests,
+            max_upstream_response_body_ms: Some(max_upstream_response_body_ms),
+        }
+    }
+
     /// Returns the maximum admitted downstream request-body size in bytes.
     pub fn max_request_body_bytes(self) -> u64 {
         self.max_request_body_bytes
@@ -195,7 +207,7 @@ pub(crate) struct ResponseBodyLifetimeBudget {
     started_at: Option<Instant>,
 }
 
-/// Evidence that a response-body progress callback arrived after its configured lifetime.
+/// Evidence that response-body progress arrived after its configured lifetime.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ResponseBodyLifetimeExceeded {
     pub(crate) elapsed: Duration,
@@ -211,7 +223,7 @@ impl ResponseBodyLifetimeBudget {
         }
     }
 
-    /// Starts the body lifetime once; repeated response-filter callbacks cannot reset the deadline.
+    /// Starts the body lifetime once; repeated response-header callbacks cannot reset the deadline.
     pub(crate) fn start(&mut self, now: Instant) {
         if self.limit.is_some() && self.started_at.is_none() {
             self.started_at = Some(now);
@@ -268,6 +280,11 @@ mod tests {
         assert_eq!(bounded.max_request_body_bytes(), 2048);
         assert_eq!(bounded.max_in_flight_requests(), 3);
         assert_eq!(bounded.max_upstream_response_body_ms(), Some(750));
+
+        let validated = RuntimeIsolationLimits::from_validated_with_response_body_limit(4096, 4, 900);
+        assert_eq!(validated.max_request_body_bytes(), 4096);
+        assert_eq!(validated.max_in_flight_requests(), 4);
+        assert_eq!(validated.max_upstream_response_body_ms(), Some(900));
     }
 
     #[test]
