@@ -19,6 +19,7 @@ use tempfile::NamedTempFile;
 
 const SOL_SOCKET: i32 = 1;
 const SO_LINGER: i32 = 13;
+const MAX_ORIGIN_REQUEST_HEADER_BYTES: usize = 64 * 1024;
 
 #[repr(C)]
 struct Linger {
@@ -135,17 +136,39 @@ fn get(address: SocketAddr, path: &str) -> String {
     )
 }
 
+/// Keeps origin-side fixture reads finite so a forwarding regression fails as
+/// RED instead of hanging the suite before the intended reset phase is reached.
 fn read_request_headers(stream: &mut TcpStream) -> String {
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .expect("origin request timeout should be configurable");
     let mut bytes = Vec::new();
     let mut buffer = [0_u8; 1024];
     loop {
-        let read = stream.read(&mut buffer).expect("origin request should be readable");
-        assert!(read > 0, "gateway closed origin request before headers completed");
+        let read = stream
+            .read(&mut buffer)
+            .expect("origin request should be readable before the fixture deadline");
+        assert!(
+            read > 0,
+            "gateway closed origin request before headers completed"
+        );
         bytes.extend_from_slice(&buffer[..read]);
+        assert!(
+            bytes.len() <= MAX_ORIGIN_REQUEST_HEADER_BYTES,
+            "gateway origin request headers exceeded the fixture bound"
+        );
         if bytes.windows(4).any(|window| window == b"\r\n\r\n") {
             return String::from_utf8_lossy(&bytes).into_owned();
         }
     }
+}
+
+/// Requires a complete Prometheus sample line so numeric prefixes cannot
+/// manufacture the expected exact counter value.
+fn contains_exact_metric_sample(metrics: &str, sample: &str) -> bool {
+    metrics
+        .lines()
+        .any(|line| line.trim_end_matches('\r') == sample)
 }
 
 fn reset_on_close(stream: &TcpStream) {
@@ -170,6 +193,15 @@ fn reset_on_close(stream: &TcpStream) {
         "Linux SO_LINGER(0) should be configurable for the reset fixture: {}",
         std::io::Error::last_os_error()
     );
+}
+
+#[test]
+fn exact_metric_sample_rejects_numeric_prefix_lookalikes() {
+    let metrics = "# TYPE cwl_pingora_gateway_request_errors_total counter\ncwl_pingora_gateway_request_errors_total 10\n";
+    assert!(!contains_exact_metric_sample(
+        metrics,
+        "cwl_pingora_gateway_request_errors_total 1"
+    ));
 }
 
 #[test]
@@ -237,8 +269,8 @@ fn compiled_pg_erd_pre_header_reset_returns_502_and_preserves_independent_routin
 
     let metrics = get(metrics_address, "/metrics");
     assert!(
-        metrics.contains("cwl_pingora_gateway_request_errors_total 1"),
-        "the upstream reset must remain visible through low-cardinality error telemetry: {metrics:?}"
+        contains_exact_metric_sample(&metrics, "cwl_pingora_gateway_request_errors_total 1"),
+        "the upstream reset must remain visible as exactly one low-cardinality error sample: {metrics:?}"
     );
 
     let recovered = get(gateway_address, "/after-reset");
