@@ -407,18 +407,18 @@ fn pg_erd_migration_rejects_tls_hostname_mismatch_without_poisoning_other_routes
     assert!(recovered.ends_with("\r\n\r\nfrontend-recovered"));
 
     backend
-        .join()
-        .expect("hostname-mismatch TLS fixture should complete");
-    frontend
-        .join()
-        .expect("recovery frontend fixture should complete");
-}
-
-/// Prevents response-prefix assertions from accepting protocol or status-code lookalikes.
-#[test]
-fn http11_status_parser_rejects_lookalikes() {
-    assert_eq!(http11_status("HTTP/1.1 200 OK\r\n\r\n"), Some(200));
-    assert_eq!(http11_status("HTTP/1.1 502 Bad Gateway\r\n\r\n"), Some(502));
-    assert_eq!(http11_status("HTTP/1.1 2000 Weird\r\n\r\n"), None);
-    assert_eq!(http11_status("http/1.1 200 OK\r\n\r\n"), None);
-}
++        .join()
++        .expect("hostname-mismatch TLS fixture should complete");
++    frontend
++        .join()
++        .expect("recovery frontend fixture should complete");
++}
++
++/// Prevents response-prefix assertions from accepting protocol or status-code lookalikes.
++#[test]
++fn http11_status_parser_rejects_lookalikes() {
++    assert_eq!(http11_status("HTTP/1.1 200 OK\r\n\r\n"), Some(200));
++    assert_eq!(http11_status("HTTP/1.1 502 Bad Gateway\r\n\r\n"), Some(502));
++    assert_eq!(http11_status("HTTP/1.1 2000 Weird\r\n\r\n"), None);
++    assert_eq!(http11_status("http/1.1 200 OK\r\n\r\n"), None);
++}
