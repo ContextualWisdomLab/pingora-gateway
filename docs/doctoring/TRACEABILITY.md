@@ -10,8 +10,7 @@ This file links material technical/security claims to primary standards or upstr
 | Graceful SIGTERM uses `grace_period_seconds` and `graceful_shutdown_timeout_seconds`, with framework fallbacks when unset | `pingora-core/src/server/mod.rs` and `pingora-core/src/server/configuration/mod.rs` at the pinned commit; CWL v1 sets 5 s grace and 10 s per-runtime graceful timeout explicitly inside a 30 s external termination budget |
 | Standard upstream request policy supports hop-by-hop/connection-nominated stripping and normalized WebSocket-only HTTP/1 upgrade forwarding | Cloudflare Pingora `HttpUpstreamRequestPolicy` / peer implementation at pinned commit `09696b51bc59315353d96686355861604d0bb48c` |
 | Pingora `read_timeout` is a per-individual-read inactivity budget and resets after each successful upstream `read()`; it is not a total-response lifetime bound | Cloudflare Pingora `docs/user_guide/peer.md` and `pingora-proxy/src/proxy_h1.rs` at pinned commit `09696b51bc59315353d96686355861604d0bb48c`; the pg-erd read-stall acceptance therefore keeps a connected origin silent without closing its socket and deliberately does not claim slow-drip/whole-response bounding |
-| A proxy failure after the upstream response header has already been sent downstream cannot be replaced with a new error response or failover | Cloudflare Pingora `docs/user_guide/failover.md` and `pingora-proxy/src/proxy_h1.rs` at pinned commit `09696b51bc59315353d96686355861604d0bb48c`; this phase boundary is the basis of the dedicated pg-erd partial-response traffic contract |
-| Pingora HTTP/1 body framing treats a body that ends before its declared `Content-Length` as a premature body-end failure, while upstream read failures propagate through the proxy task stream | `pingora-core/src/protocols/http/v1/body.rs`, `pingora-core/src/protocols/http/v1/client.rs`, and `pingora-proxy/src/proxy_h1.rs` at pinned commit `09696b51bc59315353d96686355861604d0bb48c`; RFC 9112 defines HTTP/1.1 message framing requirements |
+| Pingora's Prometheus HTTP application sets `Content-Type` from `prometheus::TextEncoder::format_type()`; the pinned `prometheus` 0.14 line defines that format as `text/plain; version=0.0.4` | Cloudflare `pingora-prometheus/src/lib.rs` at pinned Pingora commit `09696b51bc59315353d96686355861604d0bb48c` and TiKV `rust-prometheus` v0.14.0 commit `e07efb4f372f1245bf7410b71e822c69877bcb32`, `src/encoder/text.rs`; #19 therefore strips only optional semicolon parameters and requires exact base media type `text/plain` rather than a prefix wildcard |
 | Pingora OpenSSL peers support a per-peer CA store; when configured it replaces the verification store for that peer while certificate and hostname verification remain separately enabled | `pingora-core/src/upstreams/peer.rs`, `pingora-core/src/connectors/tls/boringssl_openssl/mod.rs`, and `pingora-core/src/protocols/tls/boringssl_openssl/mod.rs` at pinned commit `09696b51bc59315353d96686355861604d0bb48c` |
 | IPv4-mapped IPv6 addresses represent IPv4 nodes in IPv6 form; Rust's `Ipv6Addr::to_ipv4_mapped` performs the bounded mapped-only canonicalization used by the socket-authority invariant. Linux IPv6 sockets can expose IPv4 peers as mapped IPv6 addresses, so mapped/native authority must not be compared only as unrelated textual address families | RFC 4291 §2.5.5.2; Rust `std::net::Ipv6Addr` documentation; Linux `ipv6(7)` |
 | Traefik normally adds `X-Forwarded-For`, `X-Real-Ip`, `X-Forwarded-Host`, `X-Forwarded-Port`, `X-Forwarded-Proto`, and `X-Forwarded-Server` when proxying HTTP | Traefik official Getting Started FAQ, current documentation revalidated 2026-09-02 |
@@ -40,13 +39,9 @@ Cloudflare. (n.d.). *Pingora upstream peer options* [Source code, commit 09696b5
 
 Cloudflare. (n.d.). *Peer: how to connect to upstream* [Documentation, commit 09696b51bc59315353d96686355861604d0bb48c]. GitHub. https://github.com/cloudflare/pingora/blob/09696b51bc59315353d96686355861604d0bb48c/docs/user_guide/peer.md
 
-Cloudflare. (n.d.). *Handling failures and failover* [Documentation, commit 09696b51bc59315353d96686355861604d0bb48c]. GitHub. https://github.com/cloudflare/pingora/blob/09696b51bc59315353d96686355861604d0bb48c/docs/user_guide/failover.md
-
 Cloudflare. (n.d.). *Pingora HTTP/1 proxy implementation* [Source code, commit 09696b51bc59315353d96686355861604d0bb48c]. GitHub. https://github.com/cloudflare/pingora/blob/09696b51bc59315353d96686355861604d0bb48c/pingora-proxy/src/proxy_h1.rs
 
-Cloudflare. (n.d.). *Pingora HTTP/1 client session* [Source code, commit 09696b51bc59315353d96686355861604d0bb48c]. GitHub. https://github.com/cloudflare/pingora/blob/09696b51bc59315353d96686355861604d0bb48c/pingora-core/src/protocols/http/v1/client.rs
-
-Cloudflare. (n.d.). *Pingora HTTP/1 body framing* [Source code, commit 09696b51bc59315353d96686355861604d0bb48c]. GitHub. https://github.com/cloudflare/pingora/blob/09696b51bc59315353d96686355861604d0bb48c/pingora-core/src/protocols/http/v1/body.rs
+Cloudflare. (n.d.). *Pingora Prometheus HTTP application* [Source code, commit 09696b51bc59315353d96686355861604d0bb48c]. GitHub. https://github.com/cloudflare/pingora/blob/09696b51bc59315353d96686355861604d0bb48c/pingora-prometheus/src/lib.rs
 
 Cloudflare. (n.d.). *Pingora OpenSSL upstream TLS connector* [Source code, commit 09696b51bc59315353d96686355861604d0bb48c]. GitHub. https://github.com/cloudflare/pingora/blob/09696b51bc59315353d96686355861604d0bb48c/pingora-core/src/connectors/tls/boringssl_openssl/mod.rs
 
@@ -65,6 +60,8 @@ Cloudflare. (2026). *HTTP request smuggling via premature upgrade* (GHSA-xq2h-p2
 Cloudflare. (2026). *HTTP request smuggling via HTTP/1.0 and Transfer-Encoding misparsing* (GHSA-hj7x-879w-vrp7). GitHub Security Advisories. https://github.com/cloudflare/pingora/security/advisories/GHSA-hj7x-879w-vrp7
 
 Cloudflare. (2026). *Cache key poisoning advisory* (GHSA-f93w-pcj3-rggc). GitHub Security Advisories. https://github.com/cloudflare/pingora/security/advisories/GHSA-f93w-pcj3-rggc
+
+TiKV Project Authors. (2025). *rust-prometheus 0.14.0 text encoder* [Source code, commit e07efb4f372f1245bf7410b71e822c69877bcb32]. GitHub. https://github.com/tikv/rust-prometheus/blob/e07efb4f372f1245bf7410b71e822c69877bcb32/src/encoder/text.rs
 
 Hinden, R., & Deering, S. (2006). *IP version 6 addressing architecture* (RFC 4291). RFC Editor. https://www.rfc-editor.org/rfc/rfc4291
 

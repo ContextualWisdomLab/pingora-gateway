@@ -18,17 +18,17 @@ Each upstream has a stable non-empty name, a non-zero concrete socket address, `
 
 `PgErdMigrationConfig` is a bounded Admin Config contract, not a second generic router. It admits operator-supplied listener/metrics sockets, non-zero runtime budgets, and concrete transport/TLS data only for the already characterized `backend` and `frontend` identities. Route selection and response-security policy remain compiled migration contracts. Missing, extra, renamed, zero-port, or overlapping transport authority fails before listener activation.
 
+`PgErdMigrationConfig` also derives public Serde `Deserialize`; callers therefore are not forced through `PgErdMigrationConfig::from_yaml`. The public `build_proxy()` activation boundary revalidates the complete deterministic Admin Config contract before delivery peers or runtime limits are materialized. Only after that revalidation may `RuntimeIsolationLimits::from_validated` reuse the proven-positive budgets, so direct deserialization cannot bypass version, listener-authority, runtime, keepalive, or transport-authority invariants.
+
 ## Request policy
 
-Pingora's standard upstream request policy supplies the pinned supplier's hop-by-hop and `Connection`-nomination sanitation. The generic gateway additionally removes client-provided `Forwarded`, `X-Forwarded-For`, `X-Forwarded-Host`, `X-Forwarded-Port`, `X-Forwarded-Proto`, `X-Forwarded-Server`, and `X-Real-IP`, then emits only gateway-owned `Forwarded: proto=http` for the v1 clear-text downstream listener. Generic v1 deliberately makes no client-IP identity claim.
+Pingora's standard upstream request policy supplies the pinned supplier's hop-by-hop and `Connection`-nomination sanitation. The generic gateway additionally removes client-provided `Forwarded`, `X-Forwarded-For`, `X-Forwarded-Host`, `X-Forwarded-Port`, `X-Forwarded-Proto`, `X-Forwarded-Server`, and `X-Real-IP`, then emits only gateway-owned `Forwarded: proto=http` for the v1 clear-text downstream listener. Generic v1 deliberately makes no client-IP identity or downstream proxy-provenance claim.
 
 The pg-erd migration adapter also discards request-controlled forwarding identity before rebuilding only the characterized compatibility fields from accepted transport/request authority. The current captured Traefik entry point is clear-text, so its forwarded scheme is explicitly `http`; HTTPS requires a separate TLS-derived contract rather than inference.
 
 Non-health requests acquire the process `max_in_flight_requests` budget before upstream selection and fail closed with HTTP 503 at capacity. Requests with a parseable `Content-Length` above `max_request_body_bytes` fail with HTTP 413 before upstream selection; streamed body bytes are counted and fail with 413 if the same bound is exceeded. Pingora's parser retains its own finite protocol limits, but an operator-controlled smaller HTTP/1 header byte/count budget remains a separate edge-policy gap.
 
 Generic v1 makes one prevalidated upstream peer available per request. The pg-erd migration adapter selects only peers already bound by `MigrationDeliveryPlan`; neither path performs request-controlled service discovery. Domain retries, failover, and idempotency policy are not invented by this runtime.
-
-Failure handling is phase-aware. Before an upstream response header is committed downstream, transport failure may still be represented by the gateway's fail-closed error response under the one-attempt policy. After a valid response header has been committed, a later upstream framing/body failure cannot be rewritten into a second HTTP status or silently failed over: the incomplete downstream response terminates, low-cardinality error telemetry records the failed request, process readiness remains available, and independent routes must remain usable. This is an edge transport invariant, not product retry authority.
 
 ## Health and observability
 

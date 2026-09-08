@@ -22,9 +22,9 @@ fn pg_erd_runtime_script() -> String {
         .and_then(|job| job.get("steps"))
         .and_then(Value::as_sequence)
         .and_then(|steps| {
-            steps.iter().find(|step| {
-                step.get("name").and_then(Value::as_str) == Some(PG_ERD_RUNTIME_STEP)
-            })
+            steps
+                .iter()
+                .find(|step| step.get("name").and_then(Value::as_str) == Some(PG_ERD_RUNTIME_STEP))
         })
         .and_then(|step| step.get("run"))
         .and_then(Value::as_str)
@@ -32,6 +32,7 @@ fn pg_erd_runtime_script() -> String {
         .to_string()
 }
 
+/// Requires the pg-erd OCI gate to prove Prometheus media-type identity, not only HTTP reachability.
 #[test]
 fn pg_erd_metrics_acceptance_proves_prometheus_media_type() {
     let script = pg_erd_runtime_script();
@@ -41,7 +42,14 @@ fn pg_erd_metrics_acceptance_proves_prometheus_media_type() {
         "OCI acceptance must exercise the separately published metrics listener"
     );
     assert!(
-        script.contains("content-type") && script.contains("text/plain"),
-        "a bare 200 response can false-green a misbound proxy listener; acceptance must identify the Prometheus HTTP service by its text/plain media type"
+        script.contains("--write-out")
+            && script.contains("%{content_type}")
+            && script.contains("metrics_content_type")
+            && script.contains("[[ \"${metrics_content_type%%;*}\" == \"text/plain\" ]]"),
+        "a bare 200 or text/plain-prefixed invalid media type can false-green a misbound listener; acceptance must capture curl's response content type and normalize only semicolon parameters in the actual equality predicate before requiring exact text/plain"
+    );
+    assert!(
+        !script.contains("== text/plain*"),
+        "prefix-wildcard media-type acceptance would admit invalid values such as text/plainfoo"
     );
 }
