@@ -342,9 +342,7 @@ fn compiled_pg_erd_post_commit_reset_preserves_committed_status_and_independent_
         assert!(request.starts_with("GET /api/post-commit-reset HTTP/1.1\r\n"));
 
         stream
-            .write_all(
-                b"HTTP/1.1 200 OK\r\nContent-Length: 20\r\nConnection: close\r\n\r\npartial",
-            )
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 20\r\nConnection: close\r\n\r\npartial")
             .expect("committed backend response should be writable");
 
         // The origin abort is released only after the downstream has observed the committed header
@@ -358,7 +356,9 @@ fn compiled_pg_erd_post_commit_reset_preserves_committed_status_and_independent_
     });
 
     let frontend = TcpListener::bind("127.0.0.1:0").expect("frontend fixture should bind");
-    let frontend_address = frontend.local_addr().expect("frontend address should exist");
+    let frontend_address = frontend
+        .local_addr()
+        .expect("frontend address should exist");
     let frontend_origin = thread::spawn(move || {
         let (mut stream, _) = frontend
             .accept()
