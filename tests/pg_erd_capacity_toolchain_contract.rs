@@ -28,7 +28,12 @@ fn capacity_lane_uses_fixed_release_compiler_before_building_candidate() {
         .expect("capacity workflow must build the exact pg-erd release candidate");
 
     assert!(install < select && select < verify && verify < build);
-    assert_eq!(CAPACITY_WORKFLOW.matches("rustup toolchain install ").count(), 1);
+    assert_eq!(
+        CAPACITY_WORKFLOW
+            .matches("rustup toolchain install ")
+            .count(),
+        1
+    );
     assert_eq!(CAPACITY_WORKFLOW.matches("rustup default ").count(), 1);
     assert!(!CAPACITY_WORKFLOW.contains("rustup override"));
     assert!(!CAPACITY_WORKFLOW.contains("1.98.0"));
