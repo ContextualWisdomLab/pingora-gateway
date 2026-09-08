@@ -302,6 +302,10 @@ fn compiled_pg_erd_terminates_continuous_response_drip_without_poisoning_other_r
         elapsed < Duration::from_secs(1),
         "the 300ms response-body budget must stop a continuously progressing response instead of allowing the full 1.2s drip: {elapsed:?}"
     );
+    assert!(
+        elapsed >= Duration::from_millis(300),
+        "termination must be caused by the 300ms body-progress budget, not by an immediate post-header failure: {elapsed:?}"
+    );
 
     let header_end = partial
         .windows(4)
@@ -320,6 +324,10 @@ fn compiled_pg_erd_terminates_continuous_response_drip_without_poisoning_other_r
         "the committed framing must remain the characterized single Content-Length field"
     );
     let body = &partial[header_end..];
+    assert!(
+        !body.is_empty(),
+        "the committed response must deliver body progress before the budget terminates it"
+    );
     assert!(
         body.len() < 20,
         "the configured response-body budget must terminate before the declared body completes"
