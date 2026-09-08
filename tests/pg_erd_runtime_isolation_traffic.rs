@@ -57,12 +57,19 @@ fn wait_until_listening(address: SocketAddr, process: &mut Child) {
         if TcpStream::connect_timeout(&address, Duration::from_millis(100)).is_ok() {
             return;
         }
-        assert!(Instant::now() < deadline, "gateway did not start within 10s");
+        assert!(
+            Instant::now() < deadline,
+            "gateway did not start within 10s"
+        );
         thread::sleep(Duration::from_millis(25));
     }
 }
 
-fn start_gateway(config: &NamedTempFile, gateway_address: SocketAddr, metrics_address: SocketAddr) -> GatewayProcess {
+fn start_gateway(
+    config: &NamedTempFile,
+    gateway_address: SocketAddr,
+    metrics_address: SocketAddr,
+) -> GatewayProcess {
     let mut child = Command::new(env!("CARGO_BIN_EXE_cwl-pingora-pg-erd-migration"))
         .args(["--config", config.path().to_str().expect("UTF-8 temp path")])
         .stdin(Stdio::null())
@@ -102,8 +109,13 @@ fn read_request_headers(stream: &mut TcpStream) -> String {
     let mut bytes = Vec::new();
     let mut buffer = [0_u8; 1024];
     loop {
-        let read = stream.read(&mut buffer).expect("origin request should be readable");
-        assert!(read > 0, "gateway closed origin request before headers completed");
+        let read = stream
+            .read(&mut buffer)
+            .expect("origin request should be readable");
+        assert!(
+            read > 0,
+            "gateway closed origin request before headers completed"
+        );
         bytes.extend_from_slice(&buffer[..read]);
         if bytes.windows(4).any(|window| window == b"\r\n\r\n") {
             return String::from_utf8_lossy(&bytes).into_owned();
@@ -116,7 +128,9 @@ fn compiled_pg_erd_rejects_streamed_body_overflow_and_keeps_readiness_available(
     let backend = TcpListener::bind("127.0.0.1:0").expect("backend fixture should bind");
     let backend_address = backend.local_addr().expect("backend address should exist");
     let frontend = TcpListener::bind("127.0.0.1:0").expect("frontend fixture should bind");
-    let frontend_address = frontend.local_addr().expect("frontend address should exist");
+    let frontend_address = frontend
+        .local_addr()
+        .expect("frontend address should exist");
     let gateway_address = reserve_loopback();
     let metrics_address = reserve_loopback();
     let config = write_config(
@@ -152,7 +166,9 @@ fn compiled_pg_erd_in_flight_saturation_rejects_recovers_and_preserves_control_p
     let backend = TcpListener::bind("127.0.0.1:0").expect("backend fixture should bind");
     let backend_address = backend.local_addr().expect("backend address should exist");
     let frontend = TcpListener::bind("127.0.0.1:0").expect("frontend fixture should bind");
-    let frontend_address = frontend.local_addr().expect("frontend address should exist");
+    let frontend_address = frontend
+        .local_addr()
+        .expect("frontend address should exist");
     let gateway_address = reserve_loopback();
     let metrics_address = reserve_loopback();
     let config = write_config(
@@ -177,10 +193,8 @@ fn compiled_pg_erd_in_flight_saturation_rejects_recovers_and_preserves_control_p
         release_response_rx
             .recv_timeout(Duration::from_secs(5))
             .expect("test should release the held response");
-        held.write_all(
-            b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\nheld",
-        )
-        .expect("held response should be writable");
+        held.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\nheld")
+            .expect("held response should be writable");
 
         let (mut recovered, _) = backend
             .accept()
@@ -200,10 +214,16 @@ fn compiled_pg_erd_in_flight_saturation_rejects_recovers_and_preserves_control_p
         .recv_timeout(Duration::from_secs(5))
         .expect("first request should hold the sole admission lease");
 
+    let rejection_started = Instant::now();
     let rejected = get(gateway_address, "/api/over-capacity");
+    let rejection_elapsed = rejection_started.elapsed();
     assert!(
         rejected.starts_with("HTTP/1.1 503"),
         "request above max_in_flight_requests must fail fast: {rejected:?}"
+    );
+    assert!(
+        rejection_elapsed < Duration::from_secs(1),
+        "local saturation rejection must complete materially before the 2s upstream read budget; elapsed={rejection_elapsed:?}"
     );
 
     let readiness = get(gateway_address, "/readyz");
@@ -214,8 +234,10 @@ fn compiled_pg_erd_in_flight_saturation_rejects_recovers_and_preserves_control_p
 
     let metrics = get(metrics_address, "/metrics");
     assert!(
-        metrics.contains("cwl_pingora_gateway_backpressure_rejections_total 1"),
-        "saturation must be visible through low-cardinality gateway telemetry: {metrics:?}"
+        metrics
+            .lines()
+            .any(|line| line == "cwl_pingora_gateway_backpressure_rejections_total 1"),
+        "saturation must expose exactly one rejected request in low-cardinality gateway telemetry: {metrics:?}"
     );
 
     release_response_tx
