@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 use tempfile::NamedTempFile;
 
 const MAX_RESPONSE_HEADER_BYTES: usize = 64 * 1024;
+const ORIGIN_CONTACT_OBSERVATION_WINDOW: Duration = Duration::from_millis(500);
 
 struct GatewayProcess(Child);
 
@@ -166,14 +167,23 @@ fn assert_ready(address: SocketAddr) {
     );
 }
 
+/// Observes the origin for a fixed post-response window so delayed connection attempts cannot pass.
 fn assert_origin_untouched(origin: &TcpListener) {
     origin
         .set_nonblocking(true)
         .expect("fixture listener should become nonblocking");
-    match origin.accept() {
-        Err(error) if error.kind() == ErrorKind::WouldBlock => {}
-        Ok(_) => panic!("uncharacterized protocol transition must not contact an origin"),
-        Err(error) => panic!("unexpected origin accept failure: {error}"),
+    let deadline = Instant::now() + ORIGIN_CONTACT_OBSERVATION_WINDOW;
+    loop {
+        match origin.accept() {
+            Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                if Instant::now() >= deadline {
+                    return;
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            Ok(_) => panic!("uncharacterized protocol transition must not contact an origin"),
+            Err(error) => panic!("unexpected origin accept failure: {error}"),
+        }
     }
 }
 
