@@ -50,11 +50,13 @@ fn measured_load_job_uses_only_the_bounded_rust_origin() {
         "load lane must format-check the Rust origin before measured traffic"
     );
     assert!(
-        normalized_scripts.contains("rustc --edition 2021 -D warnings --test tests/load/load_origin.rs"),
+        normalized_scripts
+            .contains("rustc --edition 2021 -D warnings --test tests/load/load_origin.rs"),
         "load lane must run the Rust origin's direct fixture contract"
     );
     assert!(
-        normalized_scripts.contains("rustc --edition 2021 -D warnings -C opt-level=3 -C debuginfo=0"),
+        normalized_scripts
+            .contains("rustc --edition 2021 -D warnings -C opt-level=3 -C debuginfo=0"),
         "measured origin must be optimized Rust rather than an interpreter fixture"
     );
     assert!(
