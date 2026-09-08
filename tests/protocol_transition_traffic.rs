@@ -80,7 +80,10 @@ fn wait_until_listening(address: SocketAddr, process: &mut Child) {
         if TcpStream::connect_timeout(&address, Duration::from_millis(100)).is_ok() {
             return;
         }
-        assert!(Instant::now() < deadline, "gateway did not start within 10s");
+        assert!(
+            Instant::now() < deadline,
+            "gateway did not start within 10s"
+        );
         thread::sleep(Duration::from_millis(25));
     }
 }
@@ -115,7 +118,10 @@ fn response_headers(address: SocketAddr, request: &[u8]) -> String {
     let mut buffer = [0_u8; 1024];
     loop {
         let now = Instant::now();
-        assert!(now < deadline, "gateway response header exceeded 5s deadline");
+        assert!(
+            now < deadline,
+            "gateway response header exceeded 5s deadline"
+        );
         downstream
             .set_read_timeout(Some(deadline.saturating_duration_since(now)))
             .expect("downstream timeout should be configurable");
@@ -189,7 +195,10 @@ fn assert_origin_untouched(origin: &TcpListener) {
 
 #[test]
 fn status_parser_rejects_numeric_prefix_and_protocol_case_lookalikes() {
-    assert_eq!(http1_status_code("HTTP/1.1 501 Not Implemented\r\n"), Some(501));
+    assert_eq!(
+        http1_status_code("HTTP/1.1 501 Not Implemented\r\n"),
+        Some(501)
+    );
     assert_eq!(http1_status_code("HTTP/1.1 5010 Not Implemented\r\n"), None);
     assert_eq!(http1_status_code("http/1.1 501 Not Implemented\r\n"), None);
 }
@@ -230,7 +239,9 @@ fn pg_erd_binary_rejects_websocket_upgrade_before_route_origin_contact() {
     let backend = TcpListener::bind("127.0.0.1:0").expect("backend fixture should bind");
     let frontend = TcpListener::bind("127.0.0.1:0").expect("frontend fixture should bind");
     let backend_address = backend.local_addr().expect("backend address should exist");
-    let frontend_address = frontend.local_addr().expect("frontend address should exist");
+    let frontend_address = frontend
+        .local_addr()
+        .expect("frontend address should exist");
     let (listener_reservation, metrics_reservation) = reserve_gateway_listeners();
     let listener = listener_reservation
         .local_addr()
