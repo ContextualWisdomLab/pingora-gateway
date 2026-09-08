@@ -228,11 +228,7 @@ impl GatewayConfig {
         let mut names = HashSet::with_capacity(self.upstreams.len());
         for upstream in &self.upstreams {
             upstream.validate()?;
-            validate_upstream_authority_separation(
-                self.listener,
-                self.metrics_listener,
-                upstream,
-            )?;
+            validate_upstream_authority_separation(self.listener, self.metrics_listener, upstream)?;
             let normalized_name = upstream.name.trim();
             if !names.insert(normalized_name) {
                 return Err(GatewayConfigError::DuplicateUpstreamName {
