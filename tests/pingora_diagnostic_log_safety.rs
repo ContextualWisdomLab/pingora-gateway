@@ -90,7 +90,9 @@ impl GatewayProcess {
             .child
             .take()
             .expect("gateway child should still be owned");
-        child.kill().expect("gateway should be terminable after traffic");
+        child
+            .kill()
+            .expect("gateway should be terminable after traffic");
         child
             .wait()
             .expect("gateway should terminate after traffic capture");
@@ -184,17 +186,17 @@ fn read_request_headers(stream: &mut TcpStream) -> String {
     let mut buffer = [0_u8; 1024];
     loop {
         let now = Instant::now();
-        assert!(
-            now < deadline,
-            "origin request header exceeded 5s deadline"
-        );
+        assert!(now < deadline, "origin request header exceeded 5s deadline");
         stream
             .set_read_timeout(Some(deadline.saturating_duration_since(now)))
             .expect("origin read timeout should be configurable");
         let read = stream
             .read(&mut buffer)
             .expect("origin request should be readable");
-        assert!(read > 0, "gateway closed origin request before headers completed");
+        assert!(
+            read > 0,
+            "gateway closed origin request before headers completed"
+        );
         bytes.extend_from_slice(&buffer[..read]);
         assert!(
             bytes.len() <= MAX_REQUEST_HEADER_BYTES,
@@ -258,10 +260,7 @@ fn broad_runtime_diagnostics_do_not_log_request_secrets() {
             request.split("\r\n").next(),
             Some("GET /diagnostic-secret?token=query-secret HTTP/1.1")
         );
-        assert_eq!(
-            header_values(&request, "Host"),
-            vec!["host-secret.example"]
-        );
+        assert_eq!(header_values(&request, "Host"), vec!["host-secret.example"]);
         assert_eq!(
             header_values(&request, "Authorization"),
             vec!["Bearer authorization-secret"]
@@ -330,10 +329,8 @@ fn broad_runtime_diagnostics_do_not_log_request_secrets() {
     process.wait_until_stderr_line_ends_with(
         "gateway_request status=200 outcome=ok request_body_bytes=0",
     );
-    process.wait_until_stderr_occurrences_exceed(
-        REDACTED_PINGORA_DIAGNOSTIC,
-        redacted_before_request,
-    );
+    process
+        .wait_until_stderr_occurrences_exceed(REDACTED_PINGORA_DIAGNOSTIC, redacted_before_request);
     let captured = process.capture_stderr();
     for forbidden in [
         "/diagnostic-secret",
