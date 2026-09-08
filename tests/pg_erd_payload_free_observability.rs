@@ -71,11 +71,22 @@ impl Drop for GatewayProcess {
     }
 }
 
-fn reserve_loopback() -> SocketAddr {
-    TcpListener::bind("127.0.0.1:0")
-        .expect("loopback port should be reservable")
+/// Reserves both process listeners at once so sequential bind-and-drop cannot
+/// reuse the first ephemeral port and manufacture an Admin Config collision.
+fn reserve_gateway_addresses() -> (TcpListener, TcpListener, SocketAddr, SocketAddr) {
+    let gateway = TcpListener::bind("127.0.0.1:0").expect("gateway port should be reservable");
+    let metrics = TcpListener::bind("127.0.0.1:0").expect("metrics port should be reservable");
+    let gateway_address = gateway
         .local_addr()
-        .expect("reservation should expose an address")
+        .expect("gateway reservation should expose an address");
+    let metrics_address = metrics
+        .local_addr()
+        .expect("metrics reservation should expose an address");
+    assert_ne!(
+        gateway_address, metrics_address,
+        "traffic and metrics reservations must remain distinct"
+    );
+    (gateway, metrics, gateway_address, metrics_address)
 }
 
 fn write_config(
@@ -196,14 +207,16 @@ fn compiled_pg_erd_shared_access_log_excludes_request_sensitive_material() {
         .local_addr()
         .expect("frontend address should exist");
 
-    let gateway_address = reserve_loopback();
-    let metrics_address = reserve_loopback();
+    let (gateway_reservation, metrics_reservation, gateway_address, metrics_address) =
+        reserve_gateway_addresses();
     let config = write_config(
         gateway_address,
         metrics_address,
         backend_address,
         frontend_address,
     );
+    drop(gateway_reservation);
+    drop(metrics_reservation);
     let mut process = start_gateway(&config, gateway_address, metrics_address);
 
     let response = raw_request(
