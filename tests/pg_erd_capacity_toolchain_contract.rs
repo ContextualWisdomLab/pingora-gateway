@@ -1,9 +1,17 @@
 const CAPACITY_WORKFLOW: &str = include_str!("../.github/workflows/pg-erd-capacity.yml");
 
 fn contains_cargo_toolchain_selector(source: &str) -> bool {
-    source.lines().any(|line| {
+    let logical_source = source.replace("\\\r\n", "").replace("\\\n", "");
+
+    logical_source.lines().any(|line| {
         let mut previous_was_cargo = false;
-        for token in line.split_whitespace() {
+        for token in line.split(|character: char| {
+            character.is_ascii_whitespace()
+                || matches!(character, ';' | '&' | '|' | '(' | ')')
+        }) {
+            if token.is_empty() {
+                continue;
+            }
             if previous_was_cargo && token.starts_with('+') {
                 return true;
             }
@@ -43,7 +51,7 @@ fn capacity_lane_uses_fixed_release_compiler_before_building_candidate() {
 }
 
 #[test]
-fn cargo_toolchain_selector_detection_is_whitespace_insensitive() {
+fn cargo_toolchain_selector_detection_covers_shell_layout_variants() {
     assert!(contains_cargo_toolchain_selector("cargo +1.98.0 build"));
     assert!(contains_cargo_toolchain_selector("cargo  +1.98.0 build"));
     assert!(contains_cargo_toolchain_selector("  cargo\t+nightly test"));
@@ -52,6 +60,15 @@ fn cargo_toolchain_selector_detection_is_whitespace_insensitive() {
     ));
     assert!(contains_cargo_toolchain_selector(
         "cargo build && cargo +1.98.0 test"
+    ));
+    assert!(contains_cargo_toolchain_selector(
+        "cargo build;cargo +nightly test"
+    ));
+    assert!(contains_cargo_toolchain_selector(
+        "cargo build&&cargo +1.98.0 test"
+    ));
+    assert!(contains_cargo_toolchain_selector(
+        "cargo \\\n  +nightly test"
     ));
     assert!(!contains_cargo_toolchain_selector("cargo build --release"));
 }
