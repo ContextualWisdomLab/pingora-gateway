@@ -213,6 +213,32 @@ fn read_request_headers(stream: &mut TcpStream) -> String {
     }
 }
 
+/// Extracts Content-Length field values by case-insensitive field identity and trimmed field value.
+fn content_length_values(headers: &str) -> Vec<&str> {
+    headers
+        .lines()
+        .filter_map(|line| line.trim_end_matches('\r').split_once(':'))
+        .filter(|(name, _)| name.eq_ignore_ascii_case("content-length"))
+        .map(|(_, value)| value.trim())
+        .collect()
+}
+
+/// Locks the framing oracle against lookalike names and duplicate/conflicting field values.
+#[test]
+fn content_length_parser_preserves_field_identity_and_cardinality_evidence() {
+    assert!(content_length_values("HTTP/1.1 200 OK\r\nX-Content-Length: 20\r\n\r\n").is_empty());
+    assert_eq!(
+        content_length_values("HTTP/1.1 200 OK\r\ncOnTeNt-LeNgTh:\t20\r\n\r\n"),
+        vec!["20"]
+    );
+    assert_eq!(
+        content_length_values(
+            "HTTP/1.1 200 OK\r\nContent-Length: 20\r\ncontent-length: 21\r\n\r\n"
+        ),
+        vec!["20", "21"]
+    );
+}
+
 /// Proves a post-commit origin truncation preserves framing, terminates downstream and keeps recovery usable.
 #[test]
 fn compiled_pg_erd_truncated_response_stays_committed_and_preserves_independent_routing() {
@@ -281,24 +307,17 @@ fn compiled_pg_erd_truncated_response_stays_committed_and_preserves_independent_
         .position(|window| window == b"\r\n\r\n")
         .map(|position| position + 4)
         .expect("committed partial response must contain a complete header block");
-    let headers = String::from_utf8_lossy(&partial[..header_end]).to_ascii_lowercase();
+    let raw_headers = String::from_utf8_lossy(&partial[..header_end]);
+    let headers = raw_headers.to_ascii_lowercase();
     assert!(
         headers.starts_with("http/1.1 200"),
         "a post-header upstream failure cannot be rewritten as a new status: {headers:?}"
     );
-    let content_length_headers: Vec<_> = headers
-        .lines()
-        .filter(|line| line.starts_with("content-length:"))
-        .collect();
+    let content_lengths = content_length_values(raw_headers.as_ref());
     assert_eq!(
-        content_length_headers.len(),
-        1,
-        "the committed response must retain exactly one Content-Length field: {headers:?}"
-    );
-    assert_eq!(
-        content_length_headers[0],
-        "content-length: 20",
-        "the committed response must retain its declared framing for this fixture: {headers:?}"
+        content_lengths,
+        vec!["20"],
+        "the committed response must retain exactly one Content-Length field whose value is 20: {raw_headers:?}"
     );
     let body = &partial[header_end..];
     assert_eq!(body, b"partial");
