@@ -15,6 +15,7 @@ use cwl_pingora_gateway::startup::GatewayCommand;
 use pingora::prelude::{http_proxy_service, Server};
 use pingora::server::RunArgs;
 
+/// Initializes payload-safe logging, validates Admin Config, then grants listener authority.
 fn main() -> ExitCode {
     init_runtime_logging();
 
