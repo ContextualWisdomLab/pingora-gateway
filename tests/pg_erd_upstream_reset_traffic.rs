@@ -166,6 +166,21 @@ fn read_request_headers(stream: &mut TcpStream) -> String {
     }
 }
 
+/// Parses only an exact HTTP/1.1 three-digit status token so protocol-case or
+/// numeric-prefix lookalikes cannot satisfy the response-status oracle.
+fn exact_http_1_1_status_code(response: &str) -> Option<u16> {
+    let status_line = response.split("\r\n").next()?;
+    let mut fields = status_line.split_ascii_whitespace();
+    if fields.next()? != "HTTP/1.1" {
+        return None;
+    }
+    let status = fields.next()?;
+    if status.len() != 3 || !status.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    status.parse().ok()
+}
+
 /// Requires a complete Prometheus sample line so numeric prefixes cannot
 /// manufacture the expected exact counter value.
 fn contains_exact_metric_sample(metrics: &str, sample: &str) -> bool {
@@ -196,6 +211,13 @@ fn reset_on_close(stream: &TcpStream) {
         "Linux SO_LINGER(0) should be configurable for the reset fixture: {}",
         std::io::Error::last_os_error()
     );
+}
+
+#[test]
+fn exact_status_code_rejects_case_and_numeric_prefix_lookalikes() {
+    assert_eq!(exact_http_1_1_status_code("HTTP/1.1 502 Bad Gateway\r\n"), Some(502));
+    assert_eq!(exact_http_1_1_status_code("http/1.1 502 Bad Gateway\r\n"), None);
+    assert_eq!(exact_http_1_1_status_code("HTTP/1.1 5020 Bad Gateway\r\n"), None);
 }
 
 #[test]
@@ -255,8 +277,9 @@ fn compiled_pg_erd_pre_header_reset_returns_502_and_preserves_independent_routin
 
     let started = Instant::now();
     let reset_response = get(gateway_address, "/api/reset");
-    assert!(
-        reset_response.starts_with("HTTP/1.1 502"),
+    assert_eq!(
+        exact_http_1_1_status_code(&reset_response),
+        Some(502),
         "a pre-header upstream reset must fail as gateway transport failure without failover: {reset_response:?}"
     );
     assert!(
@@ -265,8 +288,9 @@ fn compiled_pg_erd_pre_header_reset_returns_502_and_preserves_independent_routin
     );
 
     let readiness = get(gateway_address, "/readyz");
-    assert!(
-        readiness.starts_with("HTTP/1.1 200"),
+    assert_eq!(
+        exact_http_1_1_status_code(&readiness),
+        Some(200),
         "one upstream reset must not poison process readiness: {readiness:?}"
     );
 
@@ -277,8 +301,9 @@ fn compiled_pg_erd_pre_header_reset_returns_502_and_preserves_independent_routin
     );
 
     let recovered = get(gateway_address, "/after-reset");
-    assert!(
-        recovered.starts_with("HTTP/1.1 200"),
+    assert_eq!(
+        exact_http_1_1_status_code(&recovered),
+        Some(200),
         "an independent characterized route must remain usable after an upstream reset: {recovered:?}"
     );
     assert!(recovered.ends_with("\r\n\r\nrecovered"));
