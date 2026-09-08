@@ -6,7 +6,7 @@
 //! the test cannot pass by rejecting or stripping the request before proxy delivery.
 
 use std::fs;
-use std::io::{Read, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::process::{Child, Command, Stdio};
 use std::thread;
@@ -14,6 +14,7 @@ use std::time::{Duration, Instant};
 
 use tempfile::NamedTempFile;
 
+const MAX_REQUEST_HEADER_BYTES: usize = 64 * 1024;
 const REDACTED_PINGORA_DIAGNOSTIC: &str =
     "Pingora diagnostic message redacted by gateway payload-minimization policy";
 
@@ -70,11 +71,19 @@ impl Drop for GatewayProcess {
     }
 }
 
-fn reserve_loopback() -> SocketAddr {
-    TcpListener::bind("127.0.0.1:0")
-        .expect("loopback port should be reservable")
-        .local_addr()
-        .expect("reservation should expose an address")
+/// Holds both ephemeral gateway listeners simultaneously so their addresses cannot be reused.
+fn reserve_gateway_listeners() -> (TcpListener, TcpListener) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("traffic port should be reservable");
+    let metrics_listener =
+        TcpListener::bind("127.0.0.1:0").expect("metrics port should be reservable");
+    assert_ne!(
+        listener.local_addr().expect("traffic address should exist"),
+        metrics_listener
+            .local_addr()
+            .expect("metrics address should exist"),
+        "traffic and metrics reservations must remain distinct"
+    );
+    (listener, metrics_listener)
 }
 
 fn write_config(
@@ -103,22 +112,103 @@ fn wait_until_listening(address: SocketAddr, process: &mut Child) {
         if TcpStream::connect_timeout(&address, Duration::from_millis(100)).is_ok() {
             return;
         }
-        assert!(Instant::now() < deadline, "gateway did not start within 10s");
+        assert!(
+            Instant::now() < deadline,
+            "gateway did not start within 10s"
+        );
         thread::sleep(Duration::from_millis(25));
     }
 }
 
+/// Accepts the characterized origin connection inside a finite fixture deadline.
+fn accept_origin(origin: &TcpListener) -> TcpStream {
+    origin
+        .set_nonblocking(true)
+        .expect("origin listener should become nonblocking");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        match origin.accept() {
+            Ok((stream, _)) => return stream,
+            Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                assert!(
+                    Instant::now() < deadline,
+                    "proxied request did not reach origin within 5s"
+                );
+                thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => panic!("unexpected origin accept failure: {error}"),
+        }
+    }
+}
+
+/// Reads one origin request header inside one whole-header deadline and finite byte budget.
 fn read_request_headers(stream: &mut TcpStream) -> String {
+    let deadline = Instant::now() + Duration::from_secs(5);
     let mut bytes = Vec::new();
     let mut buffer = [0_u8; 1024];
     loop {
-        let read = stream.read(&mut buffer).expect("origin request should be readable");
+        let now = Instant::now();
+        assert!(
+            now < deadline,
+            "origin request header exceeded 5s deadline"
+        );
+        stream
+            .set_read_timeout(Some(deadline.saturating_duration_since(now)))
+            .expect("origin read timeout should be configurable");
+        let read = stream
+            .read(&mut buffer)
+            .expect("origin request should be readable");
         assert!(read > 0, "gateway closed origin request before headers completed");
         bytes.extend_from_slice(&buffer[..read]);
+        assert!(
+            bytes.len() <= MAX_REQUEST_HEADER_BYTES,
+            "origin request header exceeded {MAX_REQUEST_HEADER_BYTES} bytes"
+        );
         if bytes.windows(4).any(|window| window == b"\r\n\r\n") {
             return String::from_utf8_lossy(&bytes).into_owned();
         }
     }
+}
+
+/// Returns values only for semantically exact HTTP field names, ignoring field-name case and OWS.
+fn header_values<'a>(request: &'a str, expected_name: &str) -> Vec<&'a str> {
+    request
+        .split("\r\n")
+        .skip(1)
+        .take_while(|line| !line.is_empty())
+        .filter_map(|line| line.split_once(':'))
+        .filter_map(|(name, value)| {
+            name.eq_ignore_ascii_case(expected_name)
+                .then_some(value.trim())
+        })
+        .collect()
+}
+
+/// Parses only an exact HTTP/1.1 three-digit status token from the response status line.
+fn http1_status_code(response: &str) -> Option<u16> {
+    let status_line = response.split("\r\n").next()?;
+    let mut fields = status_line.split_ascii_whitespace();
+    if fields.next()? != "HTTP/1.1" {
+        return None;
+    }
+    let status = fields.next()?;
+    if status.len() != 3 || !status.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    status.parse().ok()
+}
+
+#[test]
+fn exact_header_lookup_rejects_lookalike_fields() {
+    let request = "GET / HTTP/1.1\r\nX-Host: attacker.example\r\nhOsT: expected.example\r\n\r\n";
+    assert_eq!(header_values(request, "Host"), vec!["expected.example"]);
+}
+
+#[test]
+fn status_parser_rejects_numeric_prefix_and_protocol_case_lookalikes() {
+    assert_eq!(http1_status_code("HTTP/1.1 200 OK\r\n"), Some(200));
+    assert_eq!(http1_status_code("HTTP/1.1 2000 OK\r\n"), None);
+    assert_eq!(http1_status_code("http/1.1 200 OK\r\n"), None);
 }
 
 #[test]
@@ -126,21 +216,39 @@ fn broad_runtime_diagnostics_do_not_log_request_secrets() {
     let origin = TcpListener::bind("127.0.0.1:0").expect("origin fixture should bind");
     let origin_address = origin.local_addr().expect("origin address should exist");
     let origin_thread = thread::spawn(move || {
-        let (mut stream, _) = origin.accept().expect("proxied request should reach origin");
+        let mut stream = accept_origin(&origin);
         let request = read_request_headers(&mut stream);
-        let lower = request.to_ascii_lowercase();
-        assert!(lower.starts_with("get /diagnostic-secret?token=query-secret http/1.1\r\n"));
-        assert!(lower.contains("host: host-secret.example\r\n"));
-        assert!(lower.contains("authorization: bearer authorization-secret\r\n"));
-        assert!(lower.contains("cookie: session=cookie-secret\r\n"));
+        assert_eq!(
+            request.split("\r\n").next(),
+            Some("GET /diagnostic-secret?token=query-secret HTTP/1.1")
+        );
+        assert_eq!(
+            header_values(&request, "Host"),
+            vec!["host-secret.example"]
+        );
+        assert_eq!(
+            header_values(&request, "Authorization"),
+            vec!["Bearer authorization-secret"]
+        );
+        assert_eq!(
+            header_values(&request, "Cookie"),
+            vec!["session=cookie-secret"]
+        );
         stream
             .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
             .expect("origin response should be writable");
     });
 
-    let listener = reserve_loopback();
-    let metrics_listener = reserve_loopback();
+    let (listener_reservation, metrics_reservation) = reserve_gateway_listeners();
+    let listener = listener_reservation
+        .local_addr()
+        .expect("traffic reservation should expose an address");
+    let metrics_listener = metrics_reservation
+        .local_addr()
+        .expect("metrics reservation should expose an address");
     let config = write_config(listener, metrics_listener, origin_address);
+    drop(listener_reservation);
+    drop(metrics_reservation);
     let stderr = NamedTempFile::new().expect("gateway stderr capture should be writable");
     let stderr_writer = stderr
         .reopen()
@@ -173,7 +281,11 @@ fn broad_runtime_diagnostics_do_not_log_request_secrets() {
     downstream
         .read_to_string(&mut response)
         .expect("gateway response should be readable");
-    assert!(response.starts_with("HTTP/1.1 200"), "request should proxy: {response:?}");
+    assert_eq!(
+        http1_status_code(&response),
+        Some(200),
+        "request should proxy successfully: {response:?}"
+    );
     origin_thread
         .join()
         .expect("origin diagnostic fixture should complete");
