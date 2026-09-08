@@ -9,13 +9,14 @@ use std::fmt::Display;
 use std::process::ExitCode;
 
 use cwl_pingora_gateway::gateway_proxy::GatewayProxy;
+use cwl_pingora_gateway::logging_policy::init_runtime_logging;
 use cwl_pingora_gateway::runtime_policy::build_server_conf;
 use cwl_pingora_gateway::startup::GatewayCommand;
 use pingora::prelude::{http_proxy_service, Server};
 use pingora::server::RunArgs;
 
 fn main() -> ExitCode {
-    env_logger::init();
+    init_runtime_logging();
 
     let args: Vec<_> = env::args_os().collect();
     let command = match GatewayCommand::parse(&args) {
