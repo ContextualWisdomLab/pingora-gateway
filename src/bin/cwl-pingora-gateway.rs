@@ -54,6 +54,7 @@ fn main() -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// Emits a bounded startup/configuration error and returns the stable failure exit code.
 fn exit_with_error(error: impl Display) -> ExitCode {
     eprintln!("{error}");
     ExitCode::from(2)
