@@ -105,6 +105,24 @@ jobs:
           set -euo pipefail
           python3 tests/load/upstream_fixture.py >/tmp/upstream-fixture.log 2>&1 &
           upstream_pid=$!
+          gateway_pid=""
+
+          cleanup() {
+            status=$?
+            if [ -n "$gateway_pid" ]; then
+              kill "$gateway_pid" >/dev/null 2>&1 || true
+              wait "$gateway_pid" >/dev/null 2>&1 || true
+            fi
+            kill "$upstream_pid" >/dev/null 2>&1 || true
+            wait "$upstream_pid" >/dev/null 2>&1 || true
+            if [ "$status" -ne 0 ]; then
+              echo "--- gateway log ---"
+              cat /tmp/gateway-load.log || true
+              echo "--- upstream fixture log ---"
+              cat /tmp/upstream-fixture.log || true
+            fi
+          }
+          trap cleanup EXIT
 
           cat >/tmp/gateway-load.yaml <<'EOF'
           version: 1
@@ -125,21 +143,22 @@ jobs:
                 idle_ms: 5000
           EOF
 
+          # Prove the measured origin has bound before gateway startup and measured traffic.
+          # This is fixture liveness, not a gateway-route warm-up.
+          for _ in $(seq 1 80); do
+            if curl --fail --silent --show-error --max-time 1 http://127.0.0.1:18081/fixture-ready >/dev/null; then
+              break
+            fi
+            if ! kill -0 "$upstream_pid" 2>/dev/null; then
+              echo "upstream fixture exited before becoming ready" >&2
+              exit 1
+            fi
+            sleep 0.05
+          done
+          curl --fail --silent --show-error --max-time 1 http://127.0.0.1:18081/fixture-ready >/dev/null
+
           target/release/cwl-pingora-gateway --config /tmp/gateway-load.yaml >/tmp/gateway-load.log 2>&1 &
           gateway_pid=$!
-          cleanup() {
-            status=$?
-            kill "$gateway_pid" "$upstream_pid" >/dev/null 2>&1 || true
-            wait "$gateway_pid" >/dev/null 2>&1 || true
-            wait "$upstream_pid" >/dev/null 2>&1 || true
-            if [ "$status" -ne 0 ]; then
-              echo "--- gateway log ---"
-              cat /tmp/gateway-load.log || true
-              echo "--- upstream fixture log ---"
-              cat /tmp/upstream-fixture.log || true
-            fi
-          }
-          trap cleanup EXIT
 
           for _ in $(seq 1 80); do
             if curl --fail --silent --show-error --max-time 1 http://127.0.0.1:18080/livez >/dev/null; then
@@ -253,7 +272,7 @@ jobs:
           for _ in $(seq 1 80); do
             if curl --fail --silent --show-error --max-time 1 http://127.0.0.1:6288/livez >/dev/null \
               && metrics_content_type="$(curl --fail --silent --show-error --max-time 1 --output /dev/null --write-out '%{content_type}' http://127.0.0.1:6289/metrics)" \
-              && [[ "${metrics_content_type}" == text/plain* ]]; then
+              && [[ "${metrics_content_type%%;*}" == "text/plain" ]]; then
               exit 0
             fi
             if ! docker inspect "${cid}" --format '{{.State.Running}}' | grep -qx true; then

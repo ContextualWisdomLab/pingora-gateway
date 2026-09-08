@@ -7,9 +7,12 @@
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::process::{Child, Command, Stdio};
+use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+#[cfg(unix)]
+use cwl_pingora_gateway::runtime_policy::V1_TERMINATION_BUDGET_SECONDS;
 use tempfile::NamedTempFile;
 
 struct GatewayProcess(Child);
@@ -33,11 +36,12 @@ fn write_config(
     metrics_listener: SocketAddr,
     backend: SocketAddr,
     frontend: SocketAddr,
+    max_in_flight_requests: usize,
 ) -> NamedTempFile {
     let mut file = NamedTempFile::new().expect("temporary config should be writable");
     writeln!(
         file,
-        "version: 1\nlistener: {listener}\nmetrics_listener: {metrics_listener}\nmax_request_body_bytes: 8\nmax_in_flight_requests: 8\nupstream_keepalive_pool_size: 4\nupstreams:\n  - name: backend\n    address: {backend}\n    tls: false\n    timeouts:\n      connection_ms: 500\n      total_connection_ms: 1000\n      read_ms: 2000\n      write_ms: 2000\n      idle_ms: 5000\n  - name: frontend\n    address: {frontend}\n    tls: false\n    timeouts:\n      connection_ms: 500\n      total_connection_ms: 1000\n      read_ms: 2000\n      write_ms: 2000\n      idle_ms: 5000"
+        "version: 1\nlistener: {listener}\nmetrics_listener: {metrics_listener}\nmax_request_body_bytes: 8\nmax_in_flight_requests: {max_in_flight_requests}\nupstream_keepalive_pool_size: 4\nupstreams:\n  - name: backend\n    address: {backend}\n    tls: false\n    timeouts:\n      connection_ms: 500\n      total_connection_ms: 1000\n      read_ms: 2000\n      write_ms: 2000\n      idle_ms: 5000\n  - name: frontend\n    address: {frontend}\n    tls: false\n    timeouts:\n      connection_ms: 500\n      total_connection_ms: 1000\n      read_ms: 2000\n      write_ms: 2000\n      idle_ms: 5000"
     )
     .expect("migration config should be written");
     file
@@ -60,6 +64,47 @@ fn wait_until_listening(address: SocketAddr, process: &mut Child) {
             "gateway did not start within 10s"
         );
         thread::sleep(Duration::from_millis(25));
+    }
+}
+
+fn terminate_gateway(process: &mut Child) {
+    #[cfg(unix)]
+    {
+        let signal_status = Command::new("kill")
+            .args(["-TERM", &process.id().to_string()])
+            .status()
+            .expect("system kill command should send SIGTERM");
+        assert!(signal_status.success(), "SIGTERM delivery should succeed");
+
+        let deadline = Instant::now() + Duration::from_secs(V1_TERMINATION_BUDGET_SECONDS);
+        loop {
+            if let Some(exit_status) = process
+                .try_wait()
+                .expect("gateway process state should be readable")
+            {
+                assert!(
+                    exit_status.success(),
+                    "SIGTERM graceful shutdown should exit successfully: {exit_status}"
+                );
+                break;
+            }
+            if Instant::now() >= deadline {
+                let _ = process.kill();
+                let _ = process.wait();
+                panic!("gateway did not terminate before the external hard-kill budget");
+            }
+            thread::sleep(Duration::from_millis(25));
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        process
+            .kill()
+            .expect("gateway process should still be running");
+        process
+            .wait()
+            .expect("terminated gateway process should be reapable");
     }
 }
 
@@ -153,6 +198,18 @@ fn assert_characterized_response_headers(response: &str) {
     assert!(!lowered.contains("x-frame-options: sameorigin"));
 }
 
+fn spawn_gateway(config: &NamedTempFile) -> GatewayProcess {
+    let child = Command::new(env!("CARGO_BIN_EXE_cwl-pingora-pg-erd-migration"))
+        .args(["--config", config.path().to_str().expect("UTF-8 temp path")])
+        .env("RUST_LOG", "info")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("compiled pg-erd migration binary should start");
+    GatewayProcess(child)
+}
+
 #[test]
 fn compiled_pg_erd_listener_preserves_health_route_header_and_forwarding_boundaries() {
     let backend = TcpListener::bind("127.0.0.1:0").expect("backend fixture should bind");
@@ -187,19 +244,12 @@ fn compiled_pg_erd_listener_preserves_health_route_header_and_forwarding_boundar
         metrics_address,
         backend_address,
         frontend_address,
+        8,
     );
 
-    let mut child = Command::new(env!("CARGO_BIN_EXE_cwl-pingora-pg-erd-migration"))
-        .args(["--config", config.path().to_str().expect("UTF-8 temp path")])
-        .env("RUST_LOG", "info")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("compiled pg-erd migration binary should start");
-    wait_until_listening(gateway_address, &mut child);
-    wait_until_listening(metrics_address, &mut child);
-    let _process = GatewayProcess(child);
+    let mut process = spawn_gateway(&config);
+    wait_until_listening(gateway_address, &mut process.0);
+    wait_until_listening(metrics_address, &mut process.0);
 
     for health_path in ["/livez", "/readyz"] {
         let response = get(gateway_address, health_path);
@@ -238,10 +288,95 @@ fn compiled_pg_erd_listener_preserves_health_route_header_and_forwarding_boundar
         "declared body limit must fail before origin delivery: {oversize:?}"
     );
 
+    terminate_gateway(&mut process.0);
+
     backend_thread
         .join()
         .expect("backend fixture should complete");
     frontend_thread
         .join()
         .expect("frontend fixture should complete");
+}
+
+#[test]
+fn compiled_pg_erd_listener_rejects_saturation_before_origin_and_recovers() {
+    let backend = TcpListener::bind("127.0.0.1:0").expect("backend fixture should bind");
+    let backend_address = backend.local_addr().expect("backend address should exist");
+    let frontend = TcpListener::bind("127.0.0.1:0").expect("frontend fixture should bind");
+    let frontend_address = frontend
+        .local_addr()
+        .expect("frontend address should exist");
+    let gateway_address = reserve_loopback();
+    let metrics_address = reserve_loopback();
+    let config = write_config(
+        gateway_address,
+        metrics_address,
+        backend_address,
+        frontend_address,
+        1,
+    );
+
+    let (first_arrived_tx, first_arrived_rx) = mpsc::channel();
+    let (release_first_tx, release_first_rx) = mpsc::channel();
+    let backend_thread = thread::spawn(move || {
+        let (mut first, _) = backend.accept().expect("first request should reach origin");
+        let first_request = read_request(&mut first);
+        assert!(first_request.starts_with("GET /api/hold HTTP/1.1\r\n"));
+        first_arrived_tx
+            .send(())
+            .expect("test should observe first in-flight request");
+        release_first_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("test should release held origin response");
+        first
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nfirst")
+            .expect("held origin response should be writable");
+
+        let (mut recovered, _) = backend
+            .accept()
+            .expect("recovered request should reach origin");
+        let recovered_request = read_request(&mut recovered);
+        assert!(recovered_request.starts_with("GET /api/recovered HTTP/1.1\r\n"));
+        recovered
+            .write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Length: 9\r\nConnection: close\r\n\r\nrecovered",
+            )
+            .expect("recovered origin response should be writable");
+    });
+
+    let mut process = spawn_gateway(&config);
+    wait_until_listening(gateway_address, &mut process.0);
+    wait_until_listening(metrics_address, &mut process.0);
+
+    let first_request = thread::spawn(move || get(gateway_address, "/api/hold"));
+    first_arrived_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("held request should reach origin before saturation probe");
+
+    let rejected = get(gateway_address, "/api/rejected");
+    assert!(
+        rejected.starts_with("HTTP/1.1 503"),
+        "second proxied request must fail before origin while the only lease is held: {rejected:?}"
+    );
+
+    release_first_tx
+        .send(())
+        .expect("held request should be releasable");
+    let first_response = first_request
+        .join()
+        .expect("held request thread should finish");
+    assert!(first_response.starts_with("HTTP/1.1 200"));
+    assert!(first_response.ends_with("first"));
+
+    let recovered = get(gateway_address, "/api/recovered");
+    assert!(
+        recovered.starts_with("HTTP/1.1 200"),
+        "lease must be returned after the first response completes: {recovered:?}"
+    );
+    assert!(recovered.ends_with("recovered"));
+
+    terminate_gateway(&mut process.0);
+    backend_thread
+        .join()
+        .expect("saturation origin fixture should complete");
 }

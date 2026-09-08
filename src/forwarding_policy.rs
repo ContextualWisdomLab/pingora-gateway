@@ -6,7 +6,8 @@
 
 use std::net::IpAddr;
 
-use pingora::prelude::RequestHeader;
+use pingora::prelude::{Error, ErrorType, RequestHeader};
+use pingora::protocols::l4::socket::SocketAddr as PingoraSocketAddr;
 
 /// Scheme observed on the accepted downstream connection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,6 +52,54 @@ impl ForwardingContext {
         }
     }
 
+    /// Derives forwarding authority from an accepted Pingora transport and request Host authority.
+    ///
+    /// The client and listener must both be IP sockets. Host is taken from the request that Pingora
+    /// will send upstream when present, otherwise from the accepted downstream request. Missing,
+    /// non-IP, or non-text authority fails closed before any compatibility forwarding field is
+    /// emitted. This keeps Unix/custom transports and malformed Host bytes from being mistaken for
+    /// pg-erd's characterized TCP edge authority.
+    pub fn from_downstream_transport(
+        client_addr: Option<&PingoraSocketAddr>,
+        listener_addr: Option<&PingoraSocketAddr>,
+        upstream_request: &RequestHeader,
+        downstream_request: &RequestHeader,
+        scheme: DownstreamScheme,
+    ) -> pingora::Result<Self> {
+        let client_ip = client_addr
+            .and_then(PingoraSocketAddr::as_inet)
+            .map(|address| address.ip())
+            .ok_or_else(|| {
+                Error::explain(
+                    ErrorType::HTTPStatus(500),
+                    "pg-erd migration requires an IP downstream client address",
+                )
+            })?;
+        let downstream_port = listener_addr
+            .and_then(PingoraSocketAddr::as_inet)
+            .map(|address| address.port())
+            .ok_or_else(|| {
+                Error::explain(
+                    ErrorType::HTTPStatus(500),
+                    "pg-erd migration requires an IP downstream listener address",
+                )
+            })?;
+        let original_host = upstream_request
+            .headers
+            .get("host")
+            .or_else(|| downstream_request.headers.get("host"))
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned)
+            .ok_or_else(|| {
+                Error::explain(
+                    ErrorType::HTTPStatus(400),
+                    "pg-erd migration requires a valid downstream Host authority",
+                )
+            })?;
+
+        Ok(Self::new(client_ip, original_host, downstream_port, scheme))
+    }
+
     /// Removes request-controlled proxy identity and emits transport-derived compatibility fields.
     ///
     /// `Forwarded` is deliberately removed rather than synthesized: the characterized Traefik
@@ -72,11 +121,19 @@ impl ForwardingContext {
 
         let client_ip = self.client_ip.to_string();
         let downstream_port = self.downstream_port.to_string();
-        upstream_request.insert_header("X-Forwarded-For", client_ip.as_str())?;
-        upstream_request.insert_header("X-Real-IP", client_ip.as_str())?;
+        upstream_request
+            .insert_header("X-Forwarded-For", client_ip.as_str())
+            .expect("IP text and the static forwarding field name are valid HTTP header data");
+        upstream_request
+            .insert_header("X-Real-IP", client_ip.as_str())
+            .expect("IP text and the static real-IP field name are valid HTTP header data");
         upstream_request.insert_header("X-Forwarded-Host", self.original_host.as_str())?;
-        upstream_request.insert_header("X-Forwarded-Port", downstream_port.as_str())?;
-        upstream_request.insert_header("X-Forwarded-Proto", self.scheme.as_str())?;
+        upstream_request
+            .insert_header("X-Forwarded-Port", downstream_port.as_str())
+            .expect("decimal TCP port text is valid HTTP header data");
+        upstream_request
+            .insert_header("X-Forwarded-Proto", self.scheme.as_str())
+            .expect("the bounded downstream scheme is valid HTTP header data");
         Ok(())
     }
 }
