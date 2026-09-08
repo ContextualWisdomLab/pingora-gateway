@@ -21,6 +21,7 @@ use tempfile::NamedTempFile;
 
 const SOL_SOCKET: i32 = 1;
 const SO_LINGER: i32 = 13;
+const MAX_ORIGIN_REQUEST_HEADER_BYTES: usize = 64 * 1024;
 
 #[repr(C)]
 struct Linger {
@@ -53,11 +54,22 @@ enum DownstreamTermination {
     ConnectionReset,
 }
 
-fn reserve_loopback() -> SocketAddr {
-    TcpListener::bind("127.0.0.1:0")
-        .expect("loopback port should be reservable")
+/// Reserves traffic and metrics listeners simultaneously so sequential
+/// bind-and-drop cannot reuse one ephemeral port and invalidate Admin Config.
+fn reserve_gateway_addresses() -> (TcpListener, TcpListener, SocketAddr, SocketAddr) {
+    let gateway = TcpListener::bind("127.0.0.1:0").expect("gateway port should be reservable");
+    let metrics = TcpListener::bind("127.0.0.1:0").expect("metrics port should be reservable");
+    let gateway_address = gateway
         .local_addr()
-        .expect("reservation should expose an address")
+        .expect("gateway reservation should expose an address");
+    let metrics_address = metrics
+        .local_addr()
+        .expect("metrics reservation should expose an address");
+    assert_ne!(
+        gateway_address, metrics_address,
+        "traffic and metrics reservations must remain distinct"
+    );
+    (gateway, metrics, gateway_address, metrics_address)
 }
 
 fn write_config(
@@ -181,17 +193,55 @@ fn get(address: SocketAddr, path: &str) -> String {
     )
 }
 
+/// Keeps origin-side request reads finite so a forwarding defect fails before
+/// the intended reset phase instead of hanging the acceptance suite.
 fn read_request_headers(stream: &mut TcpStream) -> String {
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .expect("origin request timeout should be configurable");
     let mut bytes = Vec::new();
     let mut buffer = [0_u8; 1024];
     loop {
-        let read = stream.read(&mut buffer).expect("origin request should be readable");
-        assert!(read > 0, "gateway closed origin request before headers completed");
+        let read = stream
+            .read(&mut buffer)
+            .expect("origin request should be readable before the fixture deadline");
+        assert!(
+            read > 0,
+            "gateway closed origin request before headers completed"
+        );
         bytes.extend_from_slice(&buffer[..read]);
+        assert!(
+            bytes.len() <= MAX_ORIGIN_REQUEST_HEADER_BYTES,
+            "gateway origin request headers exceeded the fixture bound"
+        );
         if bytes.windows(4).any(|window| window == b"\r\n\r\n") {
             return String::from_utf8_lossy(&bytes).into_owned();
         }
     }
+}
+
+/// Selects one exact HTTP field name case-insensitively and trims field-value
+/// OWS so lookalike fields cannot satisfy a framing assertion.
+fn header_values<'a>(headers: &'a str, name: &str) -> Vec<&'a str> {
+    headers
+        .split("\r\n")
+        .skip(1)
+        .take_while(|line| !line.is_empty())
+        .filter_map(|line| line.split_once(':'))
+        .filter_map(|(field_name, value)| {
+            field_name
+                .eq_ignore_ascii_case(name)
+                .then_some(value.trim())
+        })
+        .collect()
+}
+
+/// Requires a complete Prometheus sample line so numeric-prefix values cannot
+/// manufacture the expected exact counter sample.
+fn contains_exact_metric_sample(metrics: &str, sample: &str) -> bool {
+    metrics
+        .lines()
+        .any(|line| line.trim_end_matches('\r') == sample)
 }
 
 fn reset_on_close(stream: &TcpStream) {
@@ -216,6 +266,21 @@ fn reset_on_close(stream: &TcpStream) {
         "Linux SO_LINGER(0) should be configurable for the reset fixture: {}",
         std::io::Error::last_os_error()
     );
+}
+
+#[test]
+fn exact_response_header_matching_rejects_content_length_lookalikes() {
+    let headers = "HTTP/1.1 200 OK\r\nX-Content-Length: 20\r\ncOnTeNt-LeNgTh: 7\r\n\r\n";
+    assert_eq!(header_values(headers, "Content-Length"), vec!["7"]);
+}
+
+#[test]
+fn exact_metric_sample_rejects_numeric_prefix_lookalikes() {
+    let metrics = "# TYPE cwl_pingora_gateway_request_errors_total counter\ncwl_pingora_gateway_request_errors_total 10\n";
+    assert!(!contains_exact_metric_sample(
+        metrics,
+        "cwl_pingora_gateway_request_errors_total 1"
+    ));
 }
 
 #[test]
@@ -261,14 +326,16 @@ fn compiled_pg_erd_post_commit_reset_preserves_committed_status_and_independent_
             .expect("frontend recovery response should be writable");
     });
 
-    let gateway_address = reserve_loopback();
-    let metrics_address = reserve_loopback();
+    let (gateway_reservation, metrics_reservation, gateway_address, metrics_address) =
+        reserve_gateway_addresses();
     let config = write_config(
         gateway_address,
         metrics_address,
         backend_address,
         frontend_address,
     );
+    drop(gateway_reservation);
+    drop(metrics_reservation);
     let _process = start_gateway(&config, gateway_address, metrics_address);
 
     let (partial, termination) = raw_request_until_committed_then_reset(
@@ -288,14 +355,15 @@ fn compiled_pg_erd_post_commit_reset_preserves_committed_status_and_independent_
         .position(|window| window == b"\r\n\r\n")
         .map(|position| position + 4)
         .expect("post-commit reset response must contain the committed header block");
-    let headers = String::from_utf8_lossy(&partial[..header_end]).to_ascii_lowercase();
+    let headers = String::from_utf8_lossy(&partial[..header_end]);
     assert!(
-        headers.starts_with("http/1.1 200"),
+        headers.to_ascii_lowercase().starts_with("http/1.1 200"),
         "a reset after downstream commitment cannot be rewritten as a second status: {headers:?}"
     );
-    assert!(
-        headers.contains("content-length: 20"),
-        "the committed response must retain its declared framing for this fixture: {headers:?}"
+    assert_eq!(
+        header_values(&headers, "Content-Length"),
+        vec!["20"],
+        "the committed response must retain exactly one declared framing field: {headers:?}"
     );
     let body = &partial[header_end..];
     assert_eq!(body, b"partial");
@@ -312,8 +380,8 @@ fn compiled_pg_erd_post_commit_reset_preserves_committed_status_and_independent_
 
     let metrics = get(metrics_address, "/metrics");
     assert!(
-        metrics.contains("cwl_pingora_gateway_request_errors_total 1"),
-        "the post-commit reset must remain visible through low-cardinality error telemetry: {metrics:?}"
+        contains_exact_metric_sample(&metrics, "cwl_pingora_gateway_request_errors_total 1"),
+        "the post-commit reset must remain visible as exactly one low-cardinality error sample: {metrics:?}"
     );
 
     let recovered = get(gateway_address, "/after-post-commit-reset");
