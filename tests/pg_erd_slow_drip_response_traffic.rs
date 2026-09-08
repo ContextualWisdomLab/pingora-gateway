@@ -71,7 +71,10 @@ fn wait_until_listening(address: SocketAddr, process: &mut Child) {
         if TcpStream::connect_timeout(&address, Duration::from_millis(100)).is_ok() {
             return;
         }
-        assert!(Instant::now() < deadline, "gateway did not start within 10s");
+        assert!(
+            Instant::now() < deadline,
+            "gateway did not start within 10s"
+        );
         thread::sleep(Duration::from_millis(25));
     }
 }
@@ -147,7 +150,9 @@ fn raw_request_until_terminal(
                     started.elapsed(),
                 );
             }
-            Err(error) => panic!("slow-drip downstream response should terminate, not stall: {error}"),
+            Err(error) => {
+                panic!("slow-drip downstream response should terminate, not stall: {error}")
+            }
         }
     }
 }
@@ -170,7 +175,10 @@ fn read_request_headers(stream: &mut TcpStream) -> String {
         let read = stream
             .read(&mut buffer)
             .expect("origin request should be readable inside the fixture deadline");
-        assert!(read > 0, "gateway closed origin request before headers completed");
+        assert!(
+            read > 0,
+            "gateway closed origin request before headers completed"
+        );
         bytes.extend_from_slice(&buffer[..read]);
         assert!(
             bytes.len() <= MAX_REQUEST_HEADER_BYTES,
@@ -223,9 +231,7 @@ fn compiled_pg_erd_terminates_continuous_response_drip_without_poisoning_other_r
         let request = read_request_headers(&mut stream);
         assert!(request.starts_with("GET /api/slow-drip HTTP/1.1\r\n"));
         stream
-            .write_all(
-                b"HTTP/1.1 200 OK\r\nContent-Length: 20\r\nConnection: close\r\n\r\n",
-            )
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 20\r\nConnection: close\r\n\r\n")
             .expect("backend response header should be writable");
 
         for _ in 0..20 {
@@ -234,7 +240,9 @@ fn compiled_pg_erd_terminates_continuous_response_drip_without_poisoning_other_r
                 Err(error)
                     if matches!(
                         error.kind(),
-                        ErrorKind::BrokenPipe | ErrorKind::ConnectionReset | ErrorKind::NotConnected
+                        ErrorKind::BrokenPipe
+                            | ErrorKind::ConnectionReset
+                            | ErrorKind::NotConnected
                     ) =>
                 {
                     break;
@@ -246,7 +254,9 @@ fn compiled_pg_erd_terminates_continuous_response_drip_without_poisoning_other_r
     });
 
     let frontend = TcpListener::bind("127.0.0.1:0").expect("frontend fixture should bind");
-    let frontend_address = frontend.local_addr().expect("frontend address should exist");
+    let frontend_address = frontend
+        .local_addr()
+        .expect("frontend address should exist");
     let frontend_origin = thread::spawn(move || {
         let (mut stream, _) = frontend
             .accept()
