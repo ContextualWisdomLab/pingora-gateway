@@ -23,11 +23,20 @@ impl Drop for GatewayProcess {
     }
 }
 
-fn reserve_loopback() -> SocketAddr {
-    TcpListener::bind("127.0.0.1:0")
-        .expect("loopback port should be reservable")
+fn reserve_distinct_loopbacks() -> (SocketAddr, SocketAddr) {
+    let traffic = TcpListener::bind("127.0.0.1:0").expect("traffic port should be reservable");
+    let metrics = TcpListener::bind("127.0.0.1:0").expect("metrics port should be reservable");
+    let traffic_address = traffic
         .local_addr()
-        .expect("reservation should expose an address")
+        .expect("traffic reservation should expose an address");
+    let metrics_address = metrics
+        .local_addr()
+        .expect("metrics reservation should expose an address");
+    assert_ne!(
+        traffic_address, metrics_address,
+        "traffic and metrics reservations must remain distinct while both sockets are held"
+    );
+    (traffic_address, metrics_address)
 }
 
 fn write_config(
@@ -164,8 +173,7 @@ fn compiled_pg_erd_silent_backend_hits_read_timeout_and_preserves_independent_ro
             .expect("frontend recovery response should be writable");
     });
 
-    let gateway_address = reserve_loopback();
-    let metrics_address = reserve_loopback();
+    let (gateway_address, metrics_address) = reserve_distinct_loopbacks();
     let config = write_config(
         gateway_address,
         metrics_address,
