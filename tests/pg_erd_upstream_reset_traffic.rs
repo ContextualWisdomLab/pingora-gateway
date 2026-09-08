@@ -45,11 +45,22 @@ impl Drop for GatewayProcess {
     }
 }
 
-fn reserve_loopback() -> SocketAddr {
-    TcpListener::bind("127.0.0.1:0")
-        .expect("loopback port should be reservable")
+/// Reserves traffic and metrics listeners concurrently so the OS cannot reuse
+/// the first dropped ephemeral port and manufacture a configuration collision.
+fn reserve_gateway_addresses() -> (TcpListener, TcpListener, SocketAddr, SocketAddr) {
+    let gateway = TcpListener::bind("127.0.0.1:0").expect("gateway port should be reservable");
+    let metrics = TcpListener::bind("127.0.0.1:0").expect("metrics port should be reservable");
+    let gateway_address = gateway
         .local_addr()
-        .expect("reservation should expose an address")
+        .expect("gateway reservation should expose an address");
+    let metrics_address = metrics
+        .local_addr()
+        .expect("metrics reservation should expose an address");
+    assert_ne!(
+        gateway_address, metrics_address,
+        "traffic and metrics reservations must remain distinct"
+    );
+    (gateway, metrics, gateway_address, metrics_address)
 }
 
 fn write_config(
@@ -179,7 +190,9 @@ fn compiled_pg_erd_pre_header_reset_returns_502_and_preserves_independent_routin
     });
 
     let frontend = TcpListener::bind("127.0.0.1:0").expect("frontend fixture should bind");
-    let frontend_address = frontend.local_addr().expect("frontend address should exist");
+    let frontend_address = frontend
+        .local_addr()
+        .expect("frontend address should exist");
     let frontend_origin = thread::spawn(move || {
         let (mut stream, _) = frontend
             .accept()
@@ -193,14 +206,16 @@ fn compiled_pg_erd_pre_header_reset_returns_502_and_preserves_independent_routin
             .expect("frontend recovery response should be writable");
     });
 
-    let gateway_address = reserve_loopback();
-    let metrics_address = reserve_loopback();
+    let (gateway_reservation, metrics_reservation, gateway_address, metrics_address) =
+        reserve_gateway_addresses();
     let config = write_config(
         gateway_address,
         metrics_address,
         backend_address,
         frontend_address,
     );
+    drop(gateway_reservation);
+    drop(metrics_reservation);
     let _process = start_gateway(&config, gateway_address, metrics_address);
 
     let started = Instant::now();
