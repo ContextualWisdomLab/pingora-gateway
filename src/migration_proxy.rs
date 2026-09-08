@@ -192,11 +192,13 @@ fn enforce_response_body_lifetime(
     body: &Option<Bytes>,
     ctx: &MigrationRequestContext,
     now: Instant,
-) -> Result<(), ResponseBodyLifetimeExceeded> {
+) -> pingora::Result<Option<Duration>> {
     if body.as_ref().is_some_and(|chunk| !chunk.is_empty()) {
-        ctx.response_body_lifetime.reject_if_expired(now)?;
+        ctx.response_body_lifetime
+            .reject_if_expired(now)
+            .map_err(response_body_lifetime_to_pingora)?;
     }
-    Ok(())
+    Ok(None)
 }
 
 #[async_trait]
@@ -319,8 +321,6 @@ impl ProxyHttp for MigrationGatewayProxy {
         ctx: &mut Self::CTX,
     ) -> pingora::Result<Option<Duration>> {
         enforce_response_body_lifetime(body, ctx, Instant::now())
-            .map_err(response_body_lifetime_to_pingora)?;
-        Ok(None)
     }
 
     /// Emits only the shared low-cardinality completion observation for the finished request.
