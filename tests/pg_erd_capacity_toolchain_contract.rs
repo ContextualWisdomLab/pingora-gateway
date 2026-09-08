@@ -2,11 +2,12 @@ const CAPACITY_WORKFLOW: &str = include_str!("../.github/workflows/pg-erd-capaci
 
 fn contains_cargo_toolchain_selector(source: &str) -> bool {
     source.lines().any(|line| {
-        let mut tokens = line.split_whitespace();
-        while let Some(token) = tokens.next() {
-            if token == "cargo" {
-                return tokens.next().is_some_and(|next| next.starts_with('+'));
+        let mut previous_was_cargo = false;
+        for token in line.split_whitespace() {
+            if previous_was_cargo && token.starts_with('+') {
+                return true;
             }
+            previous_was_cargo = token == "cargo";
         }
         false
     })
@@ -46,5 +47,11 @@ fn cargo_toolchain_selector_detection_is_whitespace_insensitive() {
     assert!(contains_cargo_toolchain_selector("cargo +1.98.0 build"));
     assert!(contains_cargo_toolchain_selector("cargo  +1.98.0 build"));
     assert!(contains_cargo_toolchain_selector("  cargo\t+nightly test"));
+    assert!(contains_cargo_toolchain_selector(
+        "cargo build; cargo +nightly test"
+    ));
+    assert!(contains_cargo_toolchain_selector(
+        "cargo build && cargo +1.98.0 test"
+    ));
     assert!(!contains_cargo_toolchain_selector("cargo build --release"));
 }
