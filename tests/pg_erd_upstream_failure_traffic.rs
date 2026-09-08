@@ -11,6 +11,11 @@ use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
+#[cfg(target_os = "linux")]
+use std::ffi::{c_int, c_void};
+#[cfg(target_os = "linux")]
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+
 use tempfile::NamedTempFile;
 
 struct GatewayProcess(Child);
@@ -19,6 +24,79 @@ impl Drop for GatewayProcess {
     fn drop(&mut self) {
         let _ = self.0.kill();
         let _ = self.0.wait();
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[repr(C)]
+struct LinuxSockAddrIn {
+    sin_family: u16,
+    sin_port: u16,
+    sin_addr: u32,
+    sin_zero: [u8; 8],
+}
+
+#[cfg(target_os = "linux")]
+unsafe extern "C" {
+    fn socket(domain: c_int, socket_type: c_int, protocol: c_int) -> c_int;
+    fn bind(socket_fd: c_int, address: *const c_void, address_len: u32) -> c_int;
+}
+
+/// Holds an IPv4/TCP port bound without putting the socket into LISTEN state.
+///
+/// On Linux this keeps another process from claiming the characterized endpoint while causing
+/// connection attempts to receive `ECONNREFUSED`, eliminating the free-port race from the earlier
+/// reserve-then-release fixture.
+#[cfg(target_os = "linux")]
+struct RefusedTcpReservation {
+    _socket: OwnedFd,
+}
+
+#[cfg(target_os = "linux")]
+impl RefusedTcpReservation {
+    fn bind(address: SocketAddr) -> Self {
+        const AF_INET: c_int = 2;
+        const SOCK_STREAM: c_int = 1;
+
+        let SocketAddr::V4(address) = address else {
+            panic!("refusal fixture requires an IPv4 loopback address");
+        };
+
+        // SAFETY: `socket` is called with Linux AF_INET/SOCK_STREAM constants and returns either a
+        // fresh owned descriptor or -1. The descriptor is immediately wrapped in `OwnedFd`.
+        let raw_fd = unsafe { socket(AF_INET, SOCK_STREAM, 0) };
+        assert!(
+            raw_fd >= 0,
+            "refusal fixture socket creation failed: {}",
+            std::io::Error::last_os_error()
+        );
+        // SAFETY: `raw_fd` was just returned successfully by `socket` and has no other Rust owner.
+        let socket_fd = unsafe { OwnedFd::from_raw_fd(raw_fd) };
+        let raw_address = LinuxSockAddrIn {
+            sin_family: AF_INET as u16,
+            sin_port: address.port().to_be(),
+            sin_addr: u32::from_ne_bytes(address.ip().octets()),
+            sin_zero: [0; 8],
+        };
+
+        // SAFETY: `raw_address` is a live C-compatible IPv4 sockaddr for the duration of the call;
+        // the descriptor remains owned by `socket_fd`. A failed bind is a setup failure, never a
+        // fallback to an unreserved free port.
+        let bind_result = unsafe {
+            bind(
+                socket_fd.as_raw_fd(),
+                (&raw_address as *const LinuxSockAddrIn).cast::<c_void>(),
+                std::mem::size_of::<LinuxSockAddrIn>() as u32,
+            )
+        };
+        assert_eq!(
+            bind_result,
+            0,
+            "refusal fixture could not exclusively bind {address}: {}",
+            std::io::Error::last_os_error()
+        );
+
+        Self { _socket: socket_fd }
     }
 }
 
@@ -122,14 +200,10 @@ fn read_request_headers(stream: &mut TcpStream) -> String {
     }
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn compiled_pg_erd_refused_backend_fails_bounded_and_preserves_independent_routing() {
-    let unavailable_backend =
-        TcpListener::bind("127.0.0.1:0").expect("backend port should be reservable");
-    let backend_address = unavailable_backend
-        .local_addr()
-        .expect("backend reservation should expose an address");
-    drop(unavailable_backend);
+    let backend_address = reserve_loopback();
 
     let frontend = TcpListener::bind("127.0.0.1:0").expect("frontend fixture should bind");
     let frontend_address = frontend
@@ -158,6 +232,18 @@ fn compiled_pg_erd_refused_backend_fails_bounded_and_preserves_independent_routi
     );
     let _process = start_gateway(&config, gateway_address, metrics_address);
 
+    // Bind the configured backend after the gateway child starts but never call listen(2). If an
+    // unrelated process stole the selected port, setup fails here instead of producing false-GREEN
+    // refusal evidence. While held, the kernel rejects TCP connects and no other listener can bind.
+    let _refused_backend = RefusedTcpReservation::bind(backend_address);
+    let direct_refusal = TcpStream::connect_timeout(&backend_address, Duration::from_millis(100))
+        .expect_err("bound non-listening backend must reject direct TCP connection attempts");
+    assert_eq!(
+        direct_refusal.kind(),
+        std::io::ErrorKind::ConnectionRefused,
+        "fixture must prove the configured endpoint is deterministically refusing TCP connections"
+    );
+
     let started = Instant::now();
     let failed = get(gateway_address, "/api/unavailable");
     let failure_elapsed = started.elapsed();
@@ -178,8 +264,10 @@ fn compiled_pg_erd_refused_backend_fails_bounded_and_preserves_independent_routi
 
     let metrics = get(metrics_address, "/metrics");
     assert!(
-        metrics.contains("cwl_pingora_gateway_request_errors_total 1"),
-        "the refused upstream must remain visible through low-cardinality error telemetry: {metrics:?}"
+        metrics
+            .lines()
+            .any(|line| line == "cwl_pingora_gateway_request_errors_total 1"),
+        "the refused upstream must expose exactly one request error through low-cardinality telemetry: {metrics:?}"
     );
 
     let recovered = get(gateway_address, "/after-backend-failure");

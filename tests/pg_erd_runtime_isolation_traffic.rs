@@ -214,10 +214,16 @@ fn compiled_pg_erd_in_flight_saturation_rejects_recovers_and_preserves_control_p
         .recv_timeout(Duration::from_secs(5))
         .expect("first request should hold the sole admission lease");
 
+    let rejection_started = Instant::now();
     let rejected = get(gateway_address, "/api/over-capacity");
+    let rejection_elapsed = rejection_started.elapsed();
     assert!(
         rejected.starts_with("HTTP/1.1 503"),
         "request above max_in_flight_requests must fail fast: {rejected:?}"
+    );
+    assert!(
+        rejection_elapsed < Duration::from_secs(1),
+        "local saturation rejection must complete materially before the 2s upstream read budget; elapsed={rejection_elapsed:?}"
     );
 
     let readiness = get(gateway_address, "/readyz");
@@ -228,8 +234,10 @@ fn compiled_pg_erd_in_flight_saturation_rejects_recovers_and_preserves_control_p
 
     let metrics = get(metrics_address, "/metrics");
     assert!(
-        metrics.contains("cwl_pingora_gateway_backpressure_rejections_total 1"),
-        "saturation must be visible through low-cardinality gateway telemetry: {metrics:?}"
+        metrics
+            .lines()
+            .any(|line| line == "cwl_pingora_gateway_backpressure_rejections_total 1"),
+        "saturation must expose exactly one rejected request in low-cardinality gateway telemetry: {metrics:?}"
     );
 
     release_response_tx

@@ -41,10 +41,10 @@ pub enum HeaderPolicyError {
         /// Field whose configured value is empty after trimming optional whitespace.
         header_name: String,
     },
-    /// CR/LF is rejected to prevent response-splitting/header-injection semantics.
+    /// HTTP control octets other than horizontal tab are rejected before runtime header emission.
     #[error("invalid HTTP response header value for {header_name}")]
     InvalidHeaderValue {
-        /// Field whose configured value contains prohibited line breaks.
+        /// Field whose configured value contains an octet outside the admitted field-value profile.
         header_name: String,
     },
 }
@@ -61,7 +61,8 @@ impl ResponseHeaderPolicy {
     /// Field-name uniqueness is ASCII case-insensitive as required by HTTP semantics. The current
     /// migration profile deliberately accepts only alphanumerics and `-`, which covers the captured
     /// consumer contracts while remaining a strict subset of legal HTTP field-name syntax. Values
-    /// reject CR/LF so a migration contract cannot accidentally introduce response splitting.
+    /// reject HTTP control octets other than horizontal tab so an admitted rule is representable as
+    /// a field value before the Pingora response path is activated.
     pub fn try_new(headers: Vec<ResponseHeaderRule>) -> Result<Self, HeaderPolicyError> {
         if headers.is_empty() {
             return Err(HeaderPolicyError::NoHeaders);
@@ -87,7 +88,7 @@ impl ResponseHeaderPolicy {
                     header_name: header.name.clone(),
                 });
             }
-            if header.value.contains('\r') || header.value.contains('\n') {
+            if header.value.bytes().any(is_prohibited_header_value_byte) {
                 return Err(HeaderPolicyError::InvalidHeaderValue {
                     header_name: header.name.clone(),
                 });
@@ -129,4 +130,8 @@ fn is_supported_header_name(value: &str) -> bool {
         && value
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+}
+
+fn is_prohibited_header_value_byte(byte: u8) -> bool {
+    matches!(byte, 0..=8 | 10..=31 | 127)
 }

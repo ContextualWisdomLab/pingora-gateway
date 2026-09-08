@@ -246,23 +246,27 @@ pub(crate) fn socket_authorities_overlap(left: SocketAddr, right: SocketAddr) ->
         return false;
     }
 
-    let mapped_ipv4 = |ip: IpAddr| match ip {
-        IpAddr::V4(ipv4) => Some(ipv4),
-        IpAddr::V6(ipv6) => ipv6.to_ipv4_mapped(),
-    };
-
-    if let (Some(left), Some(right)) = (mapped_ipv4(left.ip()), mapped_ipv4(right.ip())) {
-        return left == right || left.is_unspecified() || right.is_unspecified();
+    enum CanonicalIpAuthority {
+        V4(std::net::Ipv4Addr),
+        V6(std::net::Ipv6Addr),
     }
 
-    match (left.ip(), right.ip()) {
-        (IpAddr::V6(left), IpAddr::V6(right)) => {
+    let canonical = |ip: IpAddr| match ip {
+        IpAddr::V4(ipv4) => CanonicalIpAuthority::V4(ipv4),
+        IpAddr::V6(ipv6) => ipv6
+            .to_ipv4_mapped()
+            .map_or(CanonicalIpAuthority::V6(ipv6), CanonicalIpAuthority::V4),
+    };
+
+    match (canonical(left.ip()), canonical(right.ip())) {
+        (CanonicalIpAuthority::V4(left), CanonicalIpAuthority::V4(right)) => {
             left == right || left.is_unspecified() || right.is_unspecified()
         }
-        (IpAddr::V6(ipv6), IpAddr::V4(_)) | (IpAddr::V4(_), IpAddr::V6(ipv6)) => {
-            ipv6.is_unspecified()
+        (CanonicalIpAuthority::V6(left), CanonicalIpAuthority::V6(right)) => {
+            left == right || left.is_unspecified() || right.is_unspecified()
         }
-        (IpAddr::V4(_), IpAddr::V4(_)) => unreachable!("IPv4 authorities are handled above"),
+        (CanonicalIpAuthority::V6(ipv6), CanonicalIpAuthority::V4(_))
+        | (CanonicalIpAuthority::V4(_), CanonicalIpAuthority::V6(ipv6)) => ipv6.is_unspecified(),
     }
 }
 

@@ -14,22 +14,35 @@ use std::time::{Duration, Instant};
 
 use tempfile::NamedTempFile;
 
+/// Owns the compiled gateway child so every assertion path tears the process down.
 struct GatewayProcess(Child);
 
 impl Drop for GatewayProcess {
+    /// Terminates and reaps the child even when the traffic contract panics before normal teardown.
     fn drop(&mut self) {
         let _ = self.0.kill();
         let _ = self.0.wait();
     }
 }
 
-fn reserve_loopback() -> SocketAddr {
-    TcpListener::bind("127.0.0.1:0")
-        .expect("loopback port should be reservable")
+/// Selects traffic and metrics loopback authorities while both ephemeral reservations remain held.
+fn reserve_distinct_loopbacks() -> (SocketAddr, SocketAddr) {
+    let traffic = TcpListener::bind("127.0.0.1:0").expect("traffic port should be reservable");
+    let metrics = TcpListener::bind("127.0.0.1:0").expect("metrics port should be reservable");
+    let traffic_address = traffic
         .local_addr()
-        .expect("reservation should expose an address")
+        .expect("traffic reservation should expose an address");
+    let metrics_address = metrics
+        .local_addr()
+        .expect("metrics reservation should expose an address");
+    assert_ne!(
+        traffic_address, metrics_address,
+        "traffic and metrics reservations must remain distinct while both sockets are held"
+    );
+    (traffic_address, metrics_address)
 }
 
+/// Writes the bounded pg-erd fixture with a 100 ms backend read budget and independent frontend.
 fn write_config(
     listener: SocketAddr,
     metrics_listener: SocketAddr,
@@ -45,6 +58,7 @@ fn write_config(
     file
 }
 
+/// Waits for one listener without allowing an early child exit to look like startup success.
 fn wait_until_listening(address: SocketAddr, process: &mut Child) {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
@@ -65,6 +79,7 @@ fn wait_until_listening(address: SocketAddr, process: &mut Child) {
     }
 }
 
+/// Starts the compiled migration binary and requires both traffic and metrics listeners to bind.
 fn start_gateway(
     config: &NamedTempFile,
     gateway_address: SocketAddr,
@@ -82,6 +97,7 @@ fn start_gateway(
     GatewayProcess(child)
 }
 
+/// Sends one connection-closing HTTP/1.1 request and captures the complete downstream response.
 fn raw_request(address: SocketAddr, request: &[u8]) -> String {
     let mut downstream = TcpStream::connect(address).expect("gateway should accept traffic");
     downstream
@@ -97,6 +113,7 @@ fn raw_request(address: SocketAddr, request: &[u8]) -> String {
     response
 }
 
+/// Issues a fixture GET with the characterized downstream authority and explicit connection close.
 fn get(address: SocketAddr, path: &str) -> String {
     raw_request(
         address,
@@ -105,6 +122,7 @@ fn get(address: SocketAddr, path: &str) -> String {
     )
 }
 
+/// Reads only through the HTTP header terminator so the silent fixture never emits response bytes.
 fn read_request_headers(stream: &mut TcpStream) -> String {
     let mut bytes = Vec::new();
     let mut buffer = [0_u8; 1024];
@@ -123,6 +141,7 @@ fn read_request_headers(stream: &mut TcpStream) -> String {
     }
 }
 
+/// Proves connected upstream inactivity fails closed without poisoning readiness or another route.
 #[test]
 fn compiled_pg_erd_silent_backend_hits_read_timeout_and_preserves_independent_routing() {
     let backend = TcpListener::bind("127.0.0.1:0").expect("backend fixture should bind");
@@ -164,8 +183,7 @@ fn compiled_pg_erd_silent_backend_hits_read_timeout_and_preserves_independent_ro
             .expect("frontend recovery response should be writable");
     });
 
-    let gateway_address = reserve_loopback();
-    let metrics_address = reserve_loopback();
+    let (gateway_address, metrics_address) = reserve_distinct_loopbacks();
     let config = write_config(
         gateway_address,
         metrics_address,
@@ -200,8 +218,10 @@ fn compiled_pg_erd_silent_backend_hits_read_timeout_and_preserves_independent_ro
 
     let metrics = get(metrics_address, "/metrics");
     assert!(
-        metrics.contains("cwl_pingora_gateway_request_errors_total 1"),
-        "the upstream read timeout must remain visible through low-cardinality error telemetry: {metrics:?}"
+        metrics
+            .lines()
+            .any(|line| line == "cwl_pingora_gateway_request_errors_total 1"),
+        "the upstream read timeout must expose exactly one request error through low-cardinality telemetry: {metrics:?}"
     );
 
     let recovered = get(gateway_address, "/after-read-timeout");
