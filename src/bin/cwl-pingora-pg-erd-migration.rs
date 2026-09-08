@@ -8,15 +8,15 @@ use std::env;
 use std::fs;
 use std::process::ExitCode;
 
-use cwl_pingora_gateway::logging_policy::init_runtime_logging;
 use cwl_pingora_gateway::migration_admin::PgErdMigrationConfig;
 use cwl_pingora_gateway::runtime_policy::build_server_conf;
 use cwl_pingora_gateway::startup::GatewayCommand;
 use pingora::prelude::{http_proxy_service, Server};
 use pingora::server::RunArgs;
 
+/// Loads the bounded migration Admin Config, materializes peers, then grants listener authority.
 fn main() -> ExitCode {
-    init_runtime_logging();
+    env_logger::init();
 
     let args: Vec<_> = env::args_os().collect();
     let command = match GatewayCommand::parse(&args) {
@@ -62,6 +62,7 @@ fn main() -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// Emits a bounded startup error and returns the stable configuration/startup failure code.
 fn exit_with_error(message: &str) -> ExitCode {
     eprintln!("{message}");
     ExitCode::from(2)

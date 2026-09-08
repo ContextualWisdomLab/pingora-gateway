@@ -228,11 +228,7 @@ impl GatewayConfig {
         let mut names = HashSet::with_capacity(self.upstreams.len());
         for upstream in &self.upstreams {
             upstream.validate()?;
-            validate_upstream_authority_separation(
-                self.listener,
-                self.metrics_listener,
-                upstream,
-            )?;
+            validate_upstream_authority_separation(self.listener, self.metrics_listener, upstream)?;
             let normalized_name = upstream.name.trim();
             if !names.insert(normalized_name) {
                 return Err(GatewayConfigError::DuplicateUpstreamName {
@@ -251,29 +247,46 @@ impl GatewayConfig {
     }
 }
 
-pub(crate) fn socket_authorities_overlap(
-    listener: SocketAddr,
-    metrics_listener: SocketAddr,
-) -> bool {
-    if listener.port() != metrics_listener.port() {
+/// Returns true when two listener declarations can claim the same effective socket authority.
+///
+/// IPv4-mapped IPv6 addresses are first reduced to their mapped IPv4 authority so wildcard and
+/// equality rules cannot diverge merely because two declarations use different address families.
+/// An unmapped IPv6 wildcard may also consume the IPv4 port on dual-stack platforms when
+/// `IPV6_V6ONLY` is disabled. These cases are rejected before listener activation while distinct
+/// concrete non-aliased addresses remain independent.
+pub(crate) fn socket_authorities_overlap(left: SocketAddr, right: SocketAddr) -> bool {
+    if left.port() != right.port() {
         return false;
     }
 
-    match (listener.ip(), metrics_listener.ip()) {
-        (IpAddr::V4(listener_ip), IpAddr::V4(metrics_ip)) => {
-            listener_ip == metrics_ip || listener_ip.is_unspecified() || metrics_ip.is_unspecified()
+    enum CanonicalIpAuthority {
+        V4(std::net::Ipv4Addr),
+        V6(std::net::Ipv6Addr),
+    }
+
+    let canonical = |ip: IpAddr| match ip {
+        IpAddr::V4(ipv4) => CanonicalIpAuthority::V4(ipv4),
+        IpAddr::V6(ipv6) => ipv6
+            .to_ipv4_mapped()
+            .map_or(CanonicalIpAuthority::V6(ipv6), CanonicalIpAuthority::V4),
+    };
+
+    match (canonical(left.ip()), canonical(right.ip())) {
+        (CanonicalIpAuthority::V4(left), CanonicalIpAuthority::V4(right)) => {
+            left == right || left.is_unspecified() || right.is_unspecified()
         }
-        (IpAddr::V6(listener_ip), IpAddr::V6(metrics_ip)) => {
-            listener_ip == metrics_ip || listener_ip.is_unspecified() || metrics_ip.is_unspecified()
+        (CanonicalIpAuthority::V6(left), CanonicalIpAuthority::V6(right)) => {
+            left == right || left.is_unspecified() || right.is_unspecified()
         }
-        (IpAddr::V6(ipv6), IpAddr::V4(_)) | (IpAddr::V4(_), IpAddr::V6(ipv6)) => {
-            // An IPv6 wildcard may also consume the IPv4 port on dual-stack platforms when
-            // IPV6_V6ONLY is disabled. Reject the platform-dependent authority before activation.
-            ipv6.is_unspecified()
-        }
+        (CanonicalIpAuthority::V6(ipv6), CanonicalIpAuthority::V4(_))
+        | (CanonicalIpAuthority::V4(_), CanonicalIpAuthority::V6(ipv6)) => ipv6.is_unspecified(),
     }
 }
 
+/// Rejects an upstream whose effective socket authority aliases a gateway-owned listener.
+///
+/// The check deliberately reuses the listener collision model so exact, wildcard, dual-stack,
+/// and IPv4-mapped aliases fail consistently without inventing product routing semantics.
 pub(crate) fn validate_upstream_authority_separation(
     listener: SocketAddr,
     metrics_listener: SocketAddr,

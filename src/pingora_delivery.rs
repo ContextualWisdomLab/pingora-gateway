@@ -85,6 +85,7 @@ pub(crate) fn build_peer_from_validated(
     Ok(peer)
 }
 
+/// Rejects connection-wide HTTP/1 protocol transitions that the current contract does not admit.
 pub(crate) fn reject_uncharacterized_http1_protocol_transition(
     request: &RequestHeader,
 ) -> pingora::Result<()> {
