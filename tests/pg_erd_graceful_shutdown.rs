@@ -18,15 +18,18 @@ use std::time::{Duration, Instant};
 use cwl_pingora_gateway::runtime_policy::{V1_GRACE_PERIOD_SECONDS, V1_TERMINATION_BUDGET_SECONDS};
 use tempfile::NamedTempFile;
 
+/// Owns the migration child so every assertion path terminates and reaps the spawned process.
 struct GatewayProcess(Child);
 
 impl Drop for GatewayProcess {
+    /// Forces teardown when a drain assertion fails before the child reaches its normal SIGTERM exit.
     fn drop(&mut self) {
         let _ = self.0.kill();
         let _ = self.0.wait();
     }
 }
 
+/// Selects traffic and metrics authorities while both ephemeral loopback reservations remain held.
 fn reserve_distinct_loopback_addresses() -> (SocketAddr, SocketAddr) {
     // Hold both ephemeral reservations at once so the kernel cannot hand the just-released traffic
     // port back to the metrics reservation and manufacture an invalid listener-authority config.
@@ -44,6 +47,7 @@ fn reserve_distinct_loopback_addresses() -> (SocketAddr, SocketAddr) {
     addresses
 }
 
+/// Writes the bounded pg-erd fixture with read budgets longer than the shared graceful-drain window.
 fn write_config(
     listener: SocketAddr,
     metrics_listener: SocketAddr,
@@ -59,12 +63,13 @@ fn write_config(
     file
 }
 
+/// Waits for the traffic listener without allowing an early process exit to look like startup success.
 fn wait_until_listening(address: SocketAddr, process: &mut Child) {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         if let Some(status) = process
             .try_wait()
-            .expect("gateway process state should be readable")
+            .expect("migration process state should be readable")
         {
             panic!("migration process exited before accepting traffic: {status}");
         }
@@ -79,6 +84,7 @@ fn wait_until_listening(address: SocketAddr, process: &mut Child) {
     }
 }
 
+/// Waits only until the SIGTERM-relative external deadline so downstream work cannot reset the budget.
 fn wait_for_exit(process: &mut Child, deadline: Instant) -> std::process::ExitStatus {
     loop {
         if let Some(status) = process
@@ -95,6 +101,7 @@ fn wait_for_exit(process: &mut Child, deadline: Instant) -> std::process::ExitSt
     }
 }
 
+/// Reads through the origin header terminator so SIGTERM is sent only after routing is established.
 fn read_request_headers(stream: &mut TcpStream) -> String {
     let mut bytes = Vec::new();
     let mut buffer = [0_u8; 1024];
@@ -113,6 +120,7 @@ fn read_request_headers(stream: &mut TcpStream) -> String {
     }
 }
 
+/// Proves an admitted pg-erd request drains to completion and the process exits inside one SIGTERM budget.
 #[test]
 fn sigterm_drains_routed_pg_erd_request_before_process_exit() {
     let backend_listener =
