@@ -13,14 +13,14 @@ use tempfile::NamedTempFile;
 /// Builds one generic v1 configuration with explicit listener, metrics, and upstream authorities.
 fn generic_yaml(listener: &str, metrics_listener: &str, upstream: &str) -> String {
     format!(
-        "version: 1\nlistener: {listener}\nmetrics_listener: {metrics_listener}\nmax_request_body_bytes: 1048576\nmax_in_flight_requests: 128\nupstream_keepalive_pool_size: 32\nupstreams:\n  - name: api\n    address: {upstream}\n    tls: false\n    timeouts:\n      connection_ms: 1250\n      total_connection_ms: 2500\n      read_ms: 7500\n      write_ms: 6500\n      idle_ms: 15000\n"
+        "version: 1\nlistener: \"{listener}\"\nmetrics_listener: \"{metrics_listener}\"\nmax_request_body_bytes: 1048576\nmax_in_flight_requests: 128\nupstream_keepalive_pool_size: 32\nupstreams:\n  - name: api\n    address: \"{upstream}\"\n    tls: false\n    timeouts:\n      connection_ms: 1250\n      total_connection_ms: 2500\n      read_ms: 7500\n      write_ms: 6500\n      idle_ms: 15000\n"
     )
 }
 
 /// Builds the fixed pg-erd profile while varying only the two characterized upstream sockets.
 fn pg_erd_yaml(listener: &str, metrics_listener: &str, backend: &str, frontend: &str) -> String {
     format!(
-        "version: 1\nlistener: {listener}\nmetrics_listener: {metrics_listener}\nmax_request_body_bytes: 1048576\nmax_in_flight_requests: 128\nupstream_keepalive_pool_size: 64\nupstreams:\n  - name: backend\n    address: {backend}\n    tls: false\n    timeouts:\n      connection_ms: 100\n      total_connection_ms: 200\n      read_ms: 300\n      write_ms: 400\n      idle_ms: 500\n  - name: frontend\n    address: {frontend}\n    tls: false\n    timeouts:\n      connection_ms: 100\n      total_connection_ms: 200\n      read_ms: 300\n      write_ms: 400\n      idle_ms: 500\n"
+        "version: 1\nlistener: \"{listener}\"\nmetrics_listener: \"{metrics_listener}\"\nmax_request_body_bytes: 1048576\nmax_in_flight_requests: 128\nupstream_keepalive_pool_size: 64\nupstreams:\n  - name: backend\n    address: \"{backend}\"\n    tls: false\n    timeouts:\n      connection_ms: 100\n      total_connection_ms: 200\n      read_ms: 300\n      write_ms: 400\n      idle_ms: 500\n  - name: frontend\n    address: \"{frontend}\"\n    tls: false\n    timeouts:\n      connection_ms: 100\n      total_connection_ms: 200\n      read_ms: 300\n      write_ms: 400\n      idle_ms: 500\n"
     )
 }
 
