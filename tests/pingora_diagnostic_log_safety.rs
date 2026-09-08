@@ -18,12 +18,14 @@ const MAX_REQUEST_HEADER_BYTES: usize = 64 * 1024;
 const REDACTED_PINGORA_DIAGNOSTIC: &str =
     "Pingora diagnostic message redacted by gateway payload-minimization policy";
 
+/// Owns the compiled gateway child and its stderr capture for bounded teardown and evidence reads.
 struct GatewayProcess {
     child: Option<Child>,
     stderr: NamedTempFile,
 }
 
 impl GatewayProcess {
+    /// Counts exact redaction-marker occurrences in the complete captured stderr snapshot.
     fn stderr_occurrences(&self, needle: &str) -> usize {
         fs::read_to_string(self.stderr.path())
             .expect("gateway stderr capture should remain readable")
@@ -31,6 +33,7 @@ impl GatewayProcess {
             .count()
     }
 
+    /// Waits for one exact completion-log suffix while failing if the child exits or times out.
     fn wait_until_stderr_line_ends_with(&mut self, suffix: &str) {
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
@@ -58,6 +61,7 @@ impl GatewayProcess {
         }
     }
 
+    /// Requires a post-request redaction marker beyond the readiness-probe baseline.
     fn wait_until_stderr_occurrences_exceed(&mut self, needle: &str, baseline: usize) {
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
@@ -85,6 +89,7 @@ impl GatewayProcess {
         }
     }
 
+    /// Terminates the fixture child before returning the complete stderr used for leak assertions.
     fn capture_stderr(mut self) -> String {
         let mut child = self
             .child
@@ -101,6 +106,7 @@ impl GatewayProcess {
 }
 
 impl Drop for GatewayProcess {
+    /// Prevents a failed assertion from leaving the compiled gateway fixture running.
     fn drop(&mut self) {
         if let Some(child) = self.child.as_mut() {
             let _ = child.kill();
@@ -124,6 +130,7 @@ fn reserve_gateway_listeners() -> (TcpListener, TcpListener) {
     (listener, metrics_listener)
 }
 
+/// Writes the smallest valid generic config that routes the characterized request to one origin.
 fn write_config(
     listener: SocketAddr,
     metrics_listener: SocketAddr,
@@ -138,6 +145,7 @@ fn write_config(
     file
 }
 
+/// Waits for a concrete listener while also failing fast if the gateway exits during startup.
 fn wait_until_listening(address: SocketAddr, process: &mut Child) {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
@@ -236,12 +244,14 @@ fn http1_status_code(response: &str) -> Option<u16> {
     status.parse().ok()
 }
 
+/// Rejects `X-Host` as evidence for the real `Host` field while accepting field-name case folding.
 #[test]
 fn exact_header_lookup_rejects_lookalike_fields() {
     let request = "GET / HTTP/1.1\r\nX-Host: attacker.example\r\nhOsT: expected.example\r\n\r\n";
     assert_eq!(header_values(request, "Host"), vec!["expected.example"]);
 }
 
+/// Rejects protocol-case and numeric-prefix lookalikes in the downstream status oracle.
 #[test]
 fn status_parser_rejects_numeric_prefix_and_protocol_case_lookalikes() {
     assert_eq!(http1_status_code("HTTP/1.1 200 OK\r\n"), Some(200));
@@ -249,6 +259,7 @@ fn status_parser_rejects_numeric_prefix_and_protocol_case_lookalikes() {
     assert_eq!(http1_status_code("http/1.1 200 OK\r\n"), None);
 }
 
+/// Proves broad Pingora diagnostics redact request secrets without stripping origin delivery.
 #[test]
 fn broad_runtime_diagnostics_do_not_log_request_secrets() {
     let origin = TcpListener::bind("127.0.0.1:0").expect("origin fixture should bind");
