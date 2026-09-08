@@ -19,8 +19,11 @@ This file links material technical/security claims to primary standards or upstr
 | Incoming Traefik `X-Forwarded-*` identity is trusted only when an EntryPoint explicitly configures trusted IPs or insecure trust; insecure mode is not recommended for production | Traefik official EntryPoints documentation, current documentation revalidated 2026-09-02 |
 | `pg-erd-cloud` can use `X-Forwarded-For` for rate-limit/observability client identity only under an explicit trust switch and tells operators to enable it only behind a sanitizing ingress | `ContextualWisdomLab/pg-erd-cloud@8dc746920c12988f082e914879d95e13c9693535`: `.env.example`, `backend/app/rate_limit.py`, `backend/app/observability.py`, `docs/api-security-checklist.md` |
 | Forwarded-header grammar and trust semantics | RFC 7239 |
-| HTTP semantics | RFC 9110 |
+| HTTP semantics, including the HTTP/1 Upgrade field and a server's ability to decline a requested transition | RFC 9110 §7.8 |
 | HTTP/1.1 message framing/hop-by-hop requirements | RFC 9112 |
+| WebSocket over HTTP/1 uses an opening handshake; after sending that handshake the client must wait for the server response before sending WebSocket data | RFC 6455 §4.1; this supports fail-closed v1 rejection and prevents treating an Upgrade request as already-authorized tunnel traffic |
+| WebSocket over HTTP/2 is bootstrapped with Extended CONNECT rather than HTTP/1 Upgrade semantics | RFC 8441; this remains a separate future protocol contract from the current HTTP/1 fail-closed admission rule |
+| Optimistic HTTP/1.1 protocol-transition data can create request-smuggling/parser risks when a transition is rejected; current guidance adds normative requirements to HTTP/1.1 and explicitly notes that WebSocket already forbids optimistic post-handshake data | RFC 9931, published March 2026, updating RFC 9112 and RFC 9298 |
 | HTTP/2 framing and connection semantics | RFC 9113 |
 | HTTP/3 semantics over QUIC | RFC 9114; HTTP/3 is not claimed implemented by this v1 candidate until executable listener/interoperability evidence exists |
 | Current TLS 1.3 protocol semantics and application identity-verification responsibility | RFC 9846, published July 2026, which obsoletes RFC 8446 and points applications to RFC 9525 for identity verification |
@@ -84,6 +87,12 @@ Traefik Labs. (n.d.). *Traefik EntryPoints: Forwarded headers*. https://doc.trae
 Fielding, R., Nottingham, M., & Reschke, J. (2022). *HTTP semantics* (RFC 9110). RFC Editor. https://www.rfc-editor.org/rfc/rfc9110
 
 Nottingham, M. (2022). *HTTP/1.1* (RFC 9112). RFC Editor. https://www.rfc-editor.org/rfc/rfc9112
+
+Fette, I., & Melnikov, A. (2011). *The WebSocket protocol* (RFC 6455). RFC Editor. https://www.rfc-editor.org/rfc/rfc6455
+
+McManus, P. (2018). *Bootstrapping WebSockets with HTTP/2* (RFC 8441). RFC Editor. https://www.rfc-editor.org/rfc/rfc8441
+
+Schwartz, B. M. (2026). *Security considerations for optimistic protocol transitions in HTTP/1.1* (RFC 9931). RFC Editor. https://www.rfc-editor.org/rfc/rfc9931
 
 Thomson, M., & Benfield, C. (2022). *HTTP/2* (RFC 9113). RFC Editor. https://www.rfc-editor.org/rfc/rfc9113
 
