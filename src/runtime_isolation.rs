@@ -218,7 +218,9 @@ impl ResponseBodyLifetimeBudget {
     /// Creates a dormant response-body budget from the active runtime-isolation contract.
     pub(crate) fn new(limits: RuntimeIsolationLimits) -> Self {
         Self {
-            limit: limits.max_upstream_response_body_ms().map(Duration::from_millis),
+            limit: limits
+                .max_upstream_response_body_ms()
+                .map(Duration::from_millis),
             started_at: None,
         }
     }
@@ -281,7 +283,8 @@ mod tests {
         assert_eq!(bounded.max_in_flight_requests(), 3);
         assert_eq!(bounded.max_upstream_response_body_ms(), Some(750));
 
-        let validated = RuntimeIsolationLimits::from_validated_with_response_body_limit(4096, 4, 900);
+        let validated =
+            RuntimeIsolationLimits::from_validated_with_response_body_limit(4096, 4, 900);
         assert_eq!(validated.max_request_body_bytes(), 4096);
         assert_eq!(validated.max_in_flight_requests(), 4);
         assert_eq!(validated.max_upstream_response_body_ms(), Some(900));
