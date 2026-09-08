@@ -24,12 +24,19 @@ struct GatewayProcess {
 }
 
 impl GatewayProcess {
-    fn wait_until_stderr_contains(&mut self, needle: &str) {
+    fn stderr_occurrences(&self, needle: &str) -> usize {
+        fs::read_to_string(self.stderr.path())
+            .expect("gateway stderr capture should remain readable")
+            .matches(needle)
+            .count()
+    }
+
+    fn wait_until_stderr_line_ends_with(&mut self, suffix: &str) {
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
             let captured = fs::read_to_string(self.stderr.path())
                 .expect("gateway stderr capture should remain readable");
-            if captured.contains(needle) {
+            if captured.lines().any(|line| line.ends_with(suffix)) {
                 return;
             }
             if let Some(status) = self
@@ -39,11 +46,40 @@ impl GatewayProcess {
                 .try_wait()
                 .expect("gateway process state should be readable")
             {
-                panic!("gateway exited before expected log {needle:?}: {status}; stderr={captured:?}");
+                panic!(
+                    "gateway exited before expected log suffix {suffix:?}: {status}; stderr={captured:?}"
+                );
             }
             assert!(
                 Instant::now() < deadline,
-                "gateway did not emit expected log {needle:?} within 10s; stderr={captured:?}"
+                "gateway did not emit expected log suffix {suffix:?} within 10s; stderr={captured:?}"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    fn wait_until_stderr_occurrences_exceed(&mut self, needle: &str, baseline: usize) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let captured = fs::read_to_string(self.stderr.path())
+                .expect("gateway stderr capture should remain readable");
+            if captured.matches(needle).count() > baseline {
+                return;
+            }
+            if let Some(status) = self
+                .child
+                .as_mut()
+                .expect("gateway child should still be owned")
+                .try_wait()
+                .expect("gateway process state should be readable")
+            {
+                panic!(
+                    "gateway exited before {needle:?} increased beyond {baseline}: {status}; stderr={captured:?}"
+                );
+            }
+            assert!(
+                Instant::now() < deadline,
+                "gateway did not emit a new {needle:?} after the secret-bearing request within 10s; stderr={captured:?}"
             );
             thread::sleep(Duration::from_millis(10));
         }
@@ -267,6 +303,7 @@ fn broad_runtime_diagnostics_do_not_log_request_secrets() {
         child: Some(child),
         stderr,
     };
+    let redacted_before_request = process.stderr_occurrences(REDACTED_PINGORA_DIAGNOSTIC);
 
     let mut downstream = TcpStream::connect(listener).expect("gateway should accept traffic");
     downstream
@@ -290,8 +327,13 @@ fn broad_runtime_diagnostics_do_not_log_request_secrets() {
         .join()
         .expect("origin diagnostic fixture should complete");
 
-    process.wait_until_stderr_contains("gateway_request status=200 outcome=ok request_body_bytes=0");
-    process.wait_until_stderr_contains(REDACTED_PINGORA_DIAGNOSTIC);
+    process.wait_until_stderr_line_ends_with(
+        "gateway_request status=200 outcome=ok request_body_bytes=0",
+    );
+    process.wait_until_stderr_occurrences_exceed(
+        REDACTED_PINGORA_DIAGNOSTIC,
+        redacted_before_request,
+    );
     let captured = process.capture_stderr();
     for forbidden in [
         "/diagnostic-secret",
