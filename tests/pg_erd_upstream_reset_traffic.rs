@@ -64,6 +64,8 @@ fn reserve_gateway_addresses() -> (TcpListener, TcpListener, SocketAddr, SocketA
     (gateway, metrics, gateway_address, metrics_address)
 }
 
+/// Writes only the admitted migration transport configuration needed to isolate
+/// reset behavior from product policy or dynamic routing concerns.
 fn write_config(
     listener: SocketAddr,
     metrics_listener: SocketAddr,
@@ -79,6 +81,8 @@ fn write_config(
     file
 }
 
+/// Waits for one listener while also failing immediately if the child exits,
+/// preventing startup failures from being misreported as traffic timeouts.
 fn wait_until_listening(address: SocketAddr, process: &mut Child) {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
@@ -99,6 +103,8 @@ fn wait_until_listening(address: SocketAddr, process: &mut Child) {
     }
 }
 
+/// Starts the compiled pg-erd composition root and proves both traffic and
+/// metrics listeners are live before the characterized failure is injected.
 fn start_gateway(
     config: &NamedTempFile,
     gateway_address: SocketAddr,
@@ -116,6 +122,8 @@ fn start_gateway(
     GatewayProcess(child)
 }
 
+/// Sends one raw request with a finite downstream read budget so an incomplete
+/// gateway response becomes deterministic RED rather than an unbounded test.
 fn raw_request(address: SocketAddr, request: &[u8]) -> String {
     let mut downstream = TcpStream::connect(address).expect("gateway should accept traffic");
     downstream
@@ -131,6 +139,7 @@ fn raw_request(address: SocketAddr, request: &[u8]) -> String {
     response
 }
 
+/// Builds the fixed-host HTTP/1.1 request used by this transport-only fixture.
 fn get(address: SocketAddr, path: &str) -> String {
     raw_request(
         address,
@@ -189,6 +198,8 @@ fn contains_exact_metric_sample(metrics: &str, sample: &str) -> bool {
         .any(|line| line.trim_end_matches('\r') == sample)
 }
 
+/// Configures Linux abortive-close semantics on the established origin socket
+/// so this fixture exercises an actual TCP reset rather than an orderly FIN.
 fn reset_on_close(stream: &TcpStream) {
     let linger = Linger {
         onoff: 1,
@@ -213,13 +224,26 @@ fn reset_on_close(stream: &TcpStream) {
     );
 }
 
+/// Rejects response-status lookalikes that could otherwise create false-GREEN
+/// protocol evidence for the reset and recovery assertions.
 #[test]
 fn exact_status_code_rejects_case_and_numeric_prefix_lookalikes() {
-    assert_eq!(exact_http_1_1_status_code("HTTP/1.1 502 Bad Gateway\r\n"), Some(502));
-    assert_eq!(exact_http_1_1_status_code("http/1.1 502 Bad Gateway\r\n"), None);
-    assert_eq!(exact_http_1_1_status_code("HTTP/1.1 5020 Bad Gateway\r\n"), None);
+    assert_eq!(
+        exact_http_1_1_status_code("HTTP/1.1 502 Bad Gateway\r\n"),
+        Some(502)
+    );
+    assert_eq!(
+        exact_http_1_1_status_code("http/1.1 502 Bad Gateway\r\n"),
+        None
+    );
+    assert_eq!(
+        exact_http_1_1_status_code("HTTP/1.1 5020 Bad Gateway\r\n"),
+        None
+    );
 }
 
+/// Rejects numeric-prefix metric values so the expected single transport error
+/// cannot be manufactured by a larger counter value.
 #[test]
 fn exact_metric_sample_rejects_numeric_prefix_lookalikes() {
     let metrics = "# TYPE cwl_pingora_gateway_request_errors_total counter\ncwl_pingora_gateway_request_errors_total 10\n";
@@ -229,6 +253,8 @@ fn exact_metric_sample_rejects_numeric_prefix_lookalikes() {
     ));
 }
 
+/// Proves a pre-header origin RST yields bounded 502 transport failure without
+/// failover, process-readiness loss, metric ambiguity, or sibling-route damage.
 #[test]
 fn compiled_pg_erd_pre_header_reset_returns_502_and_preserves_independent_routing() {
     let backend = TcpListener::bind("127.0.0.1:0").expect("backend fixture should bind");
