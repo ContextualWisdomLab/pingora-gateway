@@ -78,7 +78,7 @@ pub fn init_runtime_logging() {
 
 #[cfg(test)]
 mod tests {
-    use log::Log;
+    use log::{Level, Log, Metadata};
 
     use super::{is_pingora_dependency_target, PayloadSafeLogger};
 
@@ -109,6 +109,17 @@ mod tests {
                 "non-Pingora target must retain its own logging contract: {target}"
             );
         }
+    }
+
+    #[test]
+    fn payload_safe_logger_enabled_delegates_to_the_configured_filter() {
+        let logger = PayloadSafeLogger::from_default_env();
+        let metadata = Metadata::builder()
+            .level(Level::Error)
+            .target("cwl_pingora_gateway::test")
+            .build();
+
+        assert_eq!(logger.enabled(&metadata), logger.inner.enabled(&metadata));
     }
 
     #[test]
