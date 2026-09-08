@@ -388,10 +388,17 @@ mod tests {
         let mut ctx = MigrationRequestContext::new(limits);
         let started = Instant::now();
         start_response_body_lifetime(false, &mut ctx, started);
+        let before_expiry = started + Duration::from_millis(299);
         let expired = started + Duration::from_millis(300);
 
         assert!(enforce_response_body_lifetime(&None, &ctx, expired).is_ok());
         assert!(enforce_response_body_lifetime(&Some(Bytes::new()), &ctx, expired).is_ok());
+        assert!(enforce_response_body_lifetime(
+            &Some(Bytes::from_static(b"x")),
+            &ctx,
+            before_expiry
+        )
+        .is_ok());
         assert!(
             enforce_response_body_lifetime(&Some(Bytes::from_static(b"x")), &ctx, expired).is_err()
         );
