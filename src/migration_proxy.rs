@@ -4,6 +4,8 @@
 //! isolation, trusted forwarding metadata, and shared transport observability. It does not
 //! introduce product authorization, service discovery, or business logic.
 
+use std::time::{Duration, Instant};
+
 use async_trait::async_trait;
 use bytes::Bytes;
 use pingora::prelude::{
@@ -18,7 +20,7 @@ use crate::pingora_delivery::reject_uncharacterized_http1_protocol_transition;
 use crate::process_health::{respond_healthy, LIVENESS_PATH, READINESS_PATH};
 use crate::runtime_isolation::{
     BodyLimitExceeded, RequestAdmission, RequestAdmissionBudget, RequestBodyBudget,
-    RuntimeIsolationLimits,
+    ResponseBodyLifetimeBudget, ResponseBodyLifetimeExceeded, RuntimeIsolationLimits,
 };
 
 /// Fail-closed callback errors for a characterized migration runtime.
@@ -47,6 +49,7 @@ impl MigrationGatewayProxyError {
 #[derive(Debug)]
 pub struct MigrationRequestContext {
     request_body: RequestBodyBudget,
+    response_body_lifetime: ResponseBodyLifetimeBudget,
     admission: Option<RequestAdmission>,
 }
 
@@ -55,6 +58,7 @@ impl MigrationRequestContext {
     fn new(limits: RuntimeIsolationLimits) -> Self {
         Self {
             request_body: RequestBodyBudget::new(limits),
+            response_body_lifetime: ResponseBodyLifetimeBudget::new(limits),
             admission: None,
         }
     }
@@ -166,6 +170,37 @@ fn body_rejection_to_pingora(rejection: BodyLimitExceeded) -> Box<Error> {
     )
 }
 
+/// Maps a versioned response-body lifetime breach to an upstream-scoped Pingora failure.
+fn response_body_lifetime_to_pingora(rejection: ResponseBodyLifetimeExceeded) -> Box<Error> {
+    let _ = (rejection.elapsed, rejection.limit);
+    Error::new_up(ErrorType::Custom("UpstreamResponseBodyLifetimeExceeded"))
+}
+
+/// Starts the lifetime on the first final upstream response header without reset on later headers.
+fn start_response_body_lifetime(
+    is_informational: bool,
+    ctx: &mut MigrationRequestContext,
+    now: Instant,
+) {
+    if !is_informational {
+        ctx.response_body_lifetime.start(now);
+    }
+}
+
+/// Applies the lifetime only to actual body progress, not empty/end-of-stream bookkeeping callbacks.
+fn enforce_response_body_lifetime(
+    body: &Option<Bytes>,
+    ctx: &MigrationRequestContext,
+    now: Instant,
+) -> pingora::Result<Option<Duration>> {
+    if body.as_ref().is_some_and(|chunk| !chunk.is_empty()) {
+        ctx.response_body_lifetime
+            .reject_if_expired(now)
+            .map_err(response_body_lifetime_to_pingora)?;
+    }
+    Ok(None)
+}
+
 #[async_trait]
 impl ProxyHttp for MigrationGatewayProxy {
     type CTX = MigrationRequestContext;
@@ -246,6 +281,24 @@ impl ProxyHttp for MigrationGatewayProxy {
         self.apply_upstream_request_policy(upstream_request, &forwarding)
     }
 
+    /// Starts the versioned response-body lifetime at the first non-informational upstream header.
+    async fn upstream_response_filter(
+        &self,
+        _session: &mut Session,
+        upstream_response: &mut ResponseHeader,
+        ctx: &mut Self::CTX,
+    ) -> pingora::Result<()>
+    where
+        Self::CTX: Send + Sync,
+    {
+        start_response_body_lifetime(
+            upstream_response.status.is_informational(),
+            ctx,
+            Instant::now(),
+        );
+        Ok(())
+    }
+
     /// Applies the characterized edge-owned response fields with replacement semantics.
     async fn response_filter(
         &self,
@@ -259,6 +312,17 @@ impl ProxyHttp for MigrationGatewayProxy {
         self.apply_response_headers(upstream_response)
     }
 
+    /// Enforces the versioned lifetime at real upstream body-progress boundaries only.
+    fn upstream_response_body_filter(
+        &self,
+        _session: &mut Session,
+        body: &mut Option<Bytes>,
+        _end_of_stream: bool,
+        ctx: &mut Self::CTX,
+    ) -> pingora::Result<Option<Duration>> {
+        enforce_response_body_lifetime(body, ctx, Instant::now())
+    }
+
     /// Emits only the shared low-cardinality completion observation for the finished request.
     async fn logging(&self, session: &mut Session, error: Option<&Error>, ctx: &mut Self::CTX)
     where
@@ -270,10 +334,19 @@ impl ProxyHttp for MigrationGatewayProxy {
 
 #[cfg(test)]
 mod tests {
-    use pingora::prelude::ErrorType;
+    use std::time::{Duration, Instant};
 
-    use super::{body_rejection_to_pingora, MigrationGatewayProxyError, MigrationRequestContext};
-    use crate::runtime_isolation::{BodyLimitExceeded, RuntimeIsolationLimits};
+    use bytes::Bytes;
+    use pingora::prelude::{ErrorSource, ErrorType};
+
+    use super::{
+        body_rejection_to_pingora, enforce_response_body_lifetime,
+        response_body_lifetime_to_pingora, start_response_body_lifetime,
+        MigrationGatewayProxyError, MigrationRequestContext,
+    };
+    use crate::runtime_isolation::{
+        BodyLimitExceeded, ResponseBodyLifetimeExceeded, RuntimeIsolationLimits,
+    };
 
     #[test]
     fn migration_context_starts_without_an_admission_lease() {
@@ -281,6 +354,54 @@ mod tests {
         let ctx = MigrationRequestContext::new(limits);
         assert_eq!(ctx.request_body.observed(), 0);
         assert!(ctx.admission.is_none());
+    }
+
+    #[test]
+    fn informational_headers_do_not_start_or_reset_the_response_body_lifetime() {
+        let limits = RuntimeIsolationLimits::try_new_with_response_body_limit(8, 1, 300)
+            .expect("fixture limits are valid");
+        let mut ctx = MigrationRequestContext::new(limits);
+        let now = Instant::now();
+
+        start_response_body_lifetime(true, &mut ctx, now);
+        assert!(ctx
+            .response_body_lifetime
+            .reject_if_expired(now + Duration::from_secs(1))
+            .is_ok());
+
+        start_response_body_lifetime(false, &mut ctx, now);
+        start_response_body_lifetime(false, &mut ctx, now + Duration::from_millis(250));
+        assert!(ctx
+            .response_body_lifetime
+            .reject_if_expired(now + Duration::from_millis(299))
+            .is_ok());
+        assert!(ctx
+            .response_body_lifetime
+            .reject_if_expired(now + Duration::from_millis(300))
+            .is_err());
+    }
+
+    #[test]
+    fn response_lifetime_ignores_empty_callbacks_but_rejects_expired_body_progress() {
+        let limits = RuntimeIsolationLimits::try_new_with_response_body_limit(8, 1, 300)
+            .expect("fixture limits are valid");
+        let mut ctx = MigrationRequestContext::new(limits);
+        let started = Instant::now();
+        start_response_body_lifetime(false, &mut ctx, started);
+        let before_expiry = started + Duration::from_millis(299);
+        let expired = started + Duration::from_millis(300);
+
+        assert!(enforce_response_body_lifetime(&None, &ctx, expired).is_ok());
+        assert!(enforce_response_body_lifetime(&Some(Bytes::new()), &ctx, expired).is_ok());
+        assert!(enforce_response_body_lifetime(
+            &Some(Bytes::from_static(b"x")),
+            &ctx,
+            before_expiry
+        )
+        .is_ok());
+        assert!(
+            enforce_response_body_lifetime(&Some(Bytes::from_static(b"x")), &ctx, expired).is_err()
+        );
     }
 
     #[test]
@@ -296,5 +417,15 @@ mod tests {
         }
         .into_pingora();
         assert_eq!(route_error.etype, ErrorType::HTTPStatus(404));
+
+        let lifetime_error = response_body_lifetime_to_pingora(ResponseBodyLifetimeExceeded {
+            elapsed: Duration::from_millis(301),
+            limit: Duration::from_millis(300),
+        });
+        assert_eq!(
+            lifetime_error.etype,
+            ErrorType::Custom("UpstreamResponseBodyLifetimeExceeded")
+        );
+        assert_eq!(lifetime_error.esource, ErrorSource::Upstream);
     }
 }
