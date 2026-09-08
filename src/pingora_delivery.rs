@@ -47,7 +47,8 @@ pub enum PeerBuildError {
 /// The adapter revalidates the upstream so callers cannot bypass fail-closed contract checks by
 /// constructing an [`UpstreamConfig`] directly. TLS certificate and hostname verification remain
 /// enabled explicitly, HTTP/1.1 is the only accepted upstream protocol in the initial contract,
-/// and every timeout comes from the versioned configuration rather than a hidden default.
+/// HTTP/1 upgrades are denied again at the immutable peer boundary, and every timeout comes from
+/// the versioned configuration rather than a hidden default.
 pub fn build_peer(upstream: &UpstreamConfig) -> Result<HttpPeer, PeerBuildError> {
     upstream.validate()?;
     build_peer_from_validated(upstream)
@@ -76,7 +77,7 @@ pub(crate) fn build_peer_from_validated(
     peer.options.read_timeout = Some(Duration::from_millis(upstream.timeouts.read_ms));
     peer.options.write_timeout = Some(Duration::from_millis(upstream.timeouts.write_ms));
     peer.options.idle_timeout = Some(Duration::from_millis(upstream.timeouts.idle_ms));
-    peer.options.http_upstream_request_policy = HttpUpstreamRequestPolicy::standard();
+    peer.options.http_upstream_request_policy = HttpUpstreamRequestPolicy::deny_upgrades();
 
     if let Some(path) = upstream.trust_bundle_file.as_deref() {
         peer.options.ca = Some(Arc::new(load_trust_bundle(path)?));

@@ -22,7 +22,9 @@ Each upstream has a stable non-empty name, a non-zero concrete socket address, `
 
 ## Request policy
 
-Pingora's standard upstream request policy supplies the pinned supplier's hop-by-hop and `Connection`-nomination sanitation. The generic gateway additionally removes client-provided `Forwarded`, `X-Forwarded-For`, `X-Forwarded-Host`, `X-Forwarded-Port`, `X-Forwarded-Proto`, `X-Forwarded-Server`, and `X-Real-IP`, then emits only gateway-owned `Forwarded: proto=http` for the v1 clear-text downstream listener. Generic v1 deliberately makes no client-IP identity or downstream proxy-provenance claim.
+Every immutable Pingora upstream peer uses `HttpUpstreamRequestPolicy::deny_upgrades()`. This retains the pinned supplier's standard hop-by-hop and `Connection`-nomination sanitation but changes its HTTP/1 upgrade policy from the default `WebSocketOnly` behavior to `Deny`. The separate transport-neutral admission guard remains authoritative for returning HTTP 501 before application admission or origin selection. Keeping both boundaries aligned prevents callback/composition changes from implicitly enabling a supplier protocol capability that the versioned gateway contract does not admit.
+
+The generic gateway additionally removes client-provided `Forwarded`, `X-Forwarded-For`, `X-Forwarded-Host`, `X-Forwarded-Port`, `X-Forwarded-Proto`, `X-Forwarded-Server`, and `X-Real-IP`, then emits only gateway-owned `Forwarded: proto=http` for the v1 clear-text downstream listener. Generic v1 deliberately makes no client-IP identity or downstream proxy-provenance claim.
 
 The pg-erd migration adapter also discards request-controlled forwarding identity before rebuilding only the characterized compatibility fields from accepted transport/request authority. The current captured Traefik entry point is clear-text, so its forwarded scheme is explicitly `http`; HTTPS requires a separate TLS-derived contract rather than inference.
 
@@ -48,6 +50,6 @@ The candidate supply-chain lane builds and vulnerability-scans both admitted ima
 
 ## Protocol and migration limits
 
-Generic v1 is a clear-text downstream HTTP proxy with one explicit upstream per process. Downstream TLS termination, HTTP/2 admission, H2→H1 Cookie normalization, HTTP/3/QUIC, WebSocket/Extended CONNECT, dynamic reload, Kubernetes Gateway API, and consumer-specific multi-route behavior are versioned increments with separate realistic RED→GREEN evidence.
+Generic v1 is a clear-text downstream HTTP proxy with one explicit upstream per process. HTTP/1 Upgrade is explicitly denied both before request admission and at immutable peer construction; that is non-support evidence, not WebSocket parity. Downstream TLS termination, HTTP/2 admission, H2→H1 Cookie normalization, HTTP/3/QUIC, versioned WebSocket/Extended CONNECT, dynamic reload, Kubernetes Gateway API, and consumer-specific multi-route behavior are separate increments with realistic RED→GREEN evidence.
 
 The concrete pg-erd migration stack is a bounded consumer-characterization adapter and does not widen generic v1. Source presence is not parity. Promotion still requires unchanged exact-head formatting, compile/test, strict Clippy, rustdoc, owned-production coverage, routed traffic/load/failure evidence, terminal dedicated OCI/supply-chain execution, immutable release identity, consumer deployment pin, shadow/canary, rollback rehearsal, protected cutover, and verified legacy removal.
