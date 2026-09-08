@@ -128,7 +128,7 @@ impl RouteTable {
             }
         }
 
-        routes.sort_by(|left, right| right.priority.cmp(&left.priority));
+        routes.sort_by_key(|route| std::cmp::Reverse(route.priority));
         Ok(Self { routes })
     }
 

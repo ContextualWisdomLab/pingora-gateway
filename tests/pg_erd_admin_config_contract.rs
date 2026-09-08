@@ -1,6 +1,7 @@
 use cwl_pingora_gateway::migration_admin::{
     PgErdMigrationConfig, PgErdMigrationConfigError, PG_ERD_MIGRATION_CONFIG_VERSION,
 };
+use pingora::upstreams::peer::Peer;
 
 fn config_yaml(upstreams: &str) -> String {
     format!(
@@ -86,6 +87,55 @@ fn pg_erd_admin_config_rejects_listener_collision_and_zero_capacity_budgets() {
         Err(PgErdMigrationConfigError::ListenerCollision)
     );
 
+    for (listener, metrics_listener) in [
+        ("0.0.0.0:8080", "127.0.0.1:8080"),
+        ("127.0.0.1:8080", "0.0.0.0:8080"),
+        ("[::]:8080", "[::1]:8080"),
+        ("[::1]:8080", "[::]:8080"),
+        ("[::]:8080", "127.0.0.1:8080"),
+        ("127.0.0.1:8080", "[::]:8080"),
+        ("[::ffff:127.0.0.1]:8080", "127.0.0.1:8080"),
+        ("127.0.0.1:8080", "[::ffff:127.0.0.1]:8080"),
+        ("0.0.0.0:8080", "[::ffff:127.0.0.1]:8080"),
+        ("[::ffff:127.0.0.1]:8080", "0.0.0.0:8080"),
+        ("[::ffff:0.0.0.0]:8080", "127.0.0.1:8080"),
+        ("127.0.0.1:8080", "[::ffff:0.0.0.0]:8080"),
+        ("[::ffff:0.0.0.0]:8080", "[::ffff:127.0.0.1]:8080"),
+        ("[::ffff:127.0.0.1]:8080", "[::ffff:0.0.0.0]:8080"),
+    ] {
+        let overlapping = valid_yaml()
+            .replace(
+                "listener: 127.0.0.1:8080",
+                &format!("listener: \"{listener}\""),
+            )
+            .replace(
+                "metrics_listener: 127.0.0.1:9090",
+                &format!("metrics_listener: \"{metrics_listener}\""),
+            );
+        assert_eq!(
+            PgErdMigrationConfig::from_yaml(&overlapping),
+            Err(PgErdMigrationConfigError::ListenerCollision),
+            "overlapping socket authority must fail closed for {listener} / {metrics_listener}"
+        );
+    }
+
+    for (listener, metrics_listener) in [
+        ("127.0.0.1:8080", "127.0.0.2:8080"),
+        ("127.0.0.1:8080", "[::1]:8080"),
+    ] {
+        let independent = valid_yaml()
+            .replace(
+                "listener: 127.0.0.1:8080",
+                &format!("listener: \"{listener}\""),
+            )
+            .replace(
+                "metrics_listener: 127.0.0.1:9090",
+                &format!("metrics_listener: \"{metrics_listener}\""),
+            );
+        PgErdMigrationConfig::from_yaml(&independent)
+            .expect("distinct concrete or different-family listeners must remain independent");
+    }
+
     let zero_keepalive = valid_yaml().replace(
         "upstream_keepalive_pool_size: 64",
         "upstream_keepalive_pool_size: 0",
@@ -96,7 +146,10 @@ fn pg_erd_admin_config_rejects_listener_collision_and_zero_capacity_budgets() {
     );
 
     for (field, value) in [
-        ("max_request_body_bytes: 1048576", "max_request_body_bytes: 0"),
+        (
+            "max_request_body_bytes: 1048576",
+            "max_request_body_bytes: 0",
+        ),
         ("max_in_flight_requests: 128", "max_in_flight_requests: 0"),
     ] {
         let invalid = valid_yaml().replace(field, value);
@@ -108,42 +161,30 @@ fn pg_erd_admin_config_rejects_listener_collision_and_zero_capacity_budgets() {
 }
 
 #[test]
-fn pg_erd_admin_config_rejects_wildcard_listener_aliases_on_the_same_port() {
-    for (listener, metrics_listener) in [
-        ("0.0.0.0:8080", "127.0.0.1:8080"),
-        ("127.0.0.1:8080", "0.0.0.0:8080"),
-        ("[::]:8080", "[::1]:8080"),
-        ("[::]:8080", "127.0.0.1:8080"),
+fn pg_erd_admin_config_build_proxy_revalidates_direct_deserialization() {
+    for (field, value) in [
+        (
+            "max_request_body_bytes: 1048576",
+            "max_request_body_bytes: 0",
+        ),
+        ("max_in_flight_requests: 128", "max_in_flight_requests: 0"),
     ] {
-        let invalid = valid_yaml()
-            .replace("listener: 127.0.0.1:8080", &format!("listener: {listener}"))
-            .replace(
-                "metrics_listener: 127.0.0.1:9090",
-                &format!("metrics_listener: {metrics_listener}"),
-            );
-        assert_eq!(
-            PgErdMigrationConfig::from_yaml(&invalid),
-            Err(PgErdMigrationConfigError::ListenerCollision),
-            "wildcard listener authority must not overlap metrics authority: {listener} vs {metrics_listener}"
+        let invalid = valid_yaml().replace(field, value);
+        let config: PgErdMigrationConfig = serde_yaml::from_str(&invalid)
+            .expect("direct deserialization should expose the public construction boundary");
+        assert!(
+            matches!(
+                config.build_proxy(),
+                Err(PgErdMigrationConfigError::RuntimeIsolation(_))
+            ),
+            "public build_proxy must revalidate directly deserialized runtime budgets"
         );
     }
-
-    let distinct_specific_addresses = valid_yaml().replace(
-        "metrics_listener: 127.0.0.1:9090",
-        "metrics_listener: 127.0.0.2:8080",
-    );
-    assert!(
-        PgErdMigrationConfig::from_yaml(&distinct_specific_addresses).is_ok(),
-        "distinct concrete IP authorities on the same port must remain configurable"
-    );
 }
 
 #[test]
 fn pg_erd_admin_config_rejects_zero_port_network_authority() {
-    let zero_listener = valid_yaml().replace(
-        "listener: 127.0.0.1:8080",
-        "listener: 127.0.0.1:0",
-    );
+    let zero_listener = valid_yaml().replace("listener: 127.0.0.1:8080", "listener: 127.0.0.1:0");
     assert_eq!(
         PgErdMigrationConfig::from_yaml(&zero_listener),
         Err(PgErdMigrationConfigError::ZeroListenerPort)
@@ -158,10 +199,8 @@ fn pg_erd_admin_config_rejects_zero_port_network_authority() {
         Err(PgErdMigrationConfigError::ZeroMetricsListenerPort)
     );
 
-    let zero_backend = valid_yaml().replace(
-        "    address: 127.0.0.1:8000",
-        "    address: 127.0.0.1:0",
-    );
+    let zero_backend =
+        valid_yaml().replace("    address: 127.0.0.1:8000", "    address: 127.0.0.1:0");
     assert_eq!(
         PgErdMigrationConfig::from_yaml(&zero_backend),
         Err(PgErdMigrationConfigError::ZeroTransportAuthorityPort {
