@@ -45,7 +45,8 @@ fn pg_erd_metrics_acceptance_proves_prometheus_media_type() {
         script.contains("--write-out")
             && script.contains("%{content_type}")
             && script.contains("metrics_content_type")
-            && script.contains("text/plain"),
-        "a bare 200 response can false-green a misbound proxy listener; acceptance must capture curl's response content type and require the Prometheus text/plain media type"
+            && script.contains("metrics_content_type%%;*")
+            && script.contains("== \"text/plain\""),
+        "a bare 200 or text/plain-prefixed invalid media type can false-green a misbound listener; acceptance must capture curl's response content type and normalize only semicolon parameters before requiring text/plain"
     );
 }

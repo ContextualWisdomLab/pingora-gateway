@@ -272,7 +272,7 @@ jobs:
           for _ in $(seq 1 80); do
             if curl --fail --silent --show-error --max-time 1 http://127.0.0.1:6288/livez >/dev/null \
               && metrics_content_type="$(curl --fail --silent --show-error --max-time 1 --output /dev/null --write-out '%{content_type}' http://127.0.0.1:6289/metrics)" \
-              && [[ "${metrics_content_type}" == text/plain* ]]; then
+              && [[ "${metrics_content_type%%;*}" == "text/plain" ]]; then
               exit 0
             fi
             if ! docker inspect "${cid}" --format '{{.State.Running}}' | grep -qx true; then
