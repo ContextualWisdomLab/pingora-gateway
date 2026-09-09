@@ -164,7 +164,10 @@ fn read_response_through_body(stream: &mut TcpStream, expected_body: &[u8]) -> V
         let read = stream
             .read(&mut buffer)
             .expect("downstream response should arrive before its fixture timeout");
-        assert!(read > 0, "migration gateway closed before completing the response");
+        assert!(
+            read > 0,
+            "migration gateway closed before completing the response"
+        );
         response.extend_from_slice(&buffer[..read]);
         assert!(
             response.len() <= MAX_FIXTURE_EVIDENCE_BYTES,
