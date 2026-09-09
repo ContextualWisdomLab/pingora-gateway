@@ -1,8 +1,9 @@
 //! Causal process-level acceptance for Pingora's one-shot HTTP/1 shutdown notification.
 //!
-//! A separate sentinel connection proves that cleanup has already interrupted a waiter that existed
-//! before SIGTERM. Only then is the held response on the subject connection released, forcing its
-//! next keep-alive waiter to be created after the one-shot notification.
+//! A separate sentinel connection establishes that an incomplete reusable request remains open and
+//! response-free immediately before SIGTERM. Its prompt EOF after the signal is then an external
+//! cleanup barrier. Only after that barrier is the held response on the subject connection released,
+//! forcing its next keep-alive waiter to be created after the one-shot notification.
 
 #![cfg(unix)]
 
@@ -204,6 +205,24 @@ fn require_prompt_eof(stream: &mut TcpStream, context: &str) {
     }
 }
 
+/// Requires the incomplete sentinel to remain open and response-free immediately before SIGTERM.
+fn require_still_parked(stream: &mut TcpStream, context: &str) {
+    stream
+        .set_read_timeout(Some(SENTINEL_PARK_SETTLE))
+        .expect("sentinel park probe timeout should be configurable");
+    let mut probe = [0_u8; 1];
+    match stream.read(&mut probe) {
+        Ok(0) => panic!("{context}: connection closed before SIGTERM"),
+        Ok(read) => panic!("{context}: received {read} response byte(s) before SIGTERM"),
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+            ) => {}
+        Err(error) => panic!("{context}: unexpected pre-SIGTERM error: {error}"),
+    }
+}
+
 /// Waits against one SIGTERM-relative deadline so downstream work cannot reset termination allowance.
 fn wait_for_exit(process: &mut Child, deadline: Instant) -> std::process::ExitStatus {
     loop {
@@ -292,6 +311,10 @@ fn prove_waiter_created_after_cleanup_observes_shutdown(
         .write_all(b"G")
         .expect("sentinel partial next request should be writable");
     thread::sleep(SENTINEL_PARK_SETTLE);
+    require_still_parked(
+        &mut sentinel,
+        "sentinel must remain open and response-free on its incomplete next request before SIGTERM",
+    );
 
     let signal_sent_at = Instant::now();
     let termination_deadline = signal_sent_at + Duration::from_secs(V1_TERMINATION_BUDGET_SECONDS);
