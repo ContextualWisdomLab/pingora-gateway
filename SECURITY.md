@@ -22,6 +22,16 @@ Graceful shutdown has a separate supplier-level availability boundary. The gatew
 
 The transport-neutral `http_policy` candidate characterizes edge-owned response headers without activating them in generic v1. It treats field names ASCII case-insensitively, rejects duplicate field authority, empty values, and CR/LF values before activation. Its current name profile is deliberately narrower than the full legal HTTP field-name grammar because only observed migration contracts are admitted. The bounded pg-erd adapter may consume only the already characterized policy. Neither path absorbs product authorization/business response semantics, Wardnet/EgressWeave verdicts, or Keyverse identity.
 
+## Downstream TLS / HTTP/2 boundary
+
+Downstream TLS/H2 is not active in generic v1 or pg-erd v1/v2. Both production roots still register clear-text `add_tcp` listeners and materialized upstream peers remain `ALPN::H1`. Issue #51 and Proposed ADR 0012 reserve a future listener-side transport boundary without transferring certificate issuance, renewal, ACME account state, private-key custody, Keyverse identity, product authentication, or business authorization into the gateway.
+
+A later TLS/H2 version must fail closed on invalid certificate/key references, SNI mapping and ALPN policy before listener activation. Ingress forwarding must derive `https` from accepted TLS state, never from request-controlled `X-Forwarded-Proto`. H2 activation must preserve the existing request-body/in-flight/header-admission, payload-safe logging, forwarding sanitation, no-upgrade, retry and shutdown invariants rather than creating protocol-specific bypasses.
+
+Current upstream H1 means H2 admission necessarily exercises Pingora H2-to-H1 translation. Real-wire acceptance must therefore cover the empty DATA+END_STREAM framing path tracked by `cloudflare/pingora#935/#936`, multiple H2 `Cookie` field normalization tracked by #892/#901, pseudo/hop-by-hop translation, connection reuse after the translated request, cancellation/reset, GOAWAY/drain and post-failure recovery. Mutable contributor branches, h2c, switching origins to H2, a downstream CWL Cookie shim, or leaving Nginx/Traefik in front cannot be credited as the canonical shared-runtime repair.
+
+HTTP/3/QUIC remains unsupported. H1/H2 evidence does not transfer to UDP exposure, QUIC TLS/ALPN, QPACK, stream/connection flow control, loss/congestion, amplification protection, connection migration or 0-RTT replay policy.
+
 ## Logging and data minimization
 
 The production path emits coarse status/outcome/request-body-byte access logs and label-free Prometheus request/error/body-byte counters. It does not log Authorization, Proxy-Authorization, Cookie, Set-Cookie, request/response bodies, access tokens, configuration credentials, arbitrary headers, route values, trust-bundle contents, or other unbounded request-derived labels. Distributed tracing and richer bounded operability evidence remain release gaps.
