@@ -85,12 +85,13 @@ jobs:
         run: |
           rustup toolchain install 1.98.0 --profile minimal --component rustfmt
           rustup default 1.98.0
-      - name: Build exact gateway candidates and Rust load origin
-        shell: bash
+      - name: Build exact gateway and Rust fixture candidates
         run: |
           set -euo pipefail
           cargo build --release --locked --bin cwl-pingora-gateway --bin cwl-pingora-pg-erd-migration
           rustfmt --edition 2021 --check tests/load/load_origin.rs
+          rustc --edition 2021 -D warnings --test tests/load/load_origin.rs -o /tmp/load_origin_tests
+          /tmp/load_origin_tests
           rustc --edition 2021 -D warnings -C opt-level=3 -C debuginfo=0 \
             --out-dir /tmp tests/load/load_origin.rs
       - name: Install checksum-pinned k6 2.2.0
@@ -111,6 +112,24 @@ jobs:
           set -euo pipefail
           /tmp/load_origin >/tmp/upstream-fixture.log 2>&1 &
           upstream_pid=$!
+          gateway_pid=""
+
+          cleanup() {
+            status=$?
+            if [ -n "$gateway_pid" ]; then
+              kill "$gateway_pid" >/dev/null 2>&1 || true
+              wait "$gateway_pid" >/dev/null 2>&1 || true
+            fi
+            kill "$upstream_pid" >/dev/null 2>&1 || true
+            wait "$upstream_pid" >/dev/null 2>&1 || true
+            if [ "$status" -ne 0 ]; then
+              echo "--- gateway log ---"
+              cat /tmp/gateway-load.log || true
+              echo "--- Rust origin log ---"
+              cat /tmp/upstream-fixture.log || true
+            fi
+          }
+          trap cleanup EXIT
 
           cat >/tmp/gateway-load.yaml <<'EOF'
           version: 1
@@ -131,21 +150,22 @@ jobs:
                 idle_ms: 5000
           EOF
 
+          # Prove the measured Rust origin has bound before gateway startup and measured traffic.
+          # This is fixture liveness, not a gateway-route warm-up.
+          for _ in $(seq 1 80); do
+            if curl --fail --silent --show-error --max-time 1 http://127.0.0.1:18081/fixture-ready >/dev/null; then
+              break
+            fi
+            if ! kill -0 "$upstream_pid" 2>/dev/null; then
+              echo "Rust origin exited before becoming ready" >&2
+              exit 1
+            fi
+            sleep 0.05
+          done
+          curl --fail --silent --show-error --max-time 1 http://127.0.0.1:18081/fixture-ready >/dev/null
+
           target/release/cwl-pingora-gateway --config /tmp/gateway-load.yaml >/tmp/gateway-load.log 2>&1 &
           gateway_pid=$!
-          cleanup() {
-            status=$?
-            kill "$gateway_pid" "$upstream_pid" >/dev/null 2>&1 || true
-            wait "$gateway_pid" >/dev/null 2>&1 || true
-            wait "$upstream_pid" >/dev/null 2>&1 || true
-            if [ "$status" -ne 0 ]; then
-              echo "--- gateway log ---"
-              cat /tmp/gateway-load.log || true
-              echo "--- upstream fixture log ---"
-              cat /tmp/upstream-fixture.log || true
-            fi
-          }
-          trap cleanup EXIT
 
           for _ in $(seq 1 80); do
             if curl --fail --silent --show-error --max-time 1 http://127.0.0.1:18080/livez >/dev/null; then
@@ -160,21 +180,47 @@ jobs:
           curl --fail --silent --show-error --max-time 1 http://127.0.0.1:18080/livez >/dev/null
 
           GATEWAY_URL=http://127.0.0.1:18080 k6 run --quiet tests/load/gateway_smoke.js
+      - name: Require loopback latency summary
+        run: test -s k6-summary.json
       - name: Upload loopback latency evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: k6-loopback-${{ env.EXPECTED_SHA }}
           path: k6-summary.json
-          if-no-files-found: error
+          if-no-files-found: ignore
           retention-days: 7
-      - name: Exercise routed pg-erd concurrent traffic contract
+      - name: Run routed pg-erd loopback traffic
         shell: bash
         run: |
           set -euo pipefail
-          UPSTREAM_PORT=18181 UPSTREAM_PAYLOAD=backend-ok /tmp/load_origin >/tmp/pg-erd-backend.log 2>&1 &
+          backend_pid=""
+          frontend_pid=""
+          pg_erd_pid=""
+          cleanup() {
+            status=$?
+            for pid in "$pg_erd_pid" "$backend_pid" "$frontend_pid"; do
+              if [ -n "$pid" ]; then
+                kill "$pid" >/dev/null 2>&1 || true
+                wait "$pid" >/dev/null 2>&1 || true
+              fi
+            done
+            if [ "$status" -ne 0 ]; then
+              echo "--- pg-erd log ---"
+              cat /tmp/pingora-pg-erd-load.log || true
+              echo "--- backend Rust origin log ---"
+              cat /tmp/pg-erd-backend.log || true
+              echo "--- frontend Rust origin log ---"
+              cat /tmp/pg-erd-frontend.log || true
+            fi
+          }
+          trap cleanup EXIT
+
+          UPSTREAM_PORT=18181 UPSTREAM_PAYLOAD=backend-ok \
+            /tmp/load_origin >/tmp/pg-erd-backend.log 2>&1 &
           backend_pid=$!
-          UPSTREAM_PORT=18183 UPSTREAM_PAYLOAD=frontend-ok /tmp/load_origin >/tmp/pg-erd-frontend.log 2>&1 &
+          UPSTREAM_PORT=18183 UPSTREAM_PAYLOAD=frontend-ok \
+            /tmp/load_origin >/tmp/pg-erd-frontend.log 2>&1 &
           frontend_pid=$!
 
           cat >/tmp/pg-erd-load.yaml <<'EOF'
@@ -191,7 +237,7 @@ jobs:
               timeouts:
                 connection_ms: 500
                 total_connection_ms: 1000
-                read_ms: 2000
+                read_ms: 1000
                 write_ms: 2000
                 idle_ms: 5000
             - name: frontend
@@ -200,65 +246,64 @@ jobs:
               timeouts:
                 connection_ms: 500
                 total_connection_ms: 1000
-                read_ms: 2000
+                read_ms: 1000
                 write_ms: 2000
                 idle_ms: 5000
           EOF
 
-          target/release/cwl-pingora-pg-erd-migration --config /tmp/pg-erd-load.yaml >/tmp/pg-erd-gateway-load.log 2>&1 &
-          gateway_pid=$!
-          cleanup() {
-            status=$?
-            kill "$gateway_pid" "$backend_pid" "$frontend_pid" >/dev/null 2>&1 || true
-            wait "$gateway_pid" >/dev/null 2>&1 || true
-            wait "$backend_pid" >/dev/null 2>&1 || true
-            wait "$frontend_pid" >/dev/null 2>&1 || true
-            if [ "$status" -ne 0 ]; then
-              echo "--- pg-erd gateway log ---"
-              cat /tmp/pg-erd-gateway-load.log || true
-              echo "--- backend fixture log ---"
-              cat /tmp/pg-erd-backend.log || true
-              echo "--- frontend fixture log ---"
-              cat /tmp/pg-erd-frontend.log || true
-            fi
-          }
-          trap cleanup EXIT
-
-          for origin in http://127.0.0.1:18181/ready http://127.0.0.1:18183/ready; do
-            ready=false
-            for _ in $(seq 1 40); do
-              if curl --fail --silent --show-error --max-time 1 "$origin" >/dev/null; then
-                ready=true
+          for origin in 18181 18183; do
+            ready=0
+            for _ in $(seq 1 80); do
+              if curl --fail --silent --show-error --max-time 1 "http://127.0.0.1:${origin}/fixture-ready" >/dev/null; then
+                ready=1
                 break
+              fi
+              origin_pid="$backend_pid"
+              if [ "$origin" = "18183" ]; then
+                origin_pid="$frontend_pid"
+              fi
+              if ! kill -0 "$origin_pid" 2>/dev/null; then
+                echo "Rust origin ${origin} exited before becoming ready" >&2
+                exit 1
               fi
               sleep 0.05
             done
-            if [ "$ready" != true ]; then
-              echo "load origin did not become reachable: $origin" >&2
+            if [ "$ready" -ne 1 ]; then
+              echo "Rust origin ${origin} never became ready" >&2
               exit 1
             fi
           done
 
+          target/release/cwl-pingora-pg-erd-migration --config /tmp/pg-erd-load.yaml >/tmp/pingora-pg-erd-load.log 2>&1 &
+          pg_erd_pid=$!
+          ready=0
           for _ in $(seq 1 80); do
             if curl --fail --silent --show-error --max-time 1 http://127.0.0.1:18180/livez >/dev/null; then
+              ready=1
               break
             fi
-            if ! kill -0 "$gateway_pid" 2>/dev/null; then
-              echo "pg-erd gateway exited before the load contract became live" >&2
+            if ! kill -0 "$pg_erd_pid" 2>/dev/null; then
+              echo "pg-erd candidate exited before becoming live" >&2
               exit 1
             fi
             sleep 0.1
           done
-          curl --fail --silent --show-error --max-time 1 http://127.0.0.1:18180/livez >/dev/null
+          if [ "$ready" -ne 1 ]; then
+            echo "pg-erd candidate never became live" >&2
+            exit 1
+          fi
 
-          PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 k6 run --quiet tests/load/pg_erd_gateway_smoke.js
-      - name: Upload pg-erd routed latency evidence
+          PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
+            k6 run --quiet tests/load/pg_erd_gateway_smoke.js
+      - name: Require routed pg-erd latency summary
+        run: test -s k6-pg-erd-summary.json
+      - name: Upload routed pg-erd exact-SHA load evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: k6-pg-erd-loopback-${{ env.EXPECTED_SHA }}
           path: k6-pg-erd-summary.json
-          if-no-files-found: error
+          if-no-files-found: ignore
           retention-days: 7
 
   oci-runtime:
@@ -271,12 +316,21 @@ jobs:
           persist-credentials: false
       - name: Verify checkout identity
         run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
-      - name: Build candidate image
-        run: docker build --tag "cwl-pingora-gateway:${EXPECTED_SHA}" .
-      - name: Verify declared non-root identity
+      - name: Build admitted candidate images
         run: |
-          test "$(docker image inspect "cwl-pingora-gateway:${EXPECTED_SHA}" --format '{{.Config.User}}')" = "65532:65532"
-      - name: Exercise read-only least-privilege runtime
+          docker build --tag "cwl-pingora-gateway:${EXPECTED_SHA}" .
+          docker build \
+            --build-arg CWL_GATEWAY_BIN=cwl-pingora-pg-erd-migration \
+            --tag "cwl-pingora-pg-erd-migration:${EXPECTED_SHA}" \
+            .
+      - name: Verify declared non-root identities
+        run: |
+          for image in \
+            "cwl-pingora-gateway:${EXPECTED_SHA}" \
+            "cwl-pingora-pg-erd-migration:${EXPECTED_SHA}"; do
+            test "$(docker image inspect "${image}" --format '{{.Config.User}}')" = "65532:65532"
+          done
+      - name: Exercise generic read-only least-privilege runtime
         shell: bash
         run: |
           set -euo pipefail
@@ -305,26 +359,25 @@ jobs:
               exit 0
             fi
             if ! docker inspect "${cid}" --format '{{.State.Running}}' | grep -qx true; then
-              echo "gateway container exited before becoming live" >&2
+              echo "generic gateway container exited before becoming live" >&2
               exit 1
             fi
             sleep 0.25
           done
-          echo "gateway container did not become live under read-only least-privilege runtime" >&2
+          echo "generic gateway container did not become live under read-only least-privilege runtime" >&2
           exit 1
-      - name: Exercise pg-erd migration read-only least-privilege runtime
+      - name: Exercise pg-erd read-only least-privilege runtime
         shell: bash
         run: |
           set -euo pipefail
-          image="cwl-pingora-gateway:${EXPECTED_SHA}"
+          image="cwl-pingora-pg-erd-migration:${EXPECTED_SHA}"
           cid="$(docker run --detach \
             --read-only \
             --user 65532:65532 \
             --cap-drop ALL \
             --security-opt no-new-privileges:true \
-            --entrypoint /usr/local/bin/cwl-pingora-pg-erd-migration \
-            --publish 127.0.0.1:6288:6288 \
-            --publish 127.0.0.1:6289:6289 \
+            --publish 127.0.0.1:6288:6188 \
+            --publish 127.0.0.1:6289:6189 \
             --mount "type=bind,src=${PWD}/examples/pg-erd-migration.yaml,dst=/etc/cwl/pg-erd-migration.yaml,readonly" \
             "${image}" \
             --config /etc/cwl/pg-erd-migration.yaml)"
@@ -339,15 +392,9 @@ jobs:
           docker inspect "${cid}" --format '{{json .HostConfig.SecurityOpt}}' | grep -Fq 'no-new-privileges'
 
           for _ in $(seq 1 80); do
-            live_ok=false
-            metrics_ok=false
-            if curl --fail --silent --show-error --max-time 1 http://127.0.0.1:6288/livez >/dev/null; then
-              live_ok=true
-            fi
-            if curl --fail --silent --show-error --max-time 1 http://127.0.0.1:6289/metrics >/dev/null; then
-              metrics_ok=true
-            fi
-            if [ "${live_ok}" = true ] && [ "${metrics_ok}" = true ]; then
+            if curl --fail --silent --show-error --max-time 1 http://127.0.0.1:6288/livez >/dev/null \
+              && metrics_content_type="$(curl --fail --silent --show-error --max-time 1 --output /dev/null --write-out '%{content_type}' http://127.0.0.1:6289/metrics)" \
+              && [[ "${metrics_content_type%%;*}" == "text/plain" ]]; then
               exit 0
             fi
             if ! docker inspect "${cid}" --format '{{.State.Running}}' | grep -qx true; then
@@ -356,5 +403,5 @@ jobs:
             fi
             sleep 0.25
           done
-          echo "pg-erd migration container did not become live under read-only least-privilege runtime" >&2
+          echo "pg-erd migration container did not expose live and Prometheus metrics listeners under read-only least-privilege runtime" >&2
           exit 1

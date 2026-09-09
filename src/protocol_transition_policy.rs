@@ -16,10 +16,8 @@ pub fn requests_http1_protocol_transition<'a>(
 ) -> bool {
     upgrade_field_present
         || connection_field_values.into_iter().any(|field_value| {
-            field_value.split(|byte| *byte == b',').any(|token| {
-                token
-                    .trim_ascii()
-                    .eq_ignore_ascii_case(b"upgrade")
-            })
+            field_value
+                .split(|byte| *byte == b',')
+                .any(|token| token.trim_ascii().eq_ignore_ascii_case(b"upgrade"))
         })
 }

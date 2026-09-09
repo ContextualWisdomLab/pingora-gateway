@@ -34,7 +34,7 @@ Rejected. Pingora applies that budget to connection establishment; changing its 
 
 ### Add an explicit pg-erd version-2 body-lifetime budget
 
-Selected. Version 2 requires positive `max_upstream_response_body_ms`. Version 1 rejects that field and otherwise retains its existing behavior. Runtime Isolation owns monotonic elapsed-time accounting, while the migration adapter starts the budget on the first non-informational upstream response header and checks it on each upstream response-body callback.
+Selected. Version 2 requires positive `max_upstream_response_body_ms`. Version 1 rejects that field and otherwise retains its existing behavior. Runtime Isolation owns monotonic elapsed-time accounting, while the migration adapter starts the budget on the first non-informational upstream response header and checks it only on non-empty upstream response-body progress callbacks.
 
 ## Decision
 
