@@ -2,8 +2,9 @@
 //!
 //! Pingora's current downstream HTTP/1 read timeout is a per-read inactivity budget. These fixtures
 //! keep an incomplete header making progress well inside that inactivity budget and require a
-//! separate monotonic whole-header deadline. They exercise both a fresh connection and a reused
-//! HTTP/1.1 connection whose second request is already pipelined as an incomplete prefix.
+//! separate monotonic whole-header deadline. They exercise both a fresh connection and a sequential
+//! keep-alive reuse. This gateway does not opt into Pingora HTTP/1 pipelining, so no pipelined-prefix
+//! acceptance is claimed on this composition root.
 
 #![cfg(unix)]
 
@@ -24,7 +25,6 @@ const PROBE_TIMEOUT: Duration = Duration::from_millis(25);
 const RESPONSE_BOUND: usize = 8 * 1024;
 const ATTACKER_MARKER: &str = "h1-lifetime-secret-marker";
 
-/// Reaps the compiled gateway even when an intentional RED assertion panics.
 struct GatewayProcess(Child);
 
 impl Drop for GatewayProcess {
@@ -34,7 +34,6 @@ impl Drop for GatewayProcess {
     }
 }
 
-/// Reserves distinct traffic and metrics addresses without hard-coding runner ports.
 fn reserve_distinct_loopback_addresses() -> (SocketAddr, SocketAddr) {
     let traffic = TcpListener::bind("127.0.0.1:0").expect("traffic port should be available");
     let metrics = TcpListener::bind("127.0.0.1:0").expect("metrics port should be available");
@@ -50,7 +49,6 @@ fn reserve_distinct_loopback_addresses() -> (SocketAddr, SocketAddr) {
     addresses
 }
 
-/// Writes only the existing generic-v1 configuration; no speculative header-timeout field exists.
 fn write_gateway_config(
     listener: SocketAddr,
     metrics_listener: SocketAddr,
@@ -65,7 +63,6 @@ fn write_gateway_config(
     file
 }
 
-/// Waits for a compiled listener while failing if the gateway exits during startup.
 fn wait_until_listening(address: SocketAddr, process: &mut Child) {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
@@ -86,7 +83,6 @@ fn wait_until_listening(address: SocketAddr, process: &mut Child) {
     }
 }
 
-/// Sends one complete request and reads the connection-closing response.
 fn raw_request(address: SocketAddr, request: &[u8]) -> Vec<u8> {
     let mut stream = TcpStream::connect(address).expect("gateway should accept downstream traffic");
     stream
@@ -102,7 +98,6 @@ fn raw_request(address: SocketAddr, request: &[u8]) -> Vec<u8> {
     response
 }
 
-/// Proves the local readiness endpoint is still served by the compiled process.
 fn assert_ready(address: SocketAddr) {
     let response = raw_request(
         address,
@@ -115,7 +110,6 @@ fn assert_ready(address: SocketAddr) {
     );
 }
 
-/// Returns the exact HTTP/1.1 status code from a complete response header.
 fn parse_http11_status(response: &[u8]) -> u16 {
     let line_end = response
         .windows(2)
@@ -133,7 +127,6 @@ fn parse_http11_status(response: &[u8]) -> u16 {
     status.parse().expect("three decimal digits should parse")
 }
 
-/// Reads one complete HTTP response without consuming bytes belonging to a later pipelined response.
 fn read_one_response(stream: &mut TcpStream) -> Vec<u8> {
     stream
         .set_read_timeout(Some(Duration::from_secs(5)))
@@ -169,7 +162,6 @@ fn read_one_response(stream: &mut TcpStream) -> Vec<u8> {
     response
 }
 
-/// Treats EOF, reset, or a syntactically valid 4xx/5xx response as safe timeout enforcement.
 fn probe_header_lifetime_enforcement(stream: &mut TcpStream) -> bool {
     stream
         .set_read_timeout(Some(PROBE_TIMEOUT))
@@ -229,7 +221,6 @@ fn probe_header_lifetime_enforcement(stream: &mut TcpStream) -> bool {
     }
 }
 
-/// Drips a tiny unfinished field and requires termination by the desired monotonic whole-header budget.
 fn require_monotonic_header_deadline<F>(
     stream: &mut TcpStream,
     started_at: Instant,
@@ -279,7 +270,6 @@ fn require_monotonic_header_deadline<F>(
     }
 }
 
-/// Proves a listener that should remain pre-routing has not accepted any origin connection.
 fn assert_no_upstream_connection(listener: &TcpListener) {
     match listener.accept() {
         Err(error) if error.kind() == ErrorKind::WouldBlock => {}
@@ -288,7 +278,6 @@ fn assert_no_upstream_connection(listener: &TcpListener) {
     }
 }
 
-/// Reads one complete origin request header with finite time and byte bounds.
 fn read_origin_request_header(stream: &mut TcpStream) -> Vec<u8> {
     stream
         .set_read_timeout(Some(Duration::from_secs(5)))
@@ -314,7 +303,6 @@ fn read_origin_request_header(stream: &mut TcpStream) -> Vec<u8> {
     }
 }
 
-/// Sends SIGTERM and requires the compiled gateway to exit cleanly.
 fn terminate_gateway(process: &mut Child) {
     let signal_status = Command::new("kill")
         .args(["-TERM", &process.id().to_string()])
@@ -330,7 +318,6 @@ fn terminate_gateway(process: &mut Child) {
     );
 }
 
-/// Fresh connections must not keep a progressing incomplete header alive past the overall budget.
 #[test]
 fn fresh_h1_slow_drip_is_terminated_by_whole_header_budget() {
     let upstream_listener =
@@ -389,9 +376,8 @@ fn fresh_h1_slow_drip_is_terminated_by_whole_header_budget() {
     );
 }
 
-/// A pipelined second request starts its whole-header budget before the first keep-alive cycle ends.
 #[test]
-fn pipelined_keepalive_slow_drip_is_terminated_by_whole_header_budget() {
+fn reused_keepalive_slow_drip_is_terminated_by_whole_header_budget() {
     let upstream_listener =
         TcpListener::bind("127.0.0.1:0").expect("fixture upstream should bind loopback");
     let upstream_address = upstream_listener
@@ -401,6 +387,7 @@ fn pipelined_keepalive_slow_drip_is_terminated_by_whole_header_budget() {
     let config = write_gateway_config(gateway_address, metrics_address, upstream_address);
 
     let (release_origin_tx, release_origin_rx) = mpsc::channel();
+    let (unexpected_origin_tx, unexpected_origin_rx) = mpsc::channel();
     let origin = thread::spawn(move || {
         let (mut stream, _) = upstream_listener
             .accept()
@@ -414,9 +401,51 @@ fn pipelined_keepalive_slow_drip_is_terminated_by_whole_header_budget() {
         stream
             .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nfirst")
             .expect("first origin response should be writable");
-        release_origin_rx
-            .recv_timeout(Duration::from_secs(5))
-            .expect("test should release the kept-alive origin connection");
+        stream
+            .set_read_timeout(Some(Duration::from_millis(50)))
+            .expect("origin post-response probe timeout should be configurable");
+        upstream_listener
+            .set_nonblocking(true)
+            .expect("second origin-connection observation should be nonblocking");
+        let mut first_connection_open = true;
+        loop {
+            match release_origin_rx.try_recv() {
+                Ok(()) | Err(mpsc::TryRecvError::Disconnected) => break,
+                Err(mpsc::TryRecvError::Empty) => {}
+            }
+
+            if first_connection_open {
+                let mut byte = [0_u8; 1];
+                match stream.read(&mut byte) {
+                    Ok(0) => first_connection_open = false,
+                    Ok(_) => {
+                        let _ = unexpected_origin_tx.send(());
+                        break;
+                    }
+                    Err(error)
+                        if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {}
+                    Err(error)
+                        if matches!(
+                            error.kind(),
+                            ErrorKind::ConnectionReset | ErrorKind::ConnectionAborted
+                        ) =>
+                    {
+                        first_connection_open = false;
+                    }
+                    Err(error) => panic!("unexpected kept-alive origin read error: {error}"),
+                }
+            }
+
+            match upstream_listener.accept() {
+                Err(error) if error.kind() == ErrorKind::WouldBlock => {}
+                Err(error) => panic!("unexpected second origin accept error: {error}"),
+                Ok((_second, _peer)) => {
+                    let _ = unexpected_origin_tx.send(());
+                    break;
+                }
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
     });
 
     let child = Command::new(env!("CARGO_BIN_EXE_cwl-pingora-gateway"))
@@ -433,23 +462,19 @@ fn pipelined_keepalive_slow_drip_is_terminated_by_whole_header_budget() {
     assert_ready(gateway_address);
 
     let mut downstream =
-        TcpStream::connect(gateway_address).expect("pipelined client should connect");
+        TcpStream::connect(gateway_address).expect("keep-alive client should connect");
     downstream
         .set_write_timeout(Some(Duration::from_secs(1)))
-        .expect("pipelined-client write timeout should be configurable");
-    let combined = format!(
-        "GET /first HTTP/1.1\r\nHost: gateway.test\r\n\r\nGET /slow-header HTTP/1.1\r\nHost: gateway.test\r\nX-Slow-Drip: {ATTACKER_MARKER}"
-    );
-    let second_header_started_at = Instant::now();
+        .expect("keep-alive-client write timeout should be configurable");
     downstream
-        .write_all(combined.as_bytes())
-        .expect("complete first request plus incomplete pipelined prefix should be writable");
+        .write_all(b"GET /first HTTP/1.1\r\nHost: gateway.test\r\n\r\n")
+        .expect("first complete keep-alive request should be writable");
 
     let first_response = read_one_response(&mut downstream);
     assert_eq!(
         parse_http11_status(&first_response),
         200,
-        "first request must complete before the pipelined timeout assertion"
+        "first request must complete before the reused-connection timeout assertion"
     );
     assert!(
         first_response.ends_with(b"\r\n\r\nfirst"),
@@ -457,12 +482,27 @@ fn pipelined_keepalive_slow_drip_is_terminated_by_whole_header_budget() {
         String::from_utf8_lossy(&first_response)
     );
 
-    require_monotonic_header_deadline(&mut downstream, second_header_started_at, || {});
+    let prefix = format!(
+        "GET /slow-header HTTP/1.1\r\nHost: gateway.test\r\nX-Slow-Drip: {ATTACKER_MARKER}"
+    );
+    let second_header_started_at = Instant::now();
+    downstream
+        .write_all(prefix.as_bytes())
+        .expect("incomplete second request prefix should be writable");
+
+    require_monotonic_header_deadline(&mut downstream, second_header_started_at, || {
+        assert!(
+            unexpected_origin_rx.try_recv().is_err(),
+            "incomplete second request reached an origin connection"
+        );
+    });
+    assert!(
+        unexpected_origin_rx.try_recv().is_err(),
+        "incomplete second request reached an origin connection"
+    );
     assert_ready(gateway_address);
 
-    release_origin_tx
-        .send(())
-        .expect("origin keep-alive fixture should be releasable");
+    let _ = release_origin_tx.send(());
     origin.join().expect("origin fixture should complete");
 
     let mut stderr = process
@@ -477,6 +517,6 @@ fn pipelined_keepalive_slow_drip_is_terminated_by_whole_header_budget() {
         .expect("gateway logs should be readable");
     assert!(
         !logs.contains(ATTACKER_MARKER),
-        "pipelined attacker-controlled header content must not enter process logs"
+        "reused attacker-controlled header content must not enter process logs"
     );
 }
