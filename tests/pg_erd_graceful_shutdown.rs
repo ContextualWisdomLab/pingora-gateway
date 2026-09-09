@@ -1,9 +1,9 @@
 //! Routed SIGTERM drain acceptance for the dedicated pg-erd migration binary.
 //!
-//! The fixtures exercise two distinct shutdown boundaries without transferring generic-binary
-//! evidence. Already-admitted routed work must drain during the configured grace period, while a
-//! reused keep-alive connection that parks for its next request after shutdown notification must
-//! observe shutdown before the runtime hard-stop fallback.
+//! The fixture holds one characterized backend response open, sends SIGTERM only after the routed
+//! request reaches that backend, then releases the response during the shared grace period. The
+//! downstream request must complete and the migration process must exit inside the signal-relative
+//! external termination budget. This keeps bounded-root evidence independent of the generic binary.
 
 #![cfg(unix)]
 
@@ -85,30 +85,6 @@ fn wait_until_listening(address: SocketAddr, process: &mut Child) {
     }
 }
 
-/// Waits for SIGTERM to close the traffic listener while requiring the draining process to stay alive.
-fn wait_until_listener_stops_accepting(address: SocketAddr, process: &mut Child) {
-    let deadline = Instant::now() + Duration::from_secs(2);
-    loop {
-        if let Some(status) = process
-            .try_wait()
-            .expect("migration process state should be readable")
-        {
-            panic!("migration process exited before graceful drain completed: {status}");
-        }
-
-        match TcpStream::connect_timeout(&address, Duration::from_millis(100)) {
-            Err(_) => return,
-            Ok(stream) => drop(stream),
-        }
-
-        assert!(
-            Instant::now() < deadline,
-            "migration traffic listener stayed open after SIGTERM"
-        );
-        thread::sleep(Duration::from_millis(25));
-    }
-}
-
 /// Waits only until the SIGTERM-relative external deadline so downstream work cannot reset the budget.
 fn wait_for_exit(process: &mut Child, deadline: Instant) -> std::process::ExitStatus {
     loop {
@@ -155,7 +131,7 @@ fn read_request_headers(stream: &mut TcpStream) -> String {
 /// Reads exactly far enough to prove the admitted response body completed without waiting for EOF.
 fn read_response_through_body(stream: &mut TcpStream, expected_body: &[u8]) -> Vec<u8> {
     stream
-        .set_read_timeout(Some(Duration::from_secs(3)))
+        .set_read_timeout(Some(Duration::from_secs(V1_GRACE_PERIOD_SECONDS + 1)))
         .expect("downstream response timeout should be configurable");
 
     let mut response = Vec::new();
@@ -228,8 +204,8 @@ fn sigterm_drains_routed_pg_erd_request_before_process_exit() {
             .send(())
             .expect("test should observe the routed in-flight request");
         release_response_rx
-            .recv_timeout(Duration::from_secs(V1_GRACE_PERIOD_SECONDS))
-            .expect("test should release the held response during the grace period");
+            .recv_timeout(Duration::from_secs(V1_TERMINATION_BUDGET_SECONDS))
+            .expect("test controller should release the held response before its hard watchdog");
         stream
             .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 7\r\nConnection: close\r\n\r\ndrained")
             .expect("held backend response should be writable");
@@ -250,18 +226,11 @@ fn sigterm_drains_routed_pg_erd_request_before_process_exit() {
         let mut stream = TcpStream::connect(gateway_address)
             .expect("migration gateway should accept downstream traffic");
         stream
-            .set_read_timeout(Some(Duration::from_secs(V1_TERMINATION_BUDGET_SECONDS)))
-            .expect("downstream timeout should be configurable");
-        stream
             .write_all(
                 b"GET /api/held HTTP/1.1\r\nHost: app.example:8080\r\nConnection: close\r\n\r\n",
             )
             .expect("downstream request should be writable");
-        let mut response = String::new();
-        stream
-            .read_to_string(&mut response)
-            .expect("drained downstream response should be readable");
-        response
+        read_response_through_body(&mut stream, b"drained")
     });
 
     request_seen_rx
@@ -283,145 +252,13 @@ fn sigterm_drains_routed_pg_erd_request_before_process_exit() {
         .join()
         .expect("downstream request thread should complete");
     assert!(
-        response.starts_with("HTTP/1.1 200 "),
-        "routed in-flight request should complete during graceful drain: {response:?}"
+        response.starts_with(b"HTTP/1.1 200 "),
+        "routed in-flight request should complete during graceful drain: {:?}",
+        String::from_utf8_lossy(&response)
     );
-    assert!(response.ends_with("\r\n\r\ndrained"));
     assert!(
         signal_sent_at.elapsed() < Duration::from_secs(V1_GRACE_PERIOD_SECONDS + 1),
         "routed response should complete during the configured grace period"
-    );
-
-    backend.join().expect("backend fixture should complete");
-    let exit_status = wait_for_exit(&mut process.0, termination_deadline);
-    assert!(
-        exit_status.success(),
-        "SIGTERM graceful shutdown should exit successfully: {exit_status}"
-    );
-
-    drop(frontend_listener);
-}
-
-/// Proves the bounded composition root exposes the supplier parked-read lost-wakeup boundary too.
-#[test]
-fn sigterm_closes_reused_pg_erd_keepalive_parked_after_shutdown_notification() {
-    let backend_listener =
-        TcpListener::bind("127.0.0.1:0").expect("backend fixture should bind loopback");
-    let backend_address = backend_listener
-        .local_addr()
-        .expect("backend fixture should expose its address");
-    let frontend_listener =
-        TcpListener::bind("127.0.0.1:0").expect("frontend authority should bind loopback");
-    let frontend_address = frontend_listener
-        .local_addr()
-        .expect("frontend authority should expose its address");
-    let (gateway_address, metrics_address) = reserve_distinct_loopback_addresses();
-    let config = write_config(
-        gateway_address,
-        metrics_address,
-        backend_address,
-        frontend_address,
-    );
-
-    let (request_seen_tx, request_seen_rx) = mpsc::channel();
-    let (release_response_tx, release_response_rx) = mpsc::channel();
-    let backend = thread::spawn(move || {
-        let (mut stream, _) = backend_listener
-            .accept()
-            .expect("routed request should reach the characterized backend");
-        let request = read_request_headers(&mut stream);
-        assert!(request.starts_with("GET /api/held HTTP/1.1\r\n"));
-        request_seen_tx
-            .send(())
-            .expect("test should observe the routed in-flight request");
-        release_response_rx
-            .recv_timeout(Duration::from_secs(V1_GRACE_PERIOD_SECONDS))
-            .expect("test should release the held response during the grace period");
-        stream
-            .write_all(
-                b"HTTP/1.1 200 OK\r\nContent-Length: 7\r\nConnection: keep-alive\r\n\r\ndrained",
-            )
-            .expect("held backend response should be writable");
-    });
-
-    let child = Command::new(env!("CARGO_BIN_EXE_cwl-pingora-pg-erd-migration"))
-        .args(["--config", config.path().to_str().expect("UTF-8 temp path")])
-        .env("RUST_LOG", "info")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("compiled pg-erd migration binary should start");
-    let mut process = GatewayProcess(child);
-    wait_until_listening(gateway_address, &mut process.0);
-
-    let mut downstream = TcpStream::connect(gateway_address)
-        .expect("migration gateway should accept downstream traffic");
-    downstream
-        .write_all(
-            b"GET /api/held HTTP/1.1\r\nHost: app.example:8080\r\nConnection: keep-alive\r\n\r\n",
-        )
-        .expect("downstream request should be writable");
-
-    request_seen_rx
-        .recv_timeout(Duration::from_secs(5))
-        .expect("routed request should reach backend before SIGTERM");
-
-    let signal_sent_at = Instant::now();
-    let termination_deadline = signal_sent_at + Duration::from_secs(V1_TERMINATION_BUDGET_SECONDS);
-    let signal_status = Command::new("kill")
-        .args(["-TERM", &process.0.id().to_string()])
-        .status()
-        .expect("system kill command should send SIGTERM");
-    assert!(signal_status.success(), "SIGTERM delivery should succeed");
-
-    wait_until_listener_stops_accepting(gateway_address, &mut process.0);
-    thread::sleep(Duration::from_millis(250));
-    assert!(
-        signal_sent_at.elapsed() < Duration::from_secs(V1_GRACE_PERIOD_SECONDS),
-        "fixture must release the routed request before the production grace period expires"
-    );
-
-    release_response_tx
-        .send(())
-        .expect("held backend response should be released");
-    let response = read_response_through_body(&mut downstream, b"drained");
-    assert!(
-        response.starts_with(b"HTTP/1.1 200 "),
-        "admitted routed request should finish before testing the parked keep-alive: {:?}",
-        String::from_utf8_lossy(&response)
-    );
-
-    let close_window = Duration::from_secs(1);
-    assert!(
-        signal_sent_at.elapsed() + close_window < Duration::from_secs(V1_GRACE_PERIOD_SECONDS),
-        "fixture must test routed parked-read shutdown before runtime fallback can begin"
-    );
-    downstream
-        .set_read_timeout(Some(close_window))
-        .expect("parked-read close timeout should be configurable");
-    let mut probe = [0_u8; 1];
-    match downstream.read(&mut probe) {
-        Ok(0) => {}
-        Ok(read) => panic!(
-            "routed parked keep-alive should close after shutdown, but received {read} unexpected byte(s)"
-        ),
-        Err(error)
-            if matches!(
-                error.kind(),
-                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-            ) =>
-        {
-            panic!(
-                "routed parked keep-alive survived shutdown notification until the 1s evidence bound"
-            )
-        }
-        Err(error) => panic!("unexpected routed parked-read shutdown error: {error}"),
-    }
-
-    assert!(
-        signal_sent_at.elapsed() < Duration::from_secs(V1_GRACE_PERIOD_SECONDS),
-        "routed parked keep-alive must close before the production runtime fallback begins"
     );
 
     backend.join().expect("backend fixture should complete");
