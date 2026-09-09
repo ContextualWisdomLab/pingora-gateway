@@ -133,12 +133,18 @@ fn read_one_response(stream: &mut TcpStream) -> Vec<u8> {
         .expect("response timeout should be configurable");
     let mut response = Vec::new();
     let header_end = loop {
-        assert!(response.len() < RESPONSE_BOUND, "response header exceeded bound");
+        assert!(
+            response.len() < RESPONSE_BOUND,
+            "response header exceeded bound"
+        );
         let mut byte = [0_u8; 1];
         let read = stream
             .read(&mut byte)
             .expect("response header should be readable");
-        assert!(read > 0, "connection closed before response header completed");
+        assert!(
+            read > 0,
+            "connection closed before response header completed"
+        );
         response.push(byte[0]);
         if response.ends_with(b"\r\n\r\n") {
             break response.len();
@@ -173,7 +179,10 @@ fn probe_header_lifetime_enforcement(stream: &mut TcpStream) -> bool {
             let mut response = first[..read].to_vec();
             let deadline = Instant::now() + Duration::from_millis(250);
             while !response.windows(2).any(|window| window == b"\r\n") {
-                assert!(response.len() < RESPONSE_BOUND, "timeout response exceeded bound");
+                assert!(
+                    response.len() < RESPONSE_BOUND,
+                    "timeout response exceeded bound"
+                );
                 assert!(
                     Instant::now() < deadline,
                     "timeout response did not complete its status line"
@@ -274,7 +283,9 @@ fn assert_no_upstream_connection(listener: &TcpListener) {
     match listener.accept() {
         Err(error) if error.kind() == ErrorKind::WouldBlock => {}
         Err(error) => panic!("unexpected upstream accept error: {error}"),
-        Ok((_stream, peer)) => panic!("incomplete header reached upstream unexpectedly from {peer}"),
+        Ok((_stream, peer)) => {
+            panic!("incomplete header reached upstream unexpectedly from {peer}")
+        }
     }
 }
 
