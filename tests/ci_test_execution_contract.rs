@@ -42,7 +42,10 @@ fn ci_runs_every_test_binary_before_failing_the_gate() {
         "canonical compile-and-test execution must not be conditional"
     );
     assert!(
-        matches!(step.get("continue-on-error"), None | Some(Value::Bool(false))),
+        matches!(
+            step.get("continue-on-error"),
+            None | Some(Value::Bool(false))
+        ),
         "canonical compile-and-test failures must fail the CI job"
     );
 }
