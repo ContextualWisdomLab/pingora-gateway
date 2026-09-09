@@ -37,6 +37,7 @@ const HELPER_UPSTREAM_ENV: &str = "CWL_H2_H1_COOKIE_UPSTREAM";
 const HELPER_CERT_ENV: &str = "CWL_H2_H1_COOKIE_CERT";
 const HELPER_KEY_ENV: &str = "CWL_H2_H1_COOKIE_KEY";
 const HELPER_UPGRADE_SOCK_ENV: &str = "CWL_H2_H1_COOKIE_UPGRADE_SOCK";
+const MAX_H1_ORIGIN_HEADER_BYTES: usize = 64 * 1024;
 
 /// Child process guard that terminates the test-only gateway even after assertion failure.
 struct HelperProcess(Child);
@@ -252,6 +253,31 @@ fn h1_origin_worker_disconnect_surfaces_worker_panic() {
     let _ = worker.recv_request(Duration::from_secs(1));
 }
 
+/// Extends the captured H1 header only while it remains inside the finite evidence budget.
+fn append_bounded_header_bytes(request: &mut Vec<u8>, bytes: &[u8]) {
+    assert!(
+        request.len().saturating_add(bytes.len()) <= MAX_H1_ORIGIN_HEADER_BYTES,
+        "H1 origin request header exceeded {MAX_H1_ORIGIN_HEADER_BYTES} bytes"
+    );
+    request.extend_from_slice(bytes);
+}
+
+/// Proves the raw-origin fixture admits an exact-boundary header buffer.
+#[test]
+fn h1_origin_request_header_buffer_accepts_exact_limit() {
+    let mut request = vec![b'a'; MAX_H1_ORIGIN_HEADER_BYTES - 2];
+    append_bounded_header_bytes(&mut request, b"ab");
+    assert_eq!(request.len(), MAX_H1_ORIGIN_HEADER_BYTES);
+}
+
+/// Proves continuously progressing raw-origin input cannot grow the fixture without a byte bound.
+#[test]
+#[should_panic(expected = "H1 origin request header exceeded 65536 bytes")]
+fn h1_origin_request_header_buffer_rejects_oversize_input() {
+    let mut request = vec![b'a'; MAX_H1_ORIGIN_HEADER_BYTES - 1];
+    append_bounded_header_bytes(&mut request, b"ab");
+}
+
 /// Captures one complete HTTP/1 request-header block from the raw origin connection.
 fn read_request_headers(stream: &mut TcpStream) -> String {
     stream
@@ -267,7 +293,7 @@ fn read_request_headers(stream: &mut TcpStream) -> String {
             read > 0,
             "gateway closed before sending an HTTP/1.1 request header"
         );
-        request.extend_from_slice(&buffer[..read]);
+        append_bounded_header_bytes(&mut request, &buffer[..read]);
     }
     String::from_utf8(request).expect("fixture request header should be UTF-8")
 }
@@ -284,15 +310,14 @@ fn spawn_h1_origin(listener: TcpListener) -> H1OriginWorker {
     let (request_sender, receiver) = mpsc::sync_channel(1);
     let (cancel, cancellation) = mpsc::channel();
     let handle = thread::spawn(move || {
-        let mut stream = match accept_h1_origin(
-            &listener,
-            Duration::from_secs(30),
-            Some(&cancellation),
-        ) {
-            Ok(stream) => stream,
-            Err(error) if error.kind() == ErrorKind::Interrupted => return,
-            Err(error) => panic!("gateway should connect to H1 origin within the fixture budget: {error}"),
-        };
+        let mut stream =
+            match accept_h1_origin(&listener, Duration::from_secs(30), Some(&cancellation)) {
+                Ok(stream) => stream,
+                Err(error) if error.kind() == ErrorKind::Interrupted => return,
+                Err(error) => {
+                    panic!("gateway should connect to H1 origin within the fixture budget: {error}")
+                }
+            };
         let request = read_request_headers(&mut stream);
         write_ok(&mut stream);
         let _ = request_sender.send(request);
@@ -374,9 +399,7 @@ fn assert_curl_supports_http2() {
     assert!(
         version.lines().any(|line| {
             line.starts_with("Features:")
-                && line
-                    .split_whitespace()
-                    .any(|feature| feature == "HTTP2")
+                && line.split_whitespace().any(|feature| feature == "HTTP2")
         }),
         "curl must expose HTTP2 support for this fixture: {version}"
     );
@@ -496,7 +519,11 @@ fn outbound_trace_cookie_values(trace: &str) -> Vec<String> {
         let Some((offset, payload)) = line.split_once(": ") else {
             continue;
         };
-        if offset.len() != 4 || !offset.chars().all(|character| character.is_ascii_hexdigit()) {
+        if offset.len() != 4
+            || !offset
+                .chars()
+                .all(|character| character.is_ascii_hexdigit())
+        {
             continue;
         }
         let Some((name, value)) = payload.split_once(':') else {
