@@ -289,7 +289,6 @@ fn exercise_request(request: Vec<u8>) -> ExerciseResult {
     let origin_address = origin_listener
         .local_addr()
         .expect("fixture origin should expose its address");
-    let origin = observe_origin(origin_listener);
     let (gateway_address, metrics_address) = reserve_distinct_loopback_addresses();
     let config = write_gateway_config(gateway_address, metrics_address, origin_address);
 
@@ -307,6 +306,7 @@ fn exercise_request(request: Vec<u8>) -> ExerciseResult {
     wait_until_listening(metrics_address, &mut process.0);
     assert_ready(gateway_address);
 
+    let origin = observe_origin(origin_listener);
     let downstream = send_candidate_request(gateway_address, &request);
     assert_ready(gateway_address);
 
@@ -387,7 +387,10 @@ fn many_small_fields_request() -> Vec<u8> {
 
 #[test]
 fn one_large_field_above_commercial_budget_is_rejected_before_origin() {
-    assert_pre_callback_rejection("one-large-field request", exercise_request(one_large_field_request()));
+    assert_pre_callback_rejection(
+        "one-large-field request",
+        exercise_request(one_large_field_request()),
+    );
 }
 
 #[test]
