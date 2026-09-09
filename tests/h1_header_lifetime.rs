@@ -34,6 +34,21 @@ impl Drop for GatewayProcess {
     }
 }
 
+/// Drains trace-level gateway stderr while the child is alive so the OS pipe cannot block shutdown.
+fn drain_gateway_stderr(process: &mut Child) -> thread::JoinHandle<String> {
+    let mut stderr = process
+        .stderr
+        .take()
+        .expect("gateway stderr should remain captured");
+    thread::spawn(move || {
+        let mut logs = String::new();
+        stderr
+            .read_to_string(&mut logs)
+            .expect("gateway logs should be readable");
+        logs
+    })
+}
+
 fn reserve_distinct_loopback_addresses() -> (SocketAddr, SocketAddr) {
     let traffic = TcpListener::bind("127.0.0.1:0").expect("traffic port should be available");
     let metrics = TcpListener::bind("127.0.0.1:0").expect("metrics port should be available");
@@ -351,6 +366,7 @@ fn fresh_h1_slow_drip_is_terminated_by_whole_header_budget() {
         .spawn()
         .expect("compiled gateway binary should start");
     let mut process = GatewayProcess(child);
+    let log_drain = drain_gateway_stderr(&mut process.0);
     wait_until_listening(gateway_address, &mut process.0);
     wait_until_listening(metrics_address, &mut process.0);
     assert_ready(gateway_address);
@@ -371,16 +387,10 @@ fn fresh_h1_slow_drip_is_terminated_by_whole_header_budget() {
     assert_no_upstream_connection(&upstream_listener);
     assert_ready(gateway_address);
 
-    let mut stderr = process
-        .0
-        .stderr
-        .take()
-        .expect("gateway stderr should remain captured");
     terminate_gateway(&mut process.0);
-    let mut logs = String::new();
-    stderr
-        .read_to_string(&mut logs)
-        .expect("gateway logs should be readable");
+    let logs = log_drain
+        .join()
+        .expect("gateway stderr drain should complete");
     assert!(
         !logs.contains(ATTACKER_MARKER),
         "attacker-controlled incomplete header content must not enter process logs"
@@ -468,6 +478,7 @@ fn reused_keepalive_slow_drip_is_terminated_by_whole_header_budget() {
         .spawn()
         .expect("compiled gateway binary should start");
     let mut process = GatewayProcess(child);
+    let log_drain = drain_gateway_stderr(&mut process.0);
     wait_until_listening(gateway_address, &mut process.0);
     wait_until_listening(metrics_address, &mut process.0);
     assert_ready(gateway_address);
@@ -522,16 +533,10 @@ fn reused_keepalive_slow_drip_is_terminated_by_whole_header_budget() {
     let _ = release_origin_tx.send(());
     origin.join().expect("origin fixture should complete");
 
-    let mut stderr = process
-        .0
-        .stderr
-        .take()
-        .expect("gateway stderr should remain captured");
     terminate_gateway(&mut process.0);
-    let mut logs = String::new();
-    stderr
-        .read_to_string(&mut logs)
-        .expect("gateway logs should be readable");
+    let logs = log_drain
+        .join()
+        .expect("gateway stderr drain should complete");
     assert!(
         !logs.contains(ATTACKER_MARKER),
         "reused attacker-controlled header content must not enter process logs"
