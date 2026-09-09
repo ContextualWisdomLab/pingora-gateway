@@ -1,6 +1,7 @@
 use std::fs;
 
-const COMPILE_AND_TEST_STEP: &str = "      - name: Compile and test\n        run: cargo test --all-targets --locked --no-fail-fast\n";
+const COMPILE_AND_TEST_STEP: &str =
+    "      - name: Compile and test\n        run: cargo test --all-targets --locked --no-fail-fast\n";
 const FAIL_FAST_COMPILE_AND_TEST_STEP: &str =
     "      - name: Compile and test\n        run: cargo test --all-targets --locked\n";
 
