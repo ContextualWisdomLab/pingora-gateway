@@ -2,16 +2,14 @@ name: Supply Chain
 
 on:
   push:
-    branches:
-      - main
   pull_request:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.repository }}-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: supply-chain-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 env:
   EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -43,8 +41,13 @@ jobs:
           cargo deny check advisories licenses sources bans
           git diff --exit-code -- Cargo.lock
 
-      - name: Build exact candidate image
-        run: docker build --tag "cwl-pingora-gateway:${EXPECTED_SHA}" .
+      - name: Build admitted candidate images
+        run: |
+          docker build --tag "cwl-pingora-gateway:${EXPECTED_SHA}" .
+          docker build \
+            --build-arg CWL_GATEWAY_BIN=cwl-pingora-pg-erd-migration \
+            --tag "cwl-pingora-pg-erd-migration:${EXPECTED_SHA}" \
+            .
 
       - name: Generate SPDX dependency SBOM
         uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26
@@ -56,7 +59,7 @@ jobs:
           upload-artifact: false
           upload-release-assets: false
 
-      - name: Scan exact candidate image
+      - name: Scan exact generic candidate image
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
           scan-type: image
@@ -70,25 +73,39 @@ jobs:
           output: trivy-image.json
           exit-code: '1'
 
+      - name: Scan exact pg-erd candidate image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          scan-type: image
+          image-ref: cwl-pingora-pg-erd-migration:${{ env.EXPECTED_SHA }}
+          version: v0.70.0
+          scanners: vuln
+          vuln-type: os,library
+          severity: CRITICAL,HIGH
+          ignore-unfixed: false
+          format: json
+          output: trivy-pg-erd-image.json
+          exit-code: '1'
+
       - name: Bind candidate evidence to exact source
-        if: ${{ always() }}
         shell: bash
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
-          for evidence in Cargo.lock deny.toml candidate.spdx.json trivy-image.json; do
+          for evidence in Cargo.lock deny.toml candidate.spdx.json trivy-image.json trivy-pg-erd-image.json; do
             test -s "$evidence"
           done
-          image_id="$(docker image inspect "cwl-pingora-gateway:${EXPECTED_SHA}" --format '{{.Id}}')"
+          generic_image_id="$(docker image inspect "cwl-pingora-gateway:${EXPECTED_SHA}" --format '{{.Id}}')"
+          pg_erd_image_id="$(docker image inspect "cwl-pingora-pg-erd-migration:${EXPECTED_SHA}" --format '{{.Id}}')"
           {
             printf 'evidence_kind=unreleased-candidate\n'
             printf 'source_sha=%s\n' "$EXPECTED_SHA"
-            printf 'local_image_id=%s\n' "$image_id"
-            sha256sum Cargo.lock deny.toml candidate.spdx.json trivy-image.json
+            printf 'generic_local_image_id=%s\n' "$generic_image_id"
+            printf 'pg_erd_local_image_id=%s\n' "$pg_erd_image_id"
+            sha256sum Cargo.lock deny.toml candidate.spdx.json trivy-image.json trivy-pg-erd-image.json
           } > candidate-evidence.txt
 
       - name: Upload exact candidate evidence
-        if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: candidate-evidence-${{ env.EXPECTED_SHA }}
@@ -97,6 +114,48 @@ jobs:
             deny.toml
             candidate.spdx.json
             trivy-image.json
+            trivy-pg-erd-image.json
             candidate-evidence.txt
           if-no-files-found: error
+          retention-days: 7
+
+      - name: Stage candidate failure diagnostics
+        if: ${{ failure() }}
+        shell: bash
+        run: |
+          set -u
+          {
+            printf 'evidence_kind=failed-unreleased-candidate\n'
+            printf 'source_sha=%s\n' "$EXPECTED_SHA"
+            for evidence in Cargo.lock deny.toml candidate.spdx.json trivy-image.json trivy-pg-erd-image.json; do
+              if [ -s "$evidence" ]; then
+                sha256sum "$evidence"
+              else
+                printf 'missing_file=%s\n' "$evidence"
+              fi
+            done
+            for image in \
+              "cwl-pingora-gateway:${EXPECTED_SHA}" \
+              "cwl-pingora-pg-erd-migration:${EXPECTED_SHA}"; do
+              if image_id="$(docker image inspect "$image" --format '{{.Id}}' 2>/dev/null)"; then
+                printf 'local_image_id=%s %s\n' "$image" "$image_id"
+              else
+                printf 'missing_image=%s\n' "$image"
+              fi
+            done
+          } > candidate-failure-context.txt
+
+      - name: Upload candidate failure diagnostics
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: candidate-failure-diagnostics-${{ env.EXPECTED_SHA }}
+          path: |
+            candidate-failure-context.txt
+            Cargo.lock
+            deny.toml
+            candidate.spdx.json
+            trivy-image.json
+            trivy-pg-erd-image.json
+          if-no-files-found: ignore
           retention-days: 7

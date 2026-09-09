@@ -10,6 +10,7 @@ pub const LIVENESS_PATH: &str = "/livez";
 /// Stable process-local readiness endpoint reached through the Pingora serving path.
 pub const READINESS_PATH: &str = "/readyz";
 
+/// Writes the payload-free local health response without contacting a consumer upstream.
 pub(crate) async fn respond_healthy(session: &mut Session) -> pingora::Result<()> {
     let mut response =
         ResponseHeader::build(200, None).expect("literal HTTP 200 response header must be valid");
@@ -19,5 +20,7 @@ pub(crate) async fn respond_healthy(session: &mut Session) -> pingora::Result<()
     response
         .insert_header("Cache-Control", "no-store")
         .expect("literal Cache-Control response header must be valid");
-    session.write_response_header(Box::new(response), true).await
+    session
+        .write_response_header(Box::new(response), true)
+        .await
 }

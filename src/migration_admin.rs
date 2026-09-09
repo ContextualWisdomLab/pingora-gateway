@@ -64,8 +64,8 @@ pub enum PgErdMigrationConfigError {
     /// A port-zero metrics listener would make the declared observability endpoint indeterminate.
     #[error("metrics_listener must use a non-zero port")]
     ZeroMetricsListenerPort,
-    /// Traffic and metrics endpoints must never overlap the same effective socket authority.
-    #[error("listener and metrics_listener socket authorities must not overlap")]
+    /// Traffic and metrics endpoints must never compete for overlapping socket authority.
+    #[error("listener and metrics_listener must not use overlapping socket authorities")]
     ListenerCollision,
     /// A characterized upstream must identify a concrete, connectable transport port.
     #[error("pg-erd migration transport authority {upstream_name} must use a non-zero port")]
@@ -147,12 +147,16 @@ impl PgErdMigrationConfig {
     /// The route table and response-header policy are compiled into this bounded migration profile;
     /// configuration can bind only the concrete `backend` and `frontend` transport authorities.
     /// Any custom TLS trust bundle is read by Pingora delivery during this single materialization.
+    /// The public build boundary revalidates deterministic invariants so direct `Deserialize`
+    /// construction cannot bypass the same fail-closed runtime and network-authority contract.
     pub fn build_proxy(&self) -> Result<MigrationGatewayProxy, PgErdMigrationConfigError> {
+        self.validate()?;
         let delivery = self.build_delivery()?;
-        let limits = self.runtime_isolation_limits()?;
+        let limits = self.runtime_isolation_limits_from_validated();
         Ok(MigrationGatewayProxy::new(delivery, limits))
     }
 
+    /// Rejects configuration that could fail after listener authority has already been granted.
     fn validate(&self) -> Result<(), PgErdMigrationConfigError> {
         match self.version {
             PG_ERD_MIGRATION_CONFIG_VERSION => {
@@ -180,29 +184,43 @@ impl PgErdMigrationConfig {
             return Err(PgErdMigrationConfigError::InvalidUpstreamKeepalivePoolSize);
         }
 
-        self.runtime_isolation_limits()?;
+        match self.max_upstream_response_body_ms {
+            Some(max_upstream_response_body_ms) => {
+                RuntimeIsolationLimits::try_new_with_response_body_limit(
+                    self.max_request_body_bytes,
+                    self.max_in_flight_requests,
+                    max_upstream_response_body_ms,
+                )?;
+            }
+            None => {
+                RuntimeIsolationLimits::try_new(
+                    self.max_request_body_bytes,
+                    self.max_in_flight_requests,
+                )?;
+            }
+        }
         self.validate_transport_authority(&pg_erd_migration_plan())
     }
 
-    fn runtime_isolation_limits(&self) -> Result<RuntimeIsolationLimits, PgErdMigrationConfigError> {
+    fn runtime_isolation_limits_from_validated(&self) -> RuntimeIsolationLimits {
         self.max_upstream_response_body_ms.map_or_else(
             || {
-                RuntimeIsolationLimits::try_new(
+                RuntimeIsolationLimits::from_validated(
                     self.max_request_body_bytes,
                     self.max_in_flight_requests,
                 )
             },
             |max_upstream_response_body_ms| {
-                RuntimeIsolationLimits::try_new_with_response_body_limit(
+                RuntimeIsolationLimits::from_validated_with_response_body_limit(
                     self.max_request_body_bytes,
                     self.max_in_flight_requests,
                     max_upstream_response_body_ms,
                 )
             },
         )
-        .map_err(Into::into)
     }
 
+    /// Enforces a complete one-to-one binding of operator transport data to compiled upstream names.
     fn validate_transport_authority(
         &self,
         plan: &EdgeMigrationPlan,
@@ -231,25 +249,21 @@ impl PgErdMigrationConfig {
                 });
             }
             if !plan.contains_upstream(&upstream_name) {
-                return Err(PgErdMigrationConfigError::UnknownTransportAuthority {
-                    upstream_name,
-                });
+                return Err(PgErdMigrationConfigError::UnknownTransportAuthority { upstream_name });
             }
-            validate_upstream_authority_separation(
-                self.listener,
-                self.metrics_listener,
-                upstream,
-            )?;
+            validate_upstream_authority_separation(self.listener, self.metrics_listener, upstream)?;
         }
         Ok(())
     }
 
+    /// Materializes the fixed migration plan against validated concrete transport authorities.
     fn build_delivery(&self) -> Result<MigrationDeliveryPlan, PgErdMigrationConfigError> {
         MigrationDeliveryPlan::try_new(pg_erd_migration_plan(), self.upstreams.clone())
             .map_err(Into::into)
     }
 }
 
+/// Builds the immutable characterized routing and response-policy plan for `pg-erd-cloud`.
 fn pg_erd_migration_plan() -> EdgeMigrationPlan {
     EdgeMigrationPlan::try_new(
         vec!["backend".to_string(), "frontend".to_string()],

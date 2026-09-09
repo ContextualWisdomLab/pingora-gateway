@@ -6,7 +6,7 @@
 
 ## Problem
 
-The current migration stack does not terminate downstream TLS and does not admit HTTP/2. At parent exact head `969ffd7db92776c3a2389646e81a39b79705c2e0`, both production composition roots build a Pingora proxy service and call `add_tcp(&listener)`. They do not load downstream certificate/key material, configure listener ALPN, or expose a versioned HTTP/2 admission contract. Separately, `pingora_delivery` forces every characterized upstream peer to `ALPN::H1`.
+The current migration stack does not terminate downstream TLS and does not admit HTTP/2. On final parent #47, both production composition roots build a Pingora proxy service and call `add_tcp(&listener)`, while `pingora_delivery` pins every characterized upstream peer to `ALPN::H1`. They do not load downstream certificate/key material, configure listener ALPN, or expose a versioned HTTP/2 admission contract.
 
 This means downstream HTTP/2 cannot be added as a listener-only feature. The first admitted H2 request would immediately exercise Pingora's HTTP/2-downstream to HTTP/1.1-upstream translation path. Public supplier issue `cloudflare/pingora#935` reports that an H2 request body ending with an empty DATA frame carrying END_STREAM can cause a zero-length H1 chunk write to emit the chunk terminator and `finish()` to emit it again, poisoning a reusable upstream connection. Public repair PR #936 changes zero-length chunked writes into no-ops but remains open and unmerged. Supplier issue #892 separately reports missing RFC 9113 Cookie normalization when multiple H2 `Cookie` fields are translated to an H1 upstream; that report is a required characterization target until the exact integrated supplier proves or repairs the behavior.
 
