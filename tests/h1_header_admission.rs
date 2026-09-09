@@ -151,7 +151,10 @@ fn read_origin_request_header(stream: &mut TcpStream) -> Vec<u8> {
         let read = stream
             .read(&mut buffer)
             .expect("origin request should be readable");
-        assert!(read > 0, "origin connection closed before headers completed");
+        assert!(
+            read > 0,
+            "origin connection closed before headers completed"
+        );
         request.extend_from_slice(&buffer[..read]);
     }
 }
