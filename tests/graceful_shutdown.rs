@@ -290,7 +290,9 @@ fn sigterm_closes_a_reused_keepalive_that_parks_after_shutdown_notification() {
             .recv_timeout(Duration::from_secs(V1_GRACE_PERIOD_SECONDS))
             .expect("test should release the held response during the grace period");
         stream
-            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 7\r\nConnection: keep-alive\r\n\r\ndrained")
+            .write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Length: 7\r\nConnection: keep-alive\r\n\r\ndrained",
+            )
             .expect("held upstream response should be writable");
     });
 
