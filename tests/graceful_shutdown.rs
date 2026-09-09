@@ -172,6 +172,9 @@ fn sigterm_drains_an_in_flight_request_before_process_exit() {
         let (mut stream, _) = upstream_listener
             .accept()
             .expect("gateway should connect to fixture upstream");
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .expect("upstream request timeout should be configurable");
         let mut request = Vec::new();
         let mut buffer = [0_u8; 1024];
         while !request.windows(4).any(|window| window == b"\r\n\r\n") {
@@ -237,7 +240,7 @@ fn sigterm_drains_an_in_flight_request_before_process_exit() {
         .join()
         .expect("downstream request thread should complete");
     assert!(
-        response.starts_with("HTTP/1.1 200"),
+        response.starts_with("HTTP/1.1 200 "),
         "in-flight request should complete during graceful drain: {response:?}"
     );
     assert!(response.ends_with("\r\n\r\ndrained"));
@@ -270,6 +273,9 @@ fn sigterm_closes_a_reused_keepalive_that_parks_after_shutdown_notification() {
         let (mut stream, _) = upstream_listener
             .accept()
             .expect("gateway should connect to fixture upstream");
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .expect("upstream request timeout should be configurable");
         let mut request = Vec::new();
         let mut buffer = [0_u8; 1024];
         while !request.windows(4).any(|window| window == b"\r\n\r\n") {
@@ -340,7 +346,7 @@ fn sigterm_closes_a_reused_keepalive_that_parks_after_shutdown_notification() {
         .expect("held upstream response should be released");
     let response = read_response_through_body(&mut downstream, b"drained");
     assert!(
-        response.starts_with(b"HTTP/1.1 200"),
+        response.starts_with(b"HTTP/1.1 200 "),
         "admitted request should finish before testing the parked keep-alive: {:?}",
         String::from_utf8_lossy(&response)
     );
