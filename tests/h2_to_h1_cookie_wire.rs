@@ -141,9 +141,23 @@ fn issue_local_certificate() -> LocalCertificate {
     }
 }
 
-/// Binds and retains one ephemeral loopback listener so its selected port cannot be stolen.
+/// Binds and retains one nonblocking ephemeral listener for Pingora SCM_RIGHTS inheritance.
 fn reserve_loopback_listener() -> TcpListener {
-    TcpListener::bind("127.0.0.1:0").expect("loopback port should be available")
+    let listener = TcpListener::bind("127.0.0.1:0").expect("loopback port should be available");
+    listener
+        .set_nonblocking(true)
+        .expect("transferred Pingora listener must be nonblocking");
+    listener
+}
+
+/// Proves the retained reservation matches Pingora's nonblocking inherited-listener contract.
+#[test]
+fn reserved_loopback_listener_is_nonblocking() {
+    let listener = reserve_loopback_listener();
+    let error = listener
+        .accept()
+        .expect_err("nonblocking reservation should not wait for a peer");
+    assert_eq!(error.kind(), ErrorKind::WouldBlock);
 }
 
 /// Waits until the transferred listener remains reachable under child ownership or the child exits.
