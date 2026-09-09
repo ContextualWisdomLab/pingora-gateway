@@ -247,7 +247,9 @@ fn prove_waiter_created_after_cleanup_observes_shutdown(
             .expect("test should observe origin admission");
         release_response_rx
             .recv_timeout(Duration::from_secs(V1_TERMINATION_BUDGET_SECONDS))
-            .expect("fixture controller should release the held response before its bounded watchdog");
+            .expect(
+                "fixture controller should release the held response before its bounded watchdog",
+            );
         stream
             .write_all(
                 b"HTTP/1.1 200 OK\r\nContent-Length: 7\r\nConnection: keep-alive\r\n\r\ndrained",
