@@ -502,15 +502,21 @@ fn reused_keepalive_slow_drip_is_terminated_by_whole_header_budget() {
         .expect("incomplete second request prefix should be writable");
 
     require_monotonic_header_deadline(&mut downstream, second_header_started_at, || {
-        assert!(
-            unexpected_origin_rx.try_recv().is_err(),
-            "incomplete second request reached an origin connection"
-        );
+        match unexpected_origin_rx.try_recv() {
+            Err(mpsc::TryRecvError::Empty) => {}
+            Ok(()) => panic!("incomplete second request reached an origin connection"),
+            Err(mpsc::TryRecvError::Disconnected) => {
+                panic!("origin monitor disconnected before the timeout assertion completed")
+            }
+        }
     });
-    assert!(
-        unexpected_origin_rx.try_recv().is_err(),
-        "incomplete second request reached an origin connection"
-    );
+    match unexpected_origin_rx.try_recv() {
+        Err(mpsc::TryRecvError::Empty) => {}
+        Ok(()) => panic!("incomplete second request reached an origin connection"),
+        Err(mpsc::TryRecvError::Disconnected) => {
+            panic!("origin monitor disconnected before the timeout assertion completed")
+        }
+    }
     assert_ready(gateway_address);
 
     let _ = release_origin_tx.send(());
