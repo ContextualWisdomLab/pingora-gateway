@@ -3,8 +3,9 @@
 //! The current Pingora supplier has fixed HTTP/1 parser ceilings, but the gateway cannot lower
 //! request-header bytes or field count before `ProxyHttp::request_filter()`. These real-socket
 //! fixtures use commercial acceptance budgets that remain comfortably below the supplier ceilings
-//! and require oversized requests to be rejected before any origin connection. The budgets are
-//! test acceptance values only; they are not a hidden v1 Admin Config contract.
+//! and require oversized requests to be rejected before any application lifecycle or origin
+//! connection. The budgets are test acceptance values only; they are not a hidden v1 Admin Config
+//! contract.
 
 #![cfg(unix)]
 
@@ -20,6 +21,8 @@ const DESIRED_MAX_HEADER_BYTES: usize = 16 * 1024;
 const DESIRED_MAX_HEADER_FIELDS: usize = 32;
 const ORIGIN_HEADER_BOUND: usize = 128 * 1024;
 const ATTACKER_MARKER: &str = "h1-admission-secret-marker";
+const EXPECTED_HEALTH_REQUEST_OBSERVATIONS: usize = 2;
+const REQUEST_OBSERVATION_LOG_PREFIX: &str = "gateway_request status=";
 
 struct GatewayProcess(Child);
 
@@ -44,17 +47,16 @@ struct ExerciseResult {
     logs: String,
 }
 
-/// Drains trace-level gateway stderr while the child is alive so pipe capacity cannot mask RED.
-fn drain_gateway_stderr(process: &mut Child) -> thread::JoinHandle<String> {
-    let mut stderr = process
-        .stderr
-        .take()
-        .expect("gateway stderr should remain captured");
+/// Drains one child output stream while the process is alive so pipe capacity cannot mask RED.
+fn drain_output<R>(mut output: R) -> thread::JoinHandle<String>
+where
+    R: Read + Send + 'static,
+{
     thread::spawn(move || {
         let mut logs = String::new();
-        stderr
+        output
             .read_to_string(&mut logs)
-            .expect("gateway logs should be readable");
+            .expect("gateway output should be readable");
         logs
     })
 }
@@ -282,7 +284,7 @@ fn terminate_gateway(process: &mut Child) {
     );
 }
 
-/// Runs one complete oversized request and records origin reachability without changing gateway config.
+/// Runs one complete oversized request and records callback/origin reachability without changing config.
 fn exercise_request(request: Vec<u8>) -> ExerciseResult {
     let origin_listener =
         TcpListener::bind("127.0.0.1:0").expect("fixture origin should bind loopback");
@@ -296,24 +298,40 @@ fn exercise_request(request: Vec<u8>) -> ExerciseResult {
         .args(["--config", config.path().to_str().expect("UTF-8 temp path")])
         .env("RUST_LOG", "trace")
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
+        .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .expect("compiled gateway binary should start");
     let mut process = GatewayProcess(child);
-    let log_drain = drain_gateway_stderr(&mut process.0);
+    let stdout = process
+        .0
+        .stdout
+        .take()
+        .expect("gateway stdout should remain captured");
+    let stderr = process
+        .0
+        .stderr
+        .take()
+        .expect("gateway stderr should remain captured");
+    let stdout_drain = drain_output(stdout);
+    let stderr_drain = drain_output(stderr);
     wait_until_listening(gateway_address, &mut process.0);
     wait_until_listening(metrics_address, &mut process.0);
     assert_ready(gateway_address);
 
+    // Start the origin evidence window only after listener readiness so startup cannot consume it.
     let origin = observe_origin(origin_listener);
     let downstream = send_candidate_request(gateway_address, &request);
     assert_ready(gateway_address);
 
     terminate_gateway(&mut process.0);
-    let logs = log_drain
+    let stdout_logs = stdout_drain
+        .join()
+        .expect("gateway stdout drain should complete");
+    let stderr_logs = stderr_drain
         .join()
         .expect("gateway stderr drain should complete");
+    let logs = format!("{stdout_logs}\n{stderr_logs}");
     let origin_request = origin.join().expect("origin observer should complete");
 
     ExerciseResult {
@@ -323,11 +341,21 @@ fn exercise_request(request: Vec<u8>) -> ExerciseResult {
     }
 }
 
-/// Requires parser-phase rejection before origin while permitting transport close or a 4xx/5xx status.
+/// Requires parser-phase rejection before the gateway's ProxyHttp lifecycle and before origin.
 fn assert_pre_callback_rejection(case: &str, result: ExerciseResult) {
     assert!(
         !result.logs.contains(ATTACKER_MARKER),
-        "attacker-controlled request-header content must not enter process logs"
+        "attacker-controlled request-header content must not enter child stdout or stderr"
+    );
+
+    // `GatewayProxy::logging()` emits exactly one payload-free `gateway_request` observation for
+    // each completed application request lifecycle. The fixture intentionally performs two health
+    // requests, one before and one after the candidate. A third observation proves the candidate
+    // entered the ProxyHttp lifecycle even if a future callback-only workaround rejects it locally.
+    let application_lifecycles = result.logs.matches(REQUEST_OBSERVATION_LOG_PREFIX).count();
+    assert_eq!(
+        application_lifecycles, EXPECTED_HEALTH_REQUEST_OBSERVATIONS,
+        "{case} entered the ProxyHttp application lifecycle; parser admission must reject before callbacks"
     );
 
     if let Some(origin_request) = result.origin_request {
@@ -336,7 +364,7 @@ fn assert_pre_callback_rejection(case: &str, result: ExerciseResult) {
             _ => None,
         };
         panic!(
-            "{case} crossed the HTTP/1 parser/application boundary and reached origin ({} bytes, downstream status {status:?}); a callback-only rejection cannot satisfy pre-allocation admission",
+            "{case} reached origin after HTTP/1 parsing ({} bytes, downstream status {status:?})",
             origin_request.len()
         );
     }
