@@ -13,7 +13,7 @@ use thiserror::Error;
 
 use crate::edge_contract::{
     socket_authorities_overlap, validate_upstream_authority_separation, GatewayConfigError,
-    UpstreamConfig,
+    UpstreamConfig, MAX_SERVICE_THREADS_PER_SERVICE,
 };
 use crate::edge_routing::{RouteMatch, RouteRule};
 use crate::http_policy::ResponseHeaderRule;
@@ -28,6 +28,10 @@ pub const PG_ERD_MIGRATION_CONFIG_VERSION: u32 = 1;
 /// Opt-in pg-erd configuration version that requires an explicit response-body lifetime budget.
 pub const PG_ERD_RESPONSE_LIFETIME_CONFIG_VERSION: u32 = 2;
 
+const fn default_service_threads() -> usize {
+    1
+}
+
 /// Fail-closed admin configuration for the characterized `pg-erd-cloud` migration runtime.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -39,6 +43,8 @@ pub struct PgErdMigrationConfig {
     max_in_flight_requests: usize,
     #[serde(default)]
     max_upstream_response_body_ms: Option<u64>,
+    #[serde(default = "default_service_threads")]
+    service_threads: usize,
     upstream_keepalive_pool_size: usize,
     upstreams: Vec<UpstreamConfig>,
 }
@@ -72,6 +78,17 @@ pub enum PgErdMigrationConfigError {
     ZeroTransportAuthorityPort {
         /// Stable characterized upstream whose operator binding used port zero.
         upstream_name: String,
+    },
+    /// A zero data-plane worker count would construct an invalid proxy runtime topology.
+    #[error("service_threads must be greater than zero")]
+    InvalidServiceThreads,
+    /// The declared global data-plane worker topology exceeds this contract's safety ceiling.
+    #[error("service_threads {actual} exceeds the data-plane maximum {max}")]
+    ServiceThreadsExceedLimit {
+        /// Operator-requested global worker count followed by the migration proxy service.
+        actual: usize,
+        /// Maximum global data-plane worker count admitted by this contract version.
+        max: usize,
     },
     /// A zero keepalive pool would silently change upstream connection-capacity behavior.
     #[error("upstream_keepalive_pool_size must be greater than zero")]
@@ -137,6 +154,14 @@ impl PgErdMigrationConfig {
         self.max_upstream_response_body_ms
     }
 
+    /// Returns the validated global worker count followed by the migration proxy service.
+    ///
+    /// Production composition gives the Prometheus service its own one-worker override, so this
+    /// value is not a process-wide thread total and does not multiply every registered service.
+    pub fn service_threads(&self) -> usize {
+        self.service_threads
+    }
+
     /// Returns the validated Pingora upstream keepalive-pool budget.
     pub fn upstream_keepalive_pool_size(&self) -> usize {
         self.upstream_keepalive_pool_size
@@ -179,6 +204,15 @@ impl PgErdMigrationConfig {
         }
         if socket_authorities_overlap(self.listener, self.metrics_listener) {
             return Err(PgErdMigrationConfigError::ListenerCollision);
+        }
+        if self.service_threads == 0 {
+            return Err(PgErdMigrationConfigError::InvalidServiceThreads);
+        }
+        if self.service_threads > MAX_SERVICE_THREADS_PER_SERVICE {
+            return Err(PgErdMigrationConfigError::ServiceThreadsExceedLimit {
+                actual: self.service_threads,
+                max: MAX_SERVICE_THREADS_PER_SERVICE,
+            });
         }
         if self.upstream_keepalive_pool_size == 0 {
             return Err(PgErdMigrationConfigError::InvalidUpstreamKeepalivePoolSize);

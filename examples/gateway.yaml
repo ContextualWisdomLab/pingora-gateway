@@ -3,6 +3,7 @@ listener: 0.0.0.0:6188
 metrics_listener: 127.0.0.1:6192
 max_request_body_bytes: 1048576
 max_in_flight_requests: 128
+service_threads: 1
 upstream_keepalive_pool_size: 32
 upstreams:
   - name: application
