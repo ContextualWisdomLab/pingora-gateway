@@ -1,0 +1,46 @@
+name: Resolve Pingora 0.9.0 lock
+
+on:
+  push:
+    branches:
+      - test/parked-read-shutdown-red-v1
+    paths:
+      - Cargo.toml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: resolve-pingora-0-9-0-lock-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  resolve-lock:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify checkout identity
+        run: test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+      - name: Install Rust 1.98.0
+        run: |
+          rustup toolchain install 1.98.0 --profile minimal
+          rustup default 1.98.0
+      - name: Resolve published Pingora 0.9.0 packages
+        run: |
+          set -euo pipefail
+          cargo update -p pingora --precise 0.9.0
+          cargo update -p pingora-prometheus --precise 0.9.0
+          cargo metadata --locked --format-version 1 >/tmp/metadata.json
+          git diff --check -- Cargo.lock
+      - name: Upload Cargo-generated lock
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: pingora-0.9.0-lock-${{ github.sha }}
+          path: Cargo.lock
+          if-no-files-found: error
+          retention-days: 1
