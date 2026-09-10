@@ -310,10 +310,8 @@ fn both_tls_composition_roots_fail_closed_when_certificate_material_cannot_be_lo
         reserve_loopback_address(),
         missing_tls_material,
     );
-    let generic = bounded_startup_output(
-        env!("CARGO_BIN_EXE_cwl-pingora-gateway"),
-        &generic_config,
-    );
+    let generic =
+        bounded_startup_output(env!("CARGO_BIN_EXE_cwl-pingora-gateway"), &generic_config);
     assert!(!generic.status.success());
     assert!(
         String::from_utf8_lossy(&generic.stderr).contains("downstream TLS"),
