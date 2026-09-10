@@ -7,10 +7,10 @@
 #![cfg(unix)]
 
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Output, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -18,6 +18,20 @@ use cwl_pingora_gateway::downstream_tls::DownstreamTlsConfigError;
 use cwl_pingora_gateway::migration_admin::{PgErdMigrationConfig, PgErdMigrationConfigError};
 use cwl_pingora_gateway::runtime_policy::V1_TERMINATION_BUDGET_SECONDS;
 use tempfile::{tempdir, NamedTempFile};
+
+struct GatewayProcess(Child);
+
+impl Drop for GatewayProcess {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+struct StartupOutput {
+    status: ExitStatus,
+    stderr: Vec<u8>,
+}
 
 struct LocalCertificate {
     _directory: tempfile::TempDir,
@@ -141,30 +155,59 @@ fn write_pg_erd_config(
     file
 }
 
-fn spawn(binary: &str, config: &NamedTempFile) -> Child {
-    Command::new(binary)
-        .args([
-            "--config",
-            config.path().to_str().expect("UTF-8 config path"),
-        ])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::inherit())
-        .spawn()
-        .expect("compiled gateway binary should start")
+fn spawn(binary: &str, config: &NamedTempFile) -> GatewayProcess {
+    GatewayProcess(
+        Command::new(binary)
+            .args([
+                "--config",
+                config.path().to_str().expect("UTF-8 config path"),
+            ])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .expect("compiled gateway binary should start"),
+    )
 }
 
-fn output(binary: &str, config: &NamedTempFile) -> Output {
-    Command::new(binary)
-        .args([
-            "--config",
-            config.path().to_str().expect("UTF-8 config path"),
-        ])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .output()
-        .expect("compiled gateway binary should run")
+fn bounded_startup_output(binary: &str, config: &NamedTempFile) -> StartupOutput {
+    let mut process = GatewayProcess(
+        Command::new(binary)
+            .args([
+                "--config",
+                config.path().to_str().expect("UTF-8 config path"),
+            ])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("compiled gateway binary should start"),
+    );
+    let deadline = Instant::now() + Duration::from_secs(10);
+
+    loop {
+        if let Some(status) = process
+            .0
+            .try_wait()
+            .expect("gateway process state should be readable")
+        {
+            let mut stderr = Vec::new();
+            process
+                .0
+                .stderr
+                .take()
+                .expect("captured gateway stderr should be available")
+                .read_to_end(&mut stderr)
+                .expect("captured gateway stderr should be readable");
+            return StartupOutput { status, stderr };
+        }
+        if Instant::now() >= deadline {
+            let _ = process.0.kill();
+            let _ = process.0.wait();
+            panic!("gateway did not fail closed during startup within 10s");
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
 }
 
 fn wait_until_listening(address: SocketAddr, process: &mut Child) {
@@ -230,8 +273,8 @@ fn both_tls_composition_roots_construct_listeners_and_exit_through_graceful_shut
         tls_material,
     );
     let mut generic = spawn(env!("CARGO_BIN_EXE_cwl-pingora-gateway"), &generic_config);
-    wait_until_listening(generic_listener, &mut generic);
-    terminate_gracefully(&mut generic);
+    wait_until_listening(generic_listener, &mut generic.0);
+    terminate_gracefully(&mut generic.0);
 
     let (pg_listener, pg_metrics) = reserve_distinct_loopback_addresses();
     let pg_config = write_pg_erd_config(
@@ -247,8 +290,8 @@ fn both_tls_composition_roots_construct_listeners_and_exit_through_graceful_shut
         env!("CARGO_BIN_EXE_cwl-pingora-pg-erd-migration"),
         &pg_config,
     );
-    wait_until_listening(pg_listener, &mut pg);
-    terminate_gracefully(&mut pg);
+    wait_until_listening(pg_listener, &mut pg.0);
+    terminate_gracefully(&mut pg.0);
 }
 
 #[test]
@@ -267,7 +310,10 @@ fn both_tls_composition_roots_fail_closed_when_certificate_material_cannot_be_lo
         reserve_loopback_address(),
         missing_tls_material,
     );
-    let generic = output(env!("CARGO_BIN_EXE_cwl-pingora-gateway"), &generic_config);
+    let generic = bounded_startup_output(
+        env!("CARGO_BIN_EXE_cwl-pingora-gateway"),
+        &generic_config,
+    );
     assert!(!generic.status.success());
     assert!(
         String::from_utf8_lossy(&generic.stderr).contains("downstream TLS"),
@@ -284,7 +330,7 @@ fn both_tls_composition_roots_fail_closed_when_certificate_material_cannot_be_lo
         reserve_loopback_address(),
         missing_tls_material,
     );
-    let pg = output(
+    let pg = bounded_startup_output(
         env!("CARGO_BIN_EXE_cwl-pingora-pg-erd-migration"),
         &pg_config,
     );
