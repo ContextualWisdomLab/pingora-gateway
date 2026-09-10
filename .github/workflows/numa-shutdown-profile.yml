@@ -51,13 +51,13 @@ jobs:
           {
             printf '%s\n' 'cpu,node,socket'
             lscpu -p=CPU,NODE,SOCKET | awk -F, -v allowed="$allowed_cpu_list" '
-              function cpu_allowed(cpu, ranges, count, index, bounds) {
+              function cpu_allowed(cpu, ranges, count, i, bounds) {
                 count = split(allowed, ranges, ",")
-                for (index = 1; index <= count; index++) {
-                  if (index(ranges[index], "-") > 0) {
-                    split(ranges[index], bounds, "-")
+                for (i = 1; i <= count; i++) {
+                  if (index(ranges[i], "-") > 0) {
+                    split(ranges[i], bounds, "-")
                     if (cpu >= bounds[1] + 0 && cpu <= bounds[2] + 0) return 1
-                  } else if (cpu == ranges[index] + 0) {
+                  } else if (cpu == ranges[i] + 0) {
                     return 1
                   }
                 }
