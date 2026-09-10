@@ -10,7 +10,7 @@ use std::process::ExitCode;
 
 use cwl_pingora_gateway::gateway_proxy::GatewayProxy;
 use cwl_pingora_gateway::logging_policy::init_runtime_logging;
-use cwl_pingora_gateway::runtime_policy::build_server_conf_with_service_threads;
+use cwl_pingora_gateway::runtime_composition::server_conf_for_gateway;
 use cwl_pingora_gateway::startup::GatewayCommand;
 use pingora::prelude::{http_proxy_service, Server};
 use pingora::server::RunArgs;
@@ -35,13 +35,7 @@ fn main() -> ExitCode {
     let listener = config.listener.to_string();
     let metrics_listener = config.metrics_listener.to_string();
 
-    let mut server = Server::new_with_opt_and_conf(
-        None,
-        build_server_conf_with_service_threads(
-            config.upstream_keepalive_pool_size,
-            config.service_threads,
-        ),
-    );
+    let mut server = Server::new_with_opt_and_conf(None, server_conf_for_gateway(&config));
     server.bootstrap();
 
     let mut proxy_service = http_proxy_service(&server.configuration, proxy);
