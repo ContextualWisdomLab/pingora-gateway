@@ -14,6 +14,10 @@ use thiserror::Error;
 /// The only configuration version implemented by this release line.
 pub const CURRENT_GATEWAY_CONFIG_VERSION: u32 = 1;
 
+const fn default_service_threads() -> usize {
+    1
+}
+
 /// Fail-closed configuration for one gateway process.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -28,6 +32,13 @@ pub struct GatewayConfig {
     pub max_request_body_bytes: u64,
     /// Maximum number of non-health downstream requests admitted concurrently by this process.
     pub max_in_flight_requests: usize,
+    /// Number of Pingora worker threads assigned independently to each service runtime.
+    ///
+    /// Omitted version-1 configurations retain the historical one-worker topology. Operators must
+    /// set this explicitly when profiling or deploying a multi-worker runtime; it is never derived
+    /// from host CPU count.
+    #[serde(default = "default_service_threads")]
+    pub service_threads: usize,
     /// Maximum number of reusable upstream keepalive connections retained by Pingora.
     pub upstream_keepalive_pool_size: usize,
     /// Explicit set of upstream services that the gateway may contact.
@@ -119,6 +130,9 @@ pub enum GatewayConfigError {
     /// A zero in-flight budget would reject every proxied request.
     #[error("max_in_flight_requests must be greater than zero")]
     InvalidInFlightRequestLimit,
+    /// A zero service-worker count would construct an invalid runtime topology.
+    #[error("service_threads must be greater than zero")]
+    InvalidServiceThreads,
     /// A zero keepalive pool silently disables reusable upstream connections and changes capacity.
     #[error("upstream_keepalive_pool_size must be greater than zero")]
     InvalidUpstreamKeepalivePoolSize,
@@ -217,6 +231,9 @@ impl GatewayConfig {
         }
         if self.max_in_flight_requests == 0 {
             return Err(GatewayConfigError::InvalidInFlightRequestLimit);
+        }
+        if self.service_threads == 0 {
+            return Err(GatewayConfigError::InvalidServiceThreads);
         }
         if self.upstream_keepalive_pool_size == 0 {
             return Err(GatewayConfigError::InvalidUpstreamKeepalivePoolSize);
