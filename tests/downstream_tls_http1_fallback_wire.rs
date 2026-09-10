@@ -10,7 +10,7 @@ use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use pingora::tls::ssl::{SslConnector, SslMethod, SslVerifyMode};
+use pingora::tls::ssl::{SslConnector, SslMethod, SslVerifyMode, SslVersion};
 use tempfile::{tempdir, NamedTempFile};
 
 struct GatewayProcess(Child);
@@ -152,12 +152,11 @@ fn spawn_gateway(config: &NamedTempFile) -> Child {
         .expect("compiled gateway binary should start")
 }
 
-fn connect_http1(
-    address: SocketAddr,
+fn build_http1_connector(
     certificates: &LocalCertificates,
-    process: &mut Child,
     advertise_http1_alpn: bool,
-) -> pingora::tls::ssl::SslStream<TcpStream> {
+    exact_version: Option<SslVersion>,
+) -> SslConnector {
     let mut builder =
         SslConnector::builder(SslMethod::tls_client()).expect("TLS client should build");
     builder
@@ -169,7 +168,25 @@ fn connect_http1(
             .set_alpn_protos(b"\x08http/1.1")
             .expect("HTTP/1.1 ALPN wire list should be valid");
     }
-    let connector = builder.build();
+    if let Some(version) = exact_version {
+        builder
+            .set_min_proto_version(Some(version))
+            .expect("exact TLS minimum should be configurable");
+        builder
+            .set_max_proto_version(Some(version))
+            .expect("exact TLS maximum should be configurable");
+    }
+    builder.build()
+}
+
+fn connect_http1(
+    address: SocketAddr,
+    certificates: &LocalCertificates,
+    process: &mut Child,
+    advertise_http1_alpn: bool,
+    exact_version: Option<SslVersion>,
+) -> pingora::tls::ssl::SslStream<TcpStream> {
+    let connector = build_http1_connector(certificates, advertise_http1_alpn, exact_version);
 
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
@@ -196,6 +213,26 @@ fn connect_http1(
         );
         thread::sleep(Duration::from_millis(25));
     }
+}
+
+fn write_request_and_require_ok(
+    tls: &mut pingora::tls::ssl::SslStream<TcpStream>,
+    target: &str,
+    expected_body: &str,
+) {
+    write!(
+        tls,
+        "GET {target} HTTP/1.1\r\nHost: gateway.test\r\nConnection: close\r\n\r\n"
+    )
+    .expect("HTTP/1.1 request should write");
+    tls.flush().expect("HTTP/1.1 request should flush");
+
+    let mut response = Vec::new();
+    tls.read_to_end(&mut response)
+        .expect("HTTP/1.1 response should be readable");
+    let response = String::from_utf8(response).expect("HTTP/1.1 response must be UTF-8 in fixture");
+    assert!(response.starts_with("HTTP/1.1 200 OK\r\n"));
+    assert!(response.ends_with(expected_body));
 }
 
 #[test]
@@ -229,24 +266,14 @@ fn h2_http1_policy_negotiates_verified_http1_fallback_and_proxies_real_traffic()
     let (listener, metrics_listener) = reserve_distinct_loopback_addresses();
     let config = write_gateway_config(listener, metrics_listener, upstream, &certificates);
     let mut process = GatewayProcess(spawn_gateway(&config));
-    let mut tls = connect_http1(listener, &certificates, &mut process.0, true);
+    let mut tls = connect_http1(listener, &certificates, &mut process.0, true, None);
 
     assert_eq!(
         tls.ssl().selected_alpn_protocol(),
         Some(b"http/1.1".as_slice()),
         "h2_http1 must retain explicit HTTP/1.1 ALPN fallback"
     );
-
-    tls.write_all(b"GET /fallback HTTP/1.1\r\nHost: gateway.test\r\nConnection: close\r\n\r\n")
-        .expect("HTTP/1.1 fallback request should write");
-    tls.flush().expect("HTTP/1.1 fallback request should flush");
-
-    let mut response = Vec::new();
-    tls.read_to_end(&mut response)
-        .expect("HTTP/1.1 fallback response should be readable");
-    let response = String::from_utf8(response).expect("HTTP/1.1 response must be UTF-8 in fixture");
-    assert!(response.starts_with("HTTP/1.1 200 OK\r\n"));
-    assert!(response.ends_with("tls-h1-ok!!!"));
+    write_request_and_require_ok(&mut tls, "/fallback", "tls-h1-ok!!!");
 
     upstream_fixture
         .join()
@@ -284,26 +311,117 @@ fn h2_http1_policy_preserves_verified_http1_for_clients_without_alpn() {
     let (listener, metrics_listener) = reserve_distinct_loopback_addresses();
     let config = write_gateway_config(listener, metrics_listener, upstream, &certificates);
     let mut process = GatewayProcess(spawn_gateway(&config));
-    let mut tls = connect_http1(listener, &certificates, &mut process.0, false);
+    let mut tls = connect_http1(listener, &certificates, &mut process.0, false, None);
 
     assert_eq!(
         tls.ssl().selected_alpn_protocol(),
         None,
         "a client that omits ALPN must not be assigned a synthetic negotiated protocol"
     );
-
-    tls.write_all(b"GET /no-alpn HTTP/1.1\r\nHost: gateway.test\r\nConnection: close\r\n\r\n")
-        .expect("no-ALPN HTTP/1.1 request should write");
-    tls.flush().expect("no-ALPN HTTP/1.1 request should flush");
-
-    let mut response = Vec::new();
-    tls.read_to_end(&mut response)
-        .expect("no-ALPN HTTP/1.1 response should be readable");
-    let response = String::from_utf8(response).expect("HTTP/1.1 response must be UTF-8 in fixture");
-    assert!(response.starts_with("HTTP/1.1 200 OK\r\n"));
-    assert!(response.ends_with("tls-h1-no-alpn"));
+    write_request_and_require_ok(&mut tls, "/no-alpn", "tls-h1-no-alpn");
 
     upstream_fixture
         .join()
         .expect("no-ALPN cleartext upstream fixture should complete");
+}
+
+#[test]
+fn downstream_tls_security_profile_accepts_tls12_and_tls13_and_rejects_tls11() {
+    let certificates = issue_gateway_certificate();
+    let upstream_listener = TcpListener::bind("127.0.0.1:0").expect("upstream should bind");
+    let upstream = upstream_listener.local_addr().expect("upstream address");
+    let upstream_fixture = thread::spawn(move || {
+        for expected_target in ["/tls12", "/tls13"] {
+            let (mut stream, _) = upstream_listener
+                .accept()
+                .expect("gateway should connect upstream for each admitted TLS version");
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .expect("upstream read timeout should be set");
+            let mut request = [0_u8; 4096];
+            let read = stream
+                .read(&mut request)
+                .expect("upstream request should be readable");
+            let request = String::from_utf8_lossy(&request[..read]);
+            assert!(
+                request.starts_with(&format!("GET {expected_target} HTTP/1.1\r\n")),
+                "admitted TLS version must proxy the expected request: {request:?}"
+            );
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\nConnection: close\r\n\r\nversion-ok",
+                )
+                .expect("upstream response should be writable");
+        }
+    });
+
+    let (listener, metrics_listener) = reserve_distinct_loopback_addresses();
+    let config = write_gateway_config(listener, metrics_listener, upstream, &certificates);
+    let mut process = GatewayProcess(spawn_gateway(&config));
+
+    let mut tls12 = connect_http1(
+        listener,
+        &certificates,
+        &mut process.0,
+        true,
+        Some(SslVersion::TLS1_2),
+    );
+    assert_eq!(tls12.ssl().version_str(), "TLSv1.2");
+    let tls12_cipher = tls12
+        .ssl()
+        .current_cipher()
+        .expect("TLS 1.2 handshake must select a cipher")
+        .name();
+    assert!(
+        [
+            "ECDHE-RSA-AES128-GCM-SHA256",
+            "ECDHE-RSA-AES256-GCM-SHA384",
+            "ECDHE-RSA-CHACHA20-POLY1305",
+        ]
+        .contains(&tls12_cipher),
+        "TLS 1.2 RSA-certificate handshake selected an unapproved cipher: {tls12_cipher}"
+    );
+    write_request_and_require_ok(&mut tls12, "/tls12", "version-ok");
+
+    let mut tls13 = connect_http1(
+        listener,
+        &certificates,
+        &mut process.0,
+        true,
+        Some(SslVersion::TLS1_3),
+    );
+    assert_eq!(tls13.ssl().version_str(), "TLSv1.3");
+    let tls13_cipher = tls13
+        .ssl()
+        .current_cipher()
+        .expect("TLS 1.3 handshake must select a cipher")
+        .name();
+    assert!(
+        [
+            "TLS_AES_128_GCM_SHA256",
+            "TLS_AES_256_GCM_SHA384",
+            "TLS_CHACHA20_POLY1305_SHA256",
+        ]
+        .contains(&tls13_cipher),
+        "TLS 1.3 handshake selected an unapproved cipher: {tls13_cipher}"
+    );
+    write_request_and_require_ok(&mut tls13, "/tls13", "version-ok");
+
+    upstream_fixture
+        .join()
+        .expect("admitted-version upstream fixture should complete");
+
+    let tls11_connector = build_http1_connector(&certificates, true, Some(SslVersion::TLS1_1));
+    let stream = TcpStream::connect_timeout(&listener, Duration::from_secs(1))
+        .expect("running gateway TLS listener should accept TCP");
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .expect("TLS 1.1 rejection read timeout should be set");
+    stream
+        .set_write_timeout(Some(Duration::from_secs(5)))
+        .expect("TLS 1.1 rejection write timeout should be set");
+    assert!(
+        tls11_connector.connect("gateway.test", stream).is_err(),
+        "the explicit TLS 1.2 floor must reject a TLS 1.1-only client"
+    );
 }
