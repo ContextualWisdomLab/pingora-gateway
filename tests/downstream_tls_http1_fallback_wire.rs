@@ -225,9 +225,8 @@ fn h2_http1_policy_negotiates_verified_http1_fallback_and_proxies_real_traffic()
 
     let (listener, metrics_listener) = reserve_distinct_loopback_addresses();
     let config = write_gateway_config(listener, metrics_listener, upstream, &certificates);
-    let mut child = spawn_gateway(&config);
-    let mut tls = connect_http1(listener, &certificates, &mut child);
-    let _process = GatewayProcess(child);
+    let mut process = GatewayProcess(spawn_gateway(&config));
+    let mut tls = connect_http1(listener, &certificates, &mut process.0);
 
     assert_eq!(
         tls.ssl().selected_alpn_protocol(),
