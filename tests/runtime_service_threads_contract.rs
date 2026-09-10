@@ -26,8 +26,10 @@ fn pg_erd_yaml(service_threads: Option<usize>) -> String {
 fn generic_admin_config_propagates_explicit_service_threads() {
     let config = GatewayConfig::from_yaml(&generic_yaml(Some(8)))
         .expect("explicit generic worker topology should validate");
-    let server_conf =
-        build_server_conf_with_service_threads(config.upstream_keepalive_pool_size, config.service_threads);
+    let server_conf = build_server_conf_with_service_threads(
+        config.upstream_keepalive_pool_size,
+        config.service_threads,
+    );
 
     assert_eq!(config.service_threads, 8);
     assert_eq!(server_conf.threads, 8);
