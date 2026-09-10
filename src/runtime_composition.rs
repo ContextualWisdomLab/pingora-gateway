@@ -9,7 +9,9 @@
 use pingora::server::configuration::ServerConf;
 
 use crate::edge_contract::{GatewayConfig, GatewayConfigError, MAX_SERVICE_THREADS_PER_SERVICE};
+use crate::gateway_proxy::{GatewayProxy, GatewayProxyError};
 use crate::migration_admin::{PgErdMigrationConfig, PgErdMigrationConfigError};
+use crate::migration_proxy::MigrationGatewayProxy;
 use crate::runtime_policy::build_server_conf_with_service_threads;
 
 /// Builds Pingora process configuration from a generic gateway aggregate after revalidation.
@@ -19,6 +21,19 @@ pub fn server_conf_for_gateway(config: &GatewayConfig) -> Result<ServerConf, Gat
         config.upstream_keepalive_pool_size,
         config.service_threads,
     ))
+}
+
+/// Revalidates and materializes the complete generic runtime before listener authority is granted.
+///
+/// Keeping process configuration and the transport adapter behind one activation result lets the
+/// composition root fail closed once. It also prevents the binary from carrying an impossible
+/// second error branch after an already validated configuration has been accepted.
+pub fn compose_gateway_runtime(
+    config: &GatewayConfig,
+) -> Result<(GatewayProxy, ServerConf), GatewayProxyError> {
+    let server_conf = server_conf_for_gateway(config)?;
+    let proxy = GatewayProxy::try_from_config(config)?;
+    Ok((proxy, server_conf))
 }
 
 /// Builds Pingora process configuration from the characterized pg-erd aggregate after revalidating
@@ -48,4 +63,17 @@ pub fn server_conf_for_pg_erd(
         config.upstream_keepalive_pool_size(),
         service_threads,
     ))
+}
+
+/// Revalidates and materializes the characterized pg-erd runtime before listener activation.
+///
+/// Runtime-capacity validation happens before trust material and proxy delivery are materialized.
+/// Both failure classes return through the same process activation boundary while retaining the
+/// canonical `PgErdMigrationConfigError` authority.
+pub fn compose_pg_erd_runtime(
+    config: &PgErdMigrationConfig,
+) -> Result<(MigrationGatewayProxy, ServerConf), PgErdMigrationConfigError> {
+    let server_conf = server_conf_for_pg_erd(config)?;
+    let proxy = config.build_proxy()?;
+    Ok((proxy, server_conf))
 }
