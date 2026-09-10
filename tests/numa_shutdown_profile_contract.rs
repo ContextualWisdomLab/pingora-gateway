@@ -28,7 +28,10 @@ fn profile_workflow_fails_closed_before_measurement_on_nonrepresentative_topolog
         "PROFILE_ROUNDS: 25",
         "CLOSE_BOUND_MS: 1000",
     ] {
-        assert!(WORKFLOW.contains(required), "missing topology/load contract: {required}");
+        assert!(
+            WORKFLOW.contains(required),
+            "missing topology/load contract: {required}"
+        );
     }
     assert!(WORKFLOW.contains("lscpu -p=CPU,NODE,SOCKET"));
     assert!(WORKFLOW.contains("CWL_NUMA_PROFILE=1"));
@@ -55,7 +58,10 @@ fn profile_fixture_preserves_external_shutdown_and_scheduler_evidence_invariants
         "shutdown_close_max_ms",
         "survivors_at_close_bound",
     ] {
-        assert!(PROFILE.contains(required), "missing profile evidence invariant: {required}");
+        assert!(
+            PROFILE.contains(required),
+            "missing profile evidence invariant: {required}"
+        );
     }
     assert!(PROFILE.contains("#[ignore ="));
     assert!(PROFILE.contains("CWL_NUMA_PROFILE"));
