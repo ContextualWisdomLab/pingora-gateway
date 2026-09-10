@@ -38,20 +38,19 @@ const _: () = assert!(
 
 /// Builds the compatibility Pingora server configuration for callers without explicit topology.
 ///
-/// New production composition roots should call [`build_server_conf_with_service_threads`] with a
-/// validated Admin Config value. This wrapper preserves existing library callers at the historical
-/// one-worker topology rather than deriving worker count from host CPU availability.
+/// Production composition roots use the validated Admin Config path. This wrapper preserves
+/// existing library callers at the historical one-worker topology rather than exposing an
+/// unchecked worker-count mutation surface or deriving worker count from host CPU availability.
 pub fn build_server_conf(upstream_keepalive_pool_size: usize) -> ServerConf {
     build_server_conf_with_service_threads(upstream_keepalive_pool_size, V1_DEFAULT_SERVICE_THREADS)
 }
 
-/// Builds the Pingora server configuration with an explicit validated service-worker topology.
+/// Builds Pingora process configuration after the owning Admin Config boundary has validated the
+/// explicit service-worker topology.
 ///
-/// Pingora creates a distinct runtime for each service and gives each runtime `service_threads`
-/// workers. The Admin Config boundary, not this constructor, rejects zero before listener
-/// authority is granted. The constructor remains deterministic and never derives topology from the
-/// host CPU count, which keeps capacity and NUMA evidence reproducible across environments.
-pub fn build_server_conf_with_service_threads(
+/// This constructor is crate-private so external callers cannot bypass Admin Config validation and
+/// inject zero or unbounded worker counts directly into `ServerConf::threads`.
+pub(crate) fn build_server_conf_with_service_threads(
     upstream_keepalive_pool_size: usize,
     service_threads: usize,
 ) -> ServerConf {
