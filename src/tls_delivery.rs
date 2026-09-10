@@ -7,9 +7,7 @@
 use pingora::listeners::tls::TlsSettings;
 use thiserror::Error;
 
-use crate::downstream_tls::{
-    DownstreamAlpnPolicy, DownstreamTlsConfig, DownstreamTlsConfigError,
-};
+use crate::downstream_tls::{DownstreamAlpnPolicy, DownstreamTlsConfig, DownstreamTlsConfigError};
 
 /// Reasons validated downstream TLS configuration cannot be materialized for Pingora.
 #[derive(Debug, Error)]
