@@ -2,6 +2,9 @@
 set -euo pipefail
 
 SERVICE_THREADS=4
+# The production pg-erd process registers the proxy and Prometheus services. A Rust contract below
+# binds this evidence constant to the actual composition root so service-count drift fails CI.
+REGISTERED_SERVICE_COUNT=2
 
 # Wait for a synthetic origin without mistaking a crashed fixture for slow startup.
 wait_for_origin() {
@@ -171,6 +174,8 @@ EOF
 
 {
   printf 'configured_service_threads=%s\n' "$SERVICE_THREADS"
+  printf 'registered_service_count=%s\n' "$REGISTERED_SERVICE_COUNT"
+  printf 'configured_service_worker_slots=%s\n' "$((SERVICE_THREADS * REGISTERED_SERVICE_COUNT))"
   printf 'online_cpus=%s\n' "$(nproc)"
   printf '%s\n' 'cpu,node,socket'
   lscpu -p=CPU,NODE,SOCKET | grep -v '^#'
