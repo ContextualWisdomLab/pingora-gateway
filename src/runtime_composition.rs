@@ -8,9 +8,7 @@
 
 use pingora::server::configuration::ServerConf;
 
-use crate::edge_contract::{
-    GatewayConfig, GatewayConfigError, MAX_SERVICE_THREADS_PER_SERVICE,
-};
+use crate::edge_contract::{GatewayConfig, GatewayConfigError, MAX_SERVICE_THREADS_PER_SERVICE};
 use crate::migration_admin::{PgErdMigrationConfig, PgErdMigrationConfigError};
 use crate::runtime_policy::build_server_conf_with_service_threads;
 
