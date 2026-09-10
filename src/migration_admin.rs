@@ -221,13 +221,17 @@ impl PgErdMigrationConfig {
                 }
             }
             PG_ERD_DOWNSTREAM_TLS_H2_CONFIG_VERSION => {
+                let Some(downstream_tls) = self.downstream_tls.as_ref() else {
+                    // Preserve the existing future-version executable contract while version 3 is
+                    // still Draft-only: a bare `version: 3` is not a complete v3 identity.
+                    return Err(PgErdMigrationConfigError::UnsupportedVersion(
+                        PG_ERD_DOWNSTREAM_TLS_H2_CONFIG_VERSION,
+                    ));
+                };
                 if self.max_upstream_response_body_ms.is_none() {
                     return Err(PgErdMigrationConfigError::MissingUpstreamResponseBodyLifetime);
                 }
-                self.downstream_tls
-                    .as_ref()
-                    .ok_or(PgErdMigrationConfigError::MissingDownstreamTls)?
-                    .validate()?;
+                downstream_tls.validate()?;
             }
             unsupported => return Err(PgErdMigrationConfigError::UnsupportedVersion(unsupported)),
         }
