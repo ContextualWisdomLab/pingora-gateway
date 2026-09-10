@@ -260,3 +260,19 @@ fn pg_erd_runtime_composition_preserves_transport_contract_failure() {
         }
     );
 }
+
+#[test]
+fn pg_erd_capacity_evidence_binds_worker_slots_to_registered_services() {
+    let composition_root = include_str!("../src/bin/cwl-pingora-pg-erd-migration.rs");
+    let capacity_runner = include_str!("load/run_pg_erd_capacity.sh");
+
+    assert_eq!(
+        composition_root.matches("server.add_service(").count(),
+        2,
+        "capacity evidence must be updated if the production process registers a different service count"
+    );
+    assert!(capacity_runner.contains("REGISTERED_SERVICE_COUNT=2"));
+    assert!(capacity_runner.contains("registered_service_count=%s\\n"));
+    assert!(capacity_runner.contains("configured_service_worker_slots=%s\\n"));
+    assert!(capacity_runner.contains("$((SERVICE_THREADS * REGISTERED_SERVICE_COUNT))"));
+}
