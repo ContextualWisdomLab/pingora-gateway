@@ -228,13 +228,7 @@ fn pg_erd_version_three_tls_listener_routes_healthz_over_real_http1_fallback() {
     });
 
     let (listener, metrics_listener) = reserve_distinct_loopback_addresses();
-    let config = write_pg_erd_config(
-        listener,
-        metrics_listener,
-        backend,
-        frontend,
-        &certificates,
-    );
+    let config = write_pg_erd_config(listener, metrics_listener, backend, frontend, &certificates);
     let mut child = spawn_gateway(&config);
     let mut tls = connect_http1(listener, &certificates, &mut child);
     let _process = GatewayProcess(child);
@@ -245,10 +239,8 @@ fn pg_erd_version_three_tls_listener_routes_healthz_over_real_http1_fallback() {
         "pg-erd version 3 must retain HTTP/1.1 fallback under h2_http1"
     );
 
-    tls.write_all(
-        b"GET /healthz HTTP/1.1\r\nHost: gateway.test\r\nConnection: close\r\n\r\n",
-    )
-    .expect("pg-erd HTTPS request should write");
+    tls.write_all(b"GET /healthz HTTP/1.1\r\nHost: gateway.test\r\nConnection: close\r\n\r\n")
+        .expect("pg-erd HTTPS request should write");
     tls.flush().expect("pg-erd HTTPS request should flush");
 
     let mut response = Vec::new();

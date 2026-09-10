@@ -235,18 +235,14 @@ fn h2_http1_policy_negotiates_verified_http1_fallback_and_proxies_real_traffic()
         "h2_http1 must retain explicit HTTP/1.1 ALPN fallback"
     );
 
-    tls.write_all(
-        b"GET /fallback HTTP/1.1\r\nHost: gateway.test\r\nConnection: close\r\n\r\n",
-    )
-    .expect("HTTP/1.1 fallback request should write");
-    tls.flush()
-        .expect("HTTP/1.1 fallback request should flush");
+    tls.write_all(b"GET /fallback HTTP/1.1\r\nHost: gateway.test\r\nConnection: close\r\n\r\n")
+        .expect("HTTP/1.1 fallback request should write");
+    tls.flush().expect("HTTP/1.1 fallback request should flush");
 
     let mut response = Vec::new();
     tls.read_to_end(&mut response)
         .expect("HTTP/1.1 fallback response should be readable");
-    let response =
-        String::from_utf8(response).expect("HTTP/1.1 response must be UTF-8 in fixture");
+    let response = String::from_utf8(response).expect("HTTP/1.1 response must be UTF-8 in fixture");
     assert!(response.starts_with("HTTP/1.1 200 OK\r\n"));
     assert!(response.ends_with("tls-h1-ok!!!"));
 
