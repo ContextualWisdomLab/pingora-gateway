@@ -78,7 +78,7 @@ fn generic_admin_config_admits_exact_service_thread_ceiling() {
 }
 
 #[test]
-fn generic_admin_config_rejects_service_threads_above_process_ceiling() {
+fn generic_admin_config_rejects_service_threads_above_data_plane_ceiling() {
     let actual = MAX_SERVICE_THREADS_PER_SERVICE + 1;
     assert_eq!(
         GatewayConfig::from_yaml(&generic_yaml(Some(actual))),
@@ -181,7 +181,7 @@ fn pg_erd_admin_config_admits_exact_service_thread_ceiling() {
 }
 
 #[test]
-fn pg_erd_admin_config_rejects_service_threads_above_process_ceiling() {
+fn pg_erd_admin_config_rejects_service_threads_above_data_plane_ceiling() {
     let actual = MAX_SERVICE_THREADS_PER_SERVICE + 1;
     assert_eq!(
         PgErdMigrationConfig::from_yaml(&pg_erd_yaml(Some(actual))),
