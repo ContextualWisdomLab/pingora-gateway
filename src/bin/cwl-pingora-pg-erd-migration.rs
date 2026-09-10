@@ -10,7 +10,7 @@ use std::process::ExitCode;
 
 use cwl_pingora_gateway::logging_policy::init_runtime_logging;
 use cwl_pingora_gateway::migration_admin::PgErdMigrationConfig;
-use cwl_pingora_gateway::runtime_composition::server_conf_for_pg_erd;
+use cwl_pingora_gateway::runtime_composition::compose_pg_erd_runtime;
 use cwl_pingora_gateway::startup::GatewayCommand;
 use pingora::prelude::{http_proxy_service, Server};
 use pingora::server::RunArgs;
@@ -38,12 +38,8 @@ fn main() -> ExitCode {
         Ok(config) => config,
         Err(error) => return exit_with_error(&error.to_string()),
     };
-    let proxy = match config.build_proxy() {
-        Ok(proxy) => proxy,
-        Err(error) => return exit_with_error(&error.to_string()),
-    };
-    let server_conf = match server_conf_for_pg_erd(&config) {
-        Ok(server_conf) => server_conf,
+    let (proxy, server_conf) = match compose_pg_erd_runtime(&config) {
+        Ok(runtime) => runtime,
         Err(error) => return exit_with_error(&error.to_string()),
     };
 
