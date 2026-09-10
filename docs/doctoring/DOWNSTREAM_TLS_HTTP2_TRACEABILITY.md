@@ -30,7 +30,9 @@ Supplier source: https://github.com/cloudflare/pingora/blob/702f69015e53f7244d6a
 
 RFC 9113 defines HTTP/2. For HTTPS, the HTTP/2 protocol identifier is `h2`; h2c is a distinct non-TLS mode and is not admitted by this increment.
 
-RFC 7301 defines ALPN negotiation. It requires the server to choose a common advertised protocol and, when an ALPN-bearing client offers no protocol supported by the server, terminate with fatal `no_application_protocol`. The CWL `h2_http1` selector therefore scans the client wire list, prefers `h2`, falls back to `http/1.1` only when offered, and returns `AlpnError::ALERT_FATAL` for no overlap or malformed vectors. This is intentionally stricter than Pingora 0.9.0's convenience H2/H1 selector.
+RFC 7301 defines ALPN negotiation. It requires the server to choose a common advertised protocol and, when an ALPN-bearing client offers no protocol supported by the server, terminate with fatal `no_application_protocol`. The CWL `h2_http1` selector therefore validates the complete client protocol-list vector before selection, prefers `h2`, falls back to `http/1.1` only when offered, and returns `AlpnError::ALERT_FATAL` for no overlap or malformed vectors. This is intentionally stricter than Pingora 0.9.0's convenience H2/H1 selector.
+
+OpenSSL documents ALPN protocol lists as vectors of non-empty 8-bit length-prefixed byte strings; zero-length and truncated entries are invalid. Its server ALPN callback is not invoked when ClientHello contains no ALPN extension. Consequently an ALPN-bearing no-overlap client and a client that omits ALPN are distinct compatibility cases: the former is rejected, while the latter may complete verified TLS with no negotiated application protocol and continue on Pingora's ordinary HTTP/1 path.
 
 RFC 9846 is the current TLS 1.3 specification and obsoletes RFC 8446. RFC 9525 supplies current service-identity verification guidance for TLS applications. The real-wire tests use a controlled CA and a certificate for `gateway.test` to exercise identity validation rather than disabling peer verification.
 
@@ -44,11 +46,15 @@ Exact predecessor `a7f12c8ee67bfe06a802aab66f7f038ec11bfb6f` completed CI `34530
 
 A later standards review found a distinct protocol defect before release: Pingora 0.9.0's H2/H1 convenience selector returns `NOACK` on ALPN no-overlap, whereas RFC 7301 requires fatal `no_application_protocol` when the client supplied ALPN but no protocol overlaps. Test-only exact `5aebba832692debdf99a6866b22be25deea9cdb2` added a real-wire unsupported-ALPN handshake oracle. Its hosted CI was cancelled by the subsequent ordinary-forward repair before the test job executed, so that SHA is a realistic RED definition, not a terminal hosted RED receipt.
 
-Ordinary-forward source exact `2d97b944e855cc04346b4fbd85838c5abb4ce506` replaced `enable_h2()` with a small CWL-owned selector installed through Pingora/OpenSSL's public callback surface. It preserves H2 preference, permits H1 only when offered, rejects malformed wire lists without panic and returns fatal on no overlap. Unit tests cover H2 preference, H1 fallback, no overlap and malformed vectors. Later documentation commits create newer exact identities; no GREEN is transferred until the unchanged current head passes required checks.
+Ordinary-forward source exact `2d97b944e855cc04346b4fbd85838c5abb4ce506` replaced `enable_h2()` with a small CWL-owned selector installed through Pingora/OpenSSL's public callback surface. It preserves H2 preference, permits H1 only when offered and returns fatal on no overlap.
+
+Fresh review of the selector then found that an early return on a valid `h2` prefix could accept a syntactically malformed trailing protocol-list entry, contradicting the documented malformed-vector fail-closed contract. Exact `70bc745e31ae52d3e1c681cccba208f9c8a9e690` minimally repairs this by scanning and validating the complete vector before choosing H2 over H1. Unit regressions now cover malformed suffixes after both a valid `h2` and a valid `http/1.1` prefix.
+
+Real-wire compatibility review also found that source-level OpenSSL semantics alone did not prove the legacy TLS client case most relevant to Nginx/OpenResty parity. Exact `d751be56fb043b95084f3e810435ca76de05dfc6` adds a certificate-verified client that deliberately sends no ALPN extension, asserts that no synthetic protocol is negotiated, sends a real HTTP/1.1 request through the generic production root and requires a successful origin round trip. Exact `9d00693d4142035b5559851c6c7688a5ac2bcf3b` updates the test strategy to make both complete-vector validation and no-ALPN compatibility explicit. Later exact heads must run these unchanged contracts GREEN; no predecessor result transfers.
 
 ## What this increment can prove
 
-On an unchanged exact head with terminal checks, the increment can prove explicit versioned TLS listener authority, read-only certificate/key materialization, certificate/key mismatch failure before listener activation, verified TLS service identity, negotiated H2, deliberate H1 fallback, fatal unsupported-ALPN behavior, actual H2 request/response flow through the generic production root, bounded pg-erd TLS activation and child-process cleanup.
+On an unchanged exact head with terminal checks, the increment can prove explicit versioned TLS listener authority, read-only certificate/key materialization, certificate/key mismatch failure before listener activation, verified TLS service identity, negotiated H2, deliberate H1 fallback with explicit HTTP/1.1 ALPN, verified HTTP/1.1 compatibility when ALPN is omitted, fatal unsupported-ALPN behavior, actual H2 request/response flow through the generic production root, bounded pg-erd TLS activation and child-process cleanup.
 
 ## What remains RED / not release-qualified
 
@@ -66,14 +72,16 @@ After exact-head source/test/documentation checks and independent review, this b
 
 Bishop, M. (2022). *HTTP/3* (RFC 9114). Internet Engineering Task Force. https://doi.org/10.17487/RFC9114
 
+Cloudflare, Inc. (2026). *Pingora TLS listener implementation* (source `702f69015e53f7244d6ad2e743de571d859a70a4`). https://github.com/cloudflare/pingora/blob/702f69015e53f7244d6ad2e743de571d859a70a4/pingora-core/src/listeners/tls/boringssl_openssl/mod.rs
+
 Friedl, S., Popov, A., Langley, A., & Stephan, E. (2014). *Transport Layer Security (TLS) Application-Layer Protocol Negotiation Extension* (RFC 7301). Internet Engineering Task Force. https://doi.org/10.17487/RFC7301
 
 Iyengar, J., & Thomson, M. (2021). *QUIC: A UDP-based multiplexed and secure transport* (RFC 9000). Internet Engineering Task Force. https://doi.org/10.17487/RFC9000
+
+OpenSSL Project Authors. (2024). *SSL_CTX_set_alpn_select_cb* (OpenSSL 3.1 documentation). https://docs.openssl.org/3.1/man3/SSL_CTX_set_alpn_select_cb/
 
 Rescorla, E. (2026). *The Transport Layer Security (TLS) Protocol Version 1.3* (RFC 9846). Internet Engineering Task Force. https://doi.org/10.17487/RFC9846
 
 Saint-Andre, P., & Salz, R. (2023). *Service identity in TLS* (RFC 9525). Internet Engineering Task Force. https://doi.org/10.17487/RFC9525
 
 Thomson, M., & Benfield, C. (2022). *HTTP/2* (RFC 9113). Internet Engineering Task Force. https://doi.org/10.17487/RFC9113
-
-Cloudflare, Inc. (2026). *Pingora TLS listener implementation* (source `702f69015e53f7244d6ad2e743de571d859a70a4`). https://github.com/cloudflare/pingora/blob/702f69015e53f7244d6ad2e743de571d859a70a4/pingora-core/src/listeners/tls/boringssl_openssl/mod.rs
