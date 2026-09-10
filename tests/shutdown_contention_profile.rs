@@ -143,6 +143,20 @@ fn command_stdout(program: &str, args: &[&str]) -> String {
     String::from_utf8(output.stdout).expect("profile command output must be UTF-8")
 }
 
+fn sha256_file(path: &str) -> String {
+    let output = command_stdout("sha256sum", &[path]);
+    let digest = output
+        .split_ascii_whitespace()
+        .next()
+        .expect("sha256sum must emit a digest");
+    assert_eq!(digest.len(), 64, "gateway SHA-256 must be 64 hex digits");
+    assert!(
+        digest.bytes().all(|byte| byte.is_ascii_hexdigit()),
+        "gateway SHA-256 must contain only hexadecimal digits"
+    );
+    digest.to_ascii_lowercase()
+}
+
 fn parse_cpu_list(raw: &str) -> BTreeSet<usize> {
     let mut cpus = BTreeSet::new();
     for part in raw
@@ -398,6 +412,7 @@ fn wait_for_process_exit(process: &mut Child, started: Instant) -> u128 {
 }
 
 fn run_round(
+    gateway_binary: &str,
     service_threads: usize,
     parked_connections: usize,
     close_bound_ms: usize,
@@ -405,7 +420,7 @@ fn run_round(
 ) -> RoundEvidence {
     let (gateway_address, metrics_address) = reserve_distinct_loopback_addresses();
     let config = write_config(gateway_address, metrics_address, service_threads);
-    let child = Command::new(env!("CARGO_BIN_EXE_cwl-pingora-gateway"))
+    let child = Command::new(gateway_binary)
         .args([
             "--config",
             config.path().to_str().expect("UTF-8 config path"),
@@ -414,7 +429,7 @@ fn run_round(
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
-        .expect("compiled gateway binary should start");
+        .expect("release-built gateway binary should start");
     let mut process = GatewayProcess(child);
     wait_until_listening(gateway_address, &mut process.0);
 
@@ -575,6 +590,10 @@ fn representative_numa_shutdown_profile() {
         .expect("CWL_PROFILE_EVIDENCE_PATH must identify the immutable run receipt path");
     let expected_sha = std::env::var("CWL_PROFILE_EXPECTED_SHA")
         .expect("CWL_PROFILE_EXPECTED_SHA must bind evidence to an exact candidate");
+    let gateway_binary = std::env::var("CWL_PROFILE_GATEWAY_BINARY")
+        .expect("CWL_PROFILE_GATEWAY_BINARY must identify the exact release-built gateway");
+    let expected_gateway_binary_sha256 = std::env::var("CWL_PROFILE_GATEWAY_BINARY_SHA256")
+        .expect("CWL_PROFILE_GATEWAY_BINARY_SHA256 must bind the release-built gateway");
 
     assert!((1..=256).contains(&service_threads));
     assert!(
@@ -588,6 +607,15 @@ fn representative_numa_shutdown_profile() {
     assert_eq!(
         close_bound_ms, 1000,
         "correctness evidence keeps the one-second close bound"
+    );
+    assert!(
+        std::path::Path::new(&gateway_binary).is_absolute(),
+        "representative profile requires an absolute release-binary path"
+    );
+    let actual_gateway_binary_sha256 = sha256_file(&gateway_binary);
+    assert_eq!(
+        actual_gateway_binary_sha256, expected_gateway_binary_sha256,
+        "release gateway binary digest must match workflow build provenance"
     );
 
     let actual_sha = current_git_sha();
@@ -619,6 +647,7 @@ fn representative_numa_shutdown_profile() {
     for round_index in 0..rounds {
         let pre_signal_jitter_ms = ((round_index * 17) % 31) + 1;
         let evidence = run_round(
+            &gateway_binary,
             service_threads,
             parked_connections,
             close_bound_ms,
@@ -644,6 +673,10 @@ fn representative_numa_shutdown_profile() {
     let mut output = String::new();
     output.push_str(&format!(
         "expected_sha={expected_sha}\nactual_sha={actual_sha}\n"
+    ));
+    output.push_str("gateway_build_profile=release\n");
+    output.push_str(&format!(
+        "gateway_binary_sha256={actual_gateway_binary_sha256}\n"
     ));
     output.push_str("supplier_packages=pingora=0.9.0,pingora-prometheus=0.9.0\n");
     output.push_str(&format!(
