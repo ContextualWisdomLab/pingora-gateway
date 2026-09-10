@@ -2,7 +2,8 @@
 //!
 //! The fixture holds one upstream response open, sends SIGTERM only after the request has reached
 //! the upstream, then releases the response. The downstream request must complete during the
-//! configured grace period and the process must terminate before the external hard-kill budget.
+//! configured grace period and the process must terminate before the signal-relative external
+//! hard-kill budget.
 
 #![cfg(unix)]
 
@@ -15,6 +16,8 @@ use std::time::{Duration, Instant};
 
 use cwl_pingora_gateway::runtime_policy::{V1_GRACE_PERIOD_SECONDS, V1_TERMINATION_BUDGET_SECONDS};
 use tempfile::NamedTempFile;
+
+const MAX_FIXTURE_EVIDENCE_BYTES: usize = 64 * 1024;
 
 struct GatewayProcess(Child);
 
@@ -74,8 +77,7 @@ fn wait_until_listening(address: SocketAddr, process: &mut Child) {
     }
 }
 
-fn wait_for_exit(process: &mut Child) -> std::process::ExitStatus {
-    let deadline = Instant::now() + Duration::from_secs(V1_TERMINATION_BUDGET_SECONDS);
+fn wait_for_exit(process: &mut Child, deadline: Instant) -> std::process::ExitStatus {
     loop {
         if let Some(status) = process
             .try_wait()
@@ -88,6 +90,45 @@ fn wait_for_exit(process: &mut Child) -> std::process::ExitStatus {
             "gateway did not terminate before the external hard-kill budget"
         );
         thread::sleep(Duration::from_millis(25));
+    }
+}
+
+fn read_response_through_body(stream: &mut TcpStream, expected_body: &[u8]) -> Vec<u8> {
+    stream
+        .set_read_timeout(Some(Duration::from_secs(V1_GRACE_PERIOD_SECONDS + 1)))
+        .expect("downstream response timeout should be configurable");
+
+    let mut response = Vec::new();
+    let mut buffer = [0_u8; 1024];
+    loop {
+        let read = stream
+            .read(&mut buffer)
+            .expect("downstream response should arrive before its fixture timeout");
+        assert!(read > 0, "gateway closed before completing the response");
+        response.extend_from_slice(&buffer[..read]);
+        assert!(
+            response.len() <= MAX_FIXTURE_EVIDENCE_BYTES,
+            "fixture response exceeded the 64 KiB evidence ceiling"
+        );
+
+        let Some(header_end) = response
+            .windows(4)
+            .position(|window| window == b"\r\n\r\n")
+            .map(|position| position + 4)
+        else {
+            continue;
+        };
+
+        if response.len() < header_end + expected_body.len() {
+            continue;
+        }
+
+        assert_eq!(
+            &response[header_end..header_end + expected_body.len()],
+            expected_body,
+            "gateway should forward the admitted in-flight response body exactly"
+        );
+        return response;
     }
 }
 
@@ -107,6 +148,9 @@ fn sigterm_drains_an_in_flight_request_before_process_exit() {
         let (mut stream, _) = upstream_listener
             .accept()
             .expect("gateway should connect to fixture upstream");
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .expect("upstream request timeout should be configurable");
         let mut request = Vec::new();
         let mut buffer = [0_u8; 1024];
         while !request.windows(4).any(|window| window == b"\r\n\r\n") {
@@ -115,13 +159,17 @@ fn sigterm_drains_an_in_flight_request_before_process_exit() {
                 .expect("upstream request should be readable");
             assert!(read > 0, "gateway closed upstream request prematurely");
             request.extend_from_slice(&buffer[..read]);
+            assert!(
+                request.len() <= MAX_FIXTURE_EVIDENCE_BYTES,
+                "fixture request exceeded the 64 KiB evidence ceiling"
+            );
         }
         request_seen_tx
             .send(())
             .expect("test should observe the in-flight request");
         release_response_rx
-            .recv_timeout(Duration::from_secs(V1_GRACE_PERIOD_SECONDS))
-            .expect("test should release the held response during the grace period");
+            .recv_timeout(Duration::from_secs(V1_TERMINATION_BUDGET_SECONDS))
+            .expect("test controller should release the held response before its hard watchdog");
         stream
             .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 7\r\nConnection: close\r\n\r\ndrained")
             .expect("held upstream response should be writable");
@@ -142,16 +190,9 @@ fn sigterm_drains_an_in_flight_request_before_process_exit() {
         let mut stream =
             TcpStream::connect(gateway_address).expect("gateway should accept downstream traffic");
         stream
-            .set_read_timeout(Some(Duration::from_secs(V1_TERMINATION_BUDGET_SECONDS)))
-            .expect("downstream timeout should be configurable");
-        stream
             .write_all(b"GET /held HTTP/1.1\r\nHost: gateway.test\r\nConnection: close\r\n\r\n")
             .expect("downstream request should be writable");
-        let mut response = String::new();
-        stream
-            .read_to_string(&mut response)
-            .expect("drained downstream response should be readable");
-        response
+        read_response_through_body(&mut stream, b"drained")
     });
 
     request_seen_rx
@@ -159,6 +200,7 @@ fn sigterm_drains_an_in_flight_request_before_process_exit() {
         .expect("request should reach upstream before SIGTERM");
 
     let signal_sent_at = Instant::now();
+    let termination_deadline = signal_sent_at + Duration::from_secs(V1_TERMINATION_BUDGET_SECONDS);
     let signal_status = Command::new("kill")
         .args(["-TERM", &process.0.id().to_string()])
         .status()
@@ -172,17 +214,17 @@ fn sigterm_drains_an_in_flight_request_before_process_exit() {
         .join()
         .expect("downstream request thread should complete");
     assert!(
-        response.starts_with("HTTP/1.1 200"),
-        "in-flight request should complete during graceful drain: {response:?}"
+        response.starts_with(b"HTTP/1.1 200 "),
+        "in-flight request should complete during graceful drain: {:?}",
+        String::from_utf8_lossy(&response)
     );
-    assert!(response.ends_with("\r\n\r\ndrained"));
     assert!(
         signal_sent_at.elapsed() < Duration::from_secs(V1_GRACE_PERIOD_SECONDS + 1),
         "in-flight response should complete during the configured grace period"
     );
 
     upstream.join().expect("upstream fixture should complete");
-    let exit_status = wait_for_exit(&mut process.0);
+    let exit_status = wait_for_exit(&mut process.0, termination_deadline);
     assert!(
         exit_status.success(),
         "SIGTERM graceful shutdown should exit successfully: {exit_status}"
