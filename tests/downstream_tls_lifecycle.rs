@@ -9,7 +9,7 @@
 use std::fs;
 use std::io::Write;
 use std::net::{SocketAddr, TcpListener, TcpStream};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -23,6 +23,12 @@ struct LocalCertificate {
     _directory: tempfile::TempDir,
     certificate: PathBuf,
     private_key: PathBuf,
+}
+
+#[derive(Clone, Copy)]
+struct TlsMaterialRefs<'a> {
+    certificate_chain_file: &'a Path,
+    private_key_file: &'a Path,
 }
 
 fn run_openssl(args: &[&str]) {
@@ -89,15 +95,14 @@ fn write_generic_config(
     listener: SocketAddr,
     metrics_listener: SocketAddr,
     upstream: SocketAddr,
-    certificate: &PathBuf,
-    private_key: &PathBuf,
+    tls_material: TlsMaterialRefs<'_>,
 ) -> NamedTempFile {
     let mut file = NamedTempFile::new().expect("generic config should be writable");
     writeln!(
         file,
         "version: 2\nlistener: {listener}\nmetrics_listener: {metrics_listener}\nmax_request_body_bytes: 1048576\nmax_in_flight_requests: 8\nservice_threads: 2\nupstream_keepalive_pool_size: 4\ndownstream_tls:\n  certificate_chain_file: {}\n  private_key_file: {}\n  alpn: h2_http1\nupstreams:\n  - name: application\n    address: {upstream}\n    tls: false\n    timeouts:\n      connection_ms: 1000\n      total_connection_ms: 2000\n      read_ms: 5000\n      write_ms: 5000\n      idle_ms: 10000",
-        certificate.display(),
-        private_key.display(),
+        tls_material.certificate_chain_file.display(),
+        tls_material.private_key_file.display(),
     )
     .expect("generic config should be written");
     file
@@ -110,8 +115,7 @@ fn write_pg_erd_config(
     metrics_listener: SocketAddr,
     backend: SocketAddr,
     frontend: SocketAddr,
-    certificate: &PathBuf,
-    private_key: &PathBuf,
+    tls_material: TlsMaterialRefs<'_>,
 ) -> NamedTempFile {
     let mut file = NamedTempFile::new().expect("pg-erd config should be writable");
     writeln!(file, "version: {version}").expect("version should be written");
@@ -130,8 +134,8 @@ fn write_pg_erd_config(
     writeln!(
         file,
         "downstream_tls:\n  certificate_chain_file: {}\n  private_key_file: {}\n  alpn: h2_http1\nupstreams:\n  - name: backend\n    address: {backend}\n    tls: false\n    timeouts:\n      connection_ms: 1000\n      total_connection_ms: 2000\n      read_ms: 5000\n      write_ms: 5000\n      idle_ms: 10000\n  - name: frontend\n    address: {frontend}\n    tls: false\n    timeouts:\n      connection_ms: 1000\n      total_connection_ms: 2000\n      read_ms: 5000\n      write_ms: 5000\n      idle_ms: 10000",
-        certificate.display(),
-        private_key.display(),
+        tls_material.certificate_chain_file.display(),
+        tls_material.private_key_file.display(),
     )
     .expect("pg-erd config should be written");
     file
@@ -213,14 +217,17 @@ fn terminate_gracefully(process: &mut Child) {
 #[test]
 fn both_tls_composition_roots_construct_listeners_and_exit_through_graceful_shutdown() {
     let certificate = issue_certificate();
+    let tls_material = TlsMaterialRefs {
+        certificate_chain_file: &certificate.certificate,
+        private_key_file: &certificate.private_key,
+    };
 
     let (generic_listener, generic_metrics) = reserve_distinct_loopback_addresses();
     let generic_config = write_generic_config(
         generic_listener,
         generic_metrics,
         reserve_loopback_address(),
-        &certificate.certificate,
-        &certificate.private_key,
+        tls_material,
     );
     let mut generic = spawn(env!("CARGO_BIN_EXE_cwl-pingora-gateway"), &generic_config);
     wait_until_listening(generic_listener, &mut generic);
@@ -234,8 +241,7 @@ fn both_tls_composition_roots_construct_listeners_and_exit_through_graceful_shut
         pg_metrics,
         reserve_loopback_address(),
         reserve_loopback_address(),
-        &certificate.certificate,
-        &certificate.private_key,
+        tls_material,
     );
     let mut pg = spawn(
         env!("CARGO_BIN_EXE_cwl-pingora-pg-erd-migration"),
@@ -249,14 +255,17 @@ fn both_tls_composition_roots_construct_listeners_and_exit_through_graceful_shut
 fn both_tls_composition_roots_fail_closed_when_certificate_material_cannot_be_loaded() {
     let certificate = issue_certificate();
     let missing_certificate = certificate.certificate.with_file_name("missing.crt");
+    let missing_tls_material = TlsMaterialRefs {
+        certificate_chain_file: &missing_certificate,
+        private_key_file: &certificate.private_key,
+    };
 
     let (generic_listener, generic_metrics) = reserve_distinct_loopback_addresses();
     let generic_config = write_generic_config(
         generic_listener,
         generic_metrics,
         reserve_loopback_address(),
-        &missing_certificate,
-        &certificate.private_key,
+        missing_tls_material,
     );
     let generic = output(env!("CARGO_BIN_EXE_cwl-pingora-gateway"), &generic_config);
     assert!(!generic.status.success());
@@ -273,8 +282,7 @@ fn both_tls_composition_roots_fail_closed_when_certificate_material_cannot_be_lo
         pg_metrics,
         reserve_loopback_address(),
         reserve_loopback_address(),
-        &missing_certificate,
-        &certificate.private_key,
+        missing_tls_material,
     );
     let pg = output(
         env!("CARGO_BIN_EXE_cwl-pingora-pg-erd-migration"),
@@ -290,6 +298,10 @@ fn both_tls_composition_roots_fail_closed_when_certificate_material_cannot_be_lo
 #[test]
 fn pg_erd_tls_version_and_material_validation_remain_fail_closed() {
     let certificate = issue_certificate();
+    let tls_material = TlsMaterialRefs {
+        certificate_chain_file: &certificate.certificate,
+        private_key_file: &certificate.private_key,
+    };
     let (listener, metrics_listener) = reserve_distinct_loopback_addresses();
     let backend = reserve_loopback_address();
     let frontend = reserve_loopback_address();
@@ -301,8 +313,7 @@ fn pg_erd_tls_version_and_material_validation_remain_fail_closed() {
         metrics_listener,
         backend,
         frontend,
-        &certificate.certificate,
-        &certificate.private_key,
+        tls_material,
     );
     let legacy_yaml = fs::read_to_string(legacy.path()).expect("legacy fixture should be readable");
     assert_eq!(
@@ -318,8 +329,7 @@ fn pg_erd_tls_version_and_material_validation_remain_fail_closed() {
         metrics_listener,
         backend,
         frontend,
-        &certificate.certificate,
-        &certificate.private_key,
+        tls_material,
     );
     let missing_lifetime_yaml =
         fs::read_to_string(missing_lifetime.path()).expect("lifetime fixture should be readable");
@@ -330,6 +340,10 @@ fn pg_erd_tls_version_and_material_validation_remain_fail_closed() {
 
     let (listener, metrics_listener) = reserve_distinct_loopback_addresses();
     let relative_certificate = PathBuf::from("relative.crt");
+    let invalid_tls_material = TlsMaterialRefs {
+        certificate_chain_file: &relative_certificate,
+        private_key_file: &certificate.private_key,
+    };
     let invalid_material = write_pg_erd_config(
         3,
         true,
@@ -337,8 +351,7 @@ fn pg_erd_tls_version_and_material_validation_remain_fail_closed() {
         metrics_listener,
         backend,
         frontend,
-        &relative_certificate,
-        &certificate.private_key,
+        invalid_tls_material,
     );
     let invalid_material_yaml =
         fs::read_to_string(invalid_material.path()).expect("material fixture should be readable");
