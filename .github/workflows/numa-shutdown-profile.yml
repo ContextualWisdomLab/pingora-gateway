@@ -153,6 +153,10 @@ jobs:
           grep -Fx 'gateway_build_profile=release' "$RUNNER_TEMP/numa-shutdown-profile.txt"
           grep -Fx "gateway_binary_sha256=$CWL_PROFILE_GATEWAY_BINARY_SHA256" "$RUNNER_TEMP/numa-shutdown-profile.txt"
           grep -Fx 'survivors_at_close_bound=0' "$RUNNER_TEMP/numa-shutdown-profile.txt"
+          for round in $(seq 1 "$PROFILE_ROUNDS"); do
+            grep -Fx "round_${round}_scheduler_available=true" "$RUNNER_TEMP/numa-shutdown-profile.txt"
+            grep -Fx "round_${round}_scheduler_sample_complete=true" "$RUNNER_TEMP/numa-shutdown-profile.txt"
+          done
       - name: Upload NUMA shutdown evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
