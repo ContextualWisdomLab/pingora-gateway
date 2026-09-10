@@ -11,6 +11,7 @@ use std::net::SocketAddr;
 use serde::Deserialize;
 use thiserror::Error;
 
+use crate::downstream_tls::{DownstreamTlsConfig, DownstreamTlsConfigError};
 use crate::edge_contract::{
     socket_authorities_overlap, validate_upstream_authority_separation, GatewayConfigError,
     UpstreamConfig, MAX_SERVICE_THREADS_PER_SERVICE,
@@ -27,6 +28,9 @@ pub const PG_ERD_MIGRATION_CONFIG_VERSION: u32 = 1;
 
 /// Opt-in pg-erd configuration version that requires an explicit response-body lifetime budget.
 pub const PG_ERD_RESPONSE_LIFETIME_CONFIG_VERSION: u32 = 2;
+
+/// Opt-in pg-erd configuration version that adds downstream TLS/H2 to version-2 lifetime semantics.
+pub const PG_ERD_DOWNSTREAM_TLS_H2_CONFIG_VERSION: u32 = 3;
 
 const fn default_service_threads() -> usize {
     1
@@ -46,6 +50,8 @@ pub struct PgErdMigrationConfig {
     #[serde(default = "default_service_threads")]
     service_threads: usize,
     upstream_keepalive_pool_size: usize,
+    #[serde(default)]
+    downstream_tls: Option<DownstreamTlsConfig>,
     upstreams: Vec<UpstreamConfig>,
 }
 
@@ -58,12 +64,21 @@ pub enum PgErdMigrationConfigError {
     /// The configuration requests a migration-admin version this binary does not implement.
     #[error("unsupported pg-erd migration configuration version {0}")]
     UnsupportedVersion(u32),
-    /// Version 2 must state the response-body lifetime rather than inheriting a hidden default.
-    #[error("pg-erd migration config version 2 requires max_upstream_response_body_ms")]
+    /// Version 2 and later contracts must state the response-body lifetime explicitly.
+    #[error("pg-erd migration config version 2 or 3 requires max_upstream_response_body_ms")]
     MissingUpstreamResponseBodyLifetime,
     /// Version 1 cannot silently acquire semantics introduced by the version-2 contract.
-    #[error("max_upstream_response_body_ms requires pg-erd migration config version 2")]
+    #[error("max_upstream_response_body_ms requires pg-erd migration config version 2 or later")]
     ResponseBodyLifetimeRequiresVersion2,
+    /// Versions 1 and 2 cannot silently acquire version-3 downstream TLS semantics.
+    #[error("downstream_tls requires pg-erd migration config version 3")]
+    DownstreamTlsRequiresVersion3,
+    /// Version 3 must explicitly declare the downstream TLS/H2 listener contract.
+    #[error("pg-erd migration config version 3 requires downstream_tls")]
+    MissingDownstreamTls,
+    /// The downstream TLS declaration violates deterministic reference invariants.
+    #[error(transparent)]
+    DownstreamTls(#[from] DownstreamTlsConfigError),
     /// A port-zero traffic listener would delegate the public authority to an ephemeral OS port.
     #[error("listener must use a non-zero port")]
     ZeroListenerPort,
@@ -149,7 +164,7 @@ impl PgErdMigrationConfig {
         self.metrics_listener
     }
 
-    /// Returns the explicit response-body lifetime when the version-2 contract is active.
+    /// Returns the explicit response-body lifetime when the version-2-or-later contract is active.
     pub fn max_upstream_response_body_ms(&self) -> Option<u64> {
         self.max_upstream_response_body_ms
     }
@@ -165,6 +180,11 @@ impl PgErdMigrationConfig {
     /// Returns the validated Pingora upstream keepalive-pool budget.
     pub fn upstream_keepalive_pool_size(&self) -> usize {
         self.upstream_keepalive_pool_size
+    }
+
+    /// Returns the downstream TLS declaration for opt-in version-3 configurations.
+    pub fn downstream_tls(&self) -> Option<&DownstreamTlsConfig> {
+        self.downstream_tls.as_ref()
     }
 
     /// Builds the characterized multi-route Pingora callback adapter from explicit transport data.
@@ -188,11 +208,26 @@ impl PgErdMigrationConfig {
                 if self.max_upstream_response_body_ms.is_some() {
                     return Err(PgErdMigrationConfigError::ResponseBodyLifetimeRequiresVersion2);
                 }
+                if self.downstream_tls.is_some() {
+                    return Err(PgErdMigrationConfigError::DownstreamTlsRequiresVersion3);
+                }
             }
             PG_ERD_RESPONSE_LIFETIME_CONFIG_VERSION => {
                 if self.max_upstream_response_body_ms.is_none() {
                     return Err(PgErdMigrationConfigError::MissingUpstreamResponseBodyLifetime);
                 }
+                if self.downstream_tls.is_some() {
+                    return Err(PgErdMigrationConfigError::DownstreamTlsRequiresVersion3);
+                }
+            }
+            PG_ERD_DOWNSTREAM_TLS_H2_CONFIG_VERSION => {
+                if self.max_upstream_response_body_ms.is_none() {
+                    return Err(PgErdMigrationConfigError::MissingUpstreamResponseBodyLifetime);
+                }
+                self.downstream_tls
+                    .as_ref()
+                    .ok_or(PgErdMigrationConfigError::MissingDownstreamTls)?
+                    .validate()?;
             }
             unsupported => return Err(PgErdMigrationConfigError::UnsupportedVersion(unsupported)),
         }
