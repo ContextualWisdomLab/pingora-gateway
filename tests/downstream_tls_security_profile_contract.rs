@@ -35,7 +35,10 @@ fn tls12_profile_admits_only_ephemeral_ecdhe_aead_suites() {
     assert!(declaration.contains("ECDHE-RSA-AES128-GCM-SHA256"));
     assert!(declaration.contains("ECDHE-ECDSA-AES128-GCM-SHA256"));
 
-    let normalized = declaration.replace(['"', '\\', '\n', ' '], "");
+    let normalized: String = declaration
+        .chars()
+        .filter(|character| !matches!(character, '"' | '\\' | '\n' | ' '))
+        .collect();
     let suites: Vec<_> = normalized.split(':').filter(|suite| !suite.is_empty()).collect();
     assert_eq!(suites.len(), 6, "TLS 1.2 profile cardinality changed unexpectedly");
 
