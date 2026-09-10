@@ -1,0 +1,122 @@
+name: Representative NUMA shutdown profile
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: numa-shutdown-profile-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  EXPECTED_SHA: ${{ github.sha }}
+  MIN_ONLINE_CPUS: 64
+  MIN_NUMA_NODES: 2
+  MIN_NOFILE: 16384
+  SERVICE_THREADS: 64
+  PARKED_CONNECTIONS: 4096
+  PROFILE_ROUNDS: 25
+  CLOSE_BOUND_MS: 1000
+
+jobs:
+  representative-numa-shutdown-profile:
+    runs-on: [self-hosted, linux]
+    timeout-minutes: 120
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          ref: ${{ env.EXPECTED_SHA }}
+          persist-credentials: false
+      - name: Verify checkout identity
+        shell: bash
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - name: Fail closed on nonrepresentative host topology
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -s)" = Linux
+          command -v nproc
+          command -v lscpu
+          command -v rustup
+          command -v cargo
+          command -v pkg-config
+          pkg-config --exists openssl
+
+          online_cpus="$(nproc)"
+          numa_nodes="$(lscpu -p=CPU,NODE,SOCKET | awk -F, '!/^#/ && $2 != "-" {nodes[$2]=1} END {print length(nodes)}')"
+          test "$online_cpus" -ge "$MIN_ONLINE_CPUS"
+          test "$numa_nodes" -ge "$MIN_NUMA_NODES"
+          test "$SERVICE_THREADS" -le "$online_cpus"
+
+          hard_nofile="$(ulimit -Hn)"
+          test "$hard_nofile" = unlimited || test "$hard_nofile" -ge "$MIN_NOFILE"
+          ulimit -Sn "$MIN_NOFILE"
+          test "$(ulimit -Sn)" -ge "$MIN_NOFILE"
+
+          {
+            printf 'expected_sha=%s\n' "$EXPECTED_SHA"
+            printf 'online_cpus=%s\nnuma_nodes=%s\n' "$online_cpus" "$numa_nodes"
+            printf 'soft_nofile=%s\nhard_nofile=%s\n' "$(ulimit -Sn)" "$hard_nofile"
+            printf '%s\n' 'cpu,node,socket'
+            lscpu -p=CPU,NODE,SOCKET | grep -v '^#'
+          } >"$RUNNER_TEMP/numa-host-preflight.txt"
+      - name: Select reviewed Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.98.1 --profile minimal --component clippy,rustfmt
+          rustup default 1.98.1
+          rustc --version --verbose | grep -Fx 'release: 1.98.1'
+      - name: Execute representative parked-read shutdown profile
+        shell: bash
+        env:
+          CWL_NUMA_PROFILE: 1
+          CWL_PROFILE_EXPECTED_SHA: ${{ env.EXPECTED_SHA }}
+          CWL_PROFILE_MIN_ONLINE_CPUS: ${{ env.MIN_ONLINE_CPUS }}
+          CWL_PROFILE_MIN_NUMA_NODES: ${{ env.MIN_NUMA_NODES }}
+          CWL_PROFILE_SERVICE_THREADS: ${{ env.SERVICE_THREADS }}
+          CWL_PROFILE_PARKED_CONNECTIONS: ${{ env.PARKED_CONNECTIONS }}
+          CWL_PROFILE_ROUNDS: ${{ env.PROFILE_ROUNDS }}
+          CWL_PROFILE_CLOSE_BOUND_MS: ${{ env.CLOSE_BOUND_MS }}
+          CWL_PROFILE_EVIDENCE_PATH: ${{ runner.temp }}/numa-shutdown-profile.txt
+        run: |
+          set -euo pipefail
+          perf_args=()
+          if command -v perf >/dev/null 2>&1 && perf stat -e task-clock -- true >/dev/null 2>&1; then
+            perf_args=(perf stat -o "$RUNNER_TEMP/perf-stat.txt" -e task-clock,context-switches,cpu-migrations)
+            if perf stat -e syscalls:sys_enter_futex -- true >/dev/null 2>&1; then
+              perf_args+=( -e syscalls:sys_enter_futex )
+            fi
+            printf 'perf_available=true\n' >"$RUNNER_TEMP/perf-capability.txt"
+          else
+            printf 'perf_available=false\n' >"$RUNNER_TEMP/perf-capability.txt"
+          fi
+
+          if [ "${#perf_args[@]}" -gt 0 ]; then
+            "${perf_args[@]}" cargo test --locked --test shutdown_contention_profile -- --ignored --exact representative_numa_shutdown_profile --nocapture
+          else
+            cargo test --locked --test shutdown_contention_profile -- --ignored --exact representative_numa_shutdown_profile --nocapture
+          fi
+      - name: Require source-bound profile receipt
+        if: ${{ success() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s "$RUNNER_TEMP/numa-shutdown-profile.txt"
+          grep -Fx "expected_sha=$EXPECTED_SHA" "$RUNNER_TEMP/numa-shutdown-profile.txt"
+          grep -Fx 'survivors_at_close_bound=0' "$RUNNER_TEMP/numa-shutdown-profile.txt"
+      - name: Upload NUMA shutdown evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: numa-shutdown-profile-${{ env.EXPECTED_SHA }}
+          path: |
+            ${{ runner.temp }}/numa-host-preflight.txt
+            ${{ runner.temp }}/numa-shutdown-profile.txt
+            ${{ runner.temp }}/perf-capability.txt
+            ${{ runner.temp }}/perf-stat.txt
+          if-no-files-found: error
+          retention-days: 7
