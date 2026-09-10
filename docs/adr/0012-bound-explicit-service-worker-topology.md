@@ -43,6 +43,8 @@ A many-core host no longer masquerades as multi-worker evidence: the exact confi
 
 Because Pingora applies the scalar per service, operators must account for the number of registered services when estimating process thread fan-out. The ceiling does not replace container CPU/PID/memory limits or representative NUMA profiling.
 
+The explicit-thread `ServerConf` constructor is crate-private. Public runtime-composition functions revalidate the runtime-capacity values they consume before constructing Pingora configuration, so direct `GatewayConfig` construction or raw `Deserialize` of the pg-erd aggregate cannot bypass the zero/ceiling contract. This duplicates only the activation-boundary check, not product policy or supplier authority.
+
 ## Verification
 
 The executable contract must prove all of the following on an exact PR head:
@@ -51,6 +53,7 @@ The executable contract must prove all of the following on an exact PR head:
 - omission preserves one worker per service;
 - zero and 257 fail closed before listener activation;
 - the validated value reaches `ServerConf::threads` in both production composition paths;
+- direct programmatic or raw-deserialization construction cannot inject invalid runtime-capacity values through the public composition API;
 - existing shutdown, routing, TLS, runtime-isolation, supply-chain and bounded-origin load tests remain GREEN.
 
 Issue #46 remains open after this ADR. It closes only after representative configured-worker traffic and shutdown profiling records the selected worker count, CPU/socket/NUMA topology, high keep-alive pressure, shutdown latency distribution, survivor count, CPU/scheduler behavior and, where available, off-CPU/futex evidence.
