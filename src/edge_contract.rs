@@ -11,8 +11,13 @@ use std::path::PathBuf;
 use serde::Deserialize;
 use thiserror::Error;
 
-/// The only configuration version implemented by this release line.
+use crate::downstream_tls::{DownstreamTlsConfig, DownstreamTlsConfigError};
+
+/// Original cleartext-only shared gateway configuration version.
 pub const CURRENT_GATEWAY_CONFIG_VERSION: u32 = 1;
+
+/// Opt-in shared gateway configuration version with explicit downstream TLS/H2 authority.
+pub const GATEWAY_DOWNSTREAM_TLS_H2_CONFIG_VERSION: u32 = 2;
 
 /// Maximum global data-plane worker count admitted by this configuration contract.
 ///
@@ -52,6 +57,9 @@ pub struct GatewayConfig {
     pub service_threads: usize,
     /// Maximum number of reusable upstream keepalive connections retained by Pingora.
     pub upstream_keepalive_pool_size: usize,
+    /// Optional downstream TLS/H2 listener declaration, admitted only by version 2.
+    #[serde(default)]
+    pub downstream_tls: Option<DownstreamTlsConfig>,
     /// Explicit set of upstream services that the gateway may contact.
     pub upstreams: Vec<UpstreamConfig>,
 }
@@ -108,6 +116,15 @@ pub enum GatewayConfigError {
     /// The configuration requests a contract version this binary does not implement.
     #[error("unsupported gateway configuration version {0}")]
     UnsupportedVersion(u32),
+    /// Version 1 must not silently acquire downstream TLS semantics.
+    #[error("downstream_tls requires shared gateway configuration version 2")]
+    DownstreamTlsRequiresVersion2,
+    /// Version 2 must explicitly declare the downstream TLS/H2 listener contract.
+    #[error("shared gateway configuration version 2 requires downstream_tls")]
+    MissingDownstreamTls,
+    /// The downstream TLS declaration violates deterministic reference invariants.
+    #[error(transparent)]
+    DownstreamTls(#[from] DownstreamTlsConfigError),
     /// Port zero would delegate the traffic listener to an ephemeral OS-selected authority.
     #[error("listener must use a non-zero port")]
     ZeroListenerPort,
@@ -233,8 +250,19 @@ impl GatewayConfig {
 
     /// Verifies all configuration invariants required before network authority is granted.
     pub fn validate(&self) -> Result<(), GatewayConfigError> {
-        if self.version != CURRENT_GATEWAY_CONFIG_VERSION {
-            return Err(GatewayConfigError::UnsupportedVersion(self.version));
+        match self.version {
+            CURRENT_GATEWAY_CONFIG_VERSION => {
+                if self.downstream_tls.is_some() {
+                    return Err(GatewayConfigError::DownstreamTlsRequiresVersion2);
+                }
+            }
+            GATEWAY_DOWNSTREAM_TLS_H2_CONFIG_VERSION => {
+                self.downstream_tls
+                    .as_ref()
+                    .ok_or(GatewayConfigError::MissingDownstreamTls)?
+                    .validate()?;
+            }
+            unsupported => return Err(GatewayConfigError::UnsupportedVersion(unsupported)),
         }
         if self.listener.port() == 0 {
             return Err(GatewayConfigError::ZeroListenerPort);
@@ -286,6 +314,11 @@ impl GatewayConfig {
         }
 
         Ok(())
+    }
+
+    /// Returns the validated downstream TLS declaration for opt-in version 2 configurations.
+    pub fn downstream_tls(&self) -> Option<&DownstreamTlsConfig> {
+        self.downstream_tls.as_ref()
     }
 }
 
