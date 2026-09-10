@@ -35,6 +35,7 @@ fn gateway_config(upstream: UpstreamConfig) -> GatewayConfig {
         max_in_flight_requests: 128,
         service_threads: V1_DEFAULT_SERVICE_THREADS,
         upstream_keepalive_pool_size: 32,
+        downstream_tls: None,
         upstreams: vec![upstream],
     }
 }
