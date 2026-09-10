@@ -16,21 +16,23 @@ The profile must not become a routine pull-request workload because a self-hoste
 
 The initial commercial characterization keeps 64 configured proxy workers, one Prometheus worker override, 4096 already-established reusable HTTP/1 keep-alive connections, 25 shutdown rounds, and the existing one second parked-connection close bound. Worker, connection, round, or close-bound reductions are not admissible merely to obtain a GREEN result.
 
+GitHub only accepts `workflow_dispatch` when the workflow file exists on the repository default branch. The representative run therefore cannot be used as a pre-merge shortcut for this profiling-harness PR. Normal PR checks prove that the ignored Rust target compiles and that the dispatch/topology policy remains executable; after ordinary protected integration of the harness, an operator may dispatch the default-branch workflow against the exact integrated or descendant candidate ref. This sequencing keeps the scarce self-hosted lane out of routine PR execution without weakening review governance.
+
 ## Decision
 
 Add an ignored Linux integration profile plus a manual `self-hosted, linux` workflow. Normal CI compiles the integration target and an executable contract verifies that the workflow remains manual, source-bound, topology-bounded, and unable to masquerade as ordinary hosted evidence.
 
 The manual workflow binds checkout to the dispatched exact SHA, requires the reviewed Rust toolchain and OpenSSL build prerequisites, raises and verifies the file-descriptor soft limit, records `lscpu -p=CPU,NODE,SOCKET`, and rejects a host below the topology floor before it starts the gateway.
 
-For each round, the Rust profile launches the real `cwl-pingora-gateway` binary with the configured proxy worker count, establishes and verifies the health response on every keep-alive connection, proves the connections remain open and response-free immediately before SIGTERM, signals the real process, and records each socket's cleanup latency. A round fails if any parked connection survives the one-second bound or closes with unexpected response bytes/errors. Process exit must also remain bounded.
+For each round, the Rust profile launches the real `cwl-pingora-gateway` binary with the configured proxy worker count, establishes and verifies the health response on every keep-alive connection, proves the connections remain open and response-free immediately before SIGTERM, varies a small pre-signal scheduling delay across rounds, signals the real process, and records each socket's cleanup latency. A round fails if any parked connection survives the one-second bound or closes with unexpected response bytes/errors. Process exit must also remain bounded.
 
-Scheduler evidence is collected from Linux `/proc/<pid>/task/<tid>/schedstat` and task status counters immediately before notification and again after socket cleanup when the process remains observable. The receipt records aggregate CPU runtime, runqueue wait, timeslices, voluntary context switches, and nonvoluntary context switches per round. Linux documents the three schedstat fields as CPU time, runqueue wait time, and timeslice count. The workflow additionally wraps the profile with `perf stat` for task-clock, context switches, CPU migrations, and the futex syscall tracepoint when the host permits it; lack of `perf` permission is recorded rather than converted into fabricated evidence.
+Scheduler evidence is collected from Linux `/proc/<pid>/task/<tid>/schedstat` and task status counters immediately before notification and repeatedly during socket cleanup while the process remains observable. The receipt records aggregate CPU runtime, runqueue wait, timeslices, voluntary context switches, and nonvoluntary context switches per round. Linux documents the three schedstat fields as CPU time, runqueue wait time, and timeslice count. The workflow additionally wraps the profile with `perf stat` for task-clock, context switches, CPU migrations, and the futex syscall tracepoint when the host permits it; lack of `perf` permission is recorded rather than converted into fabricated evidence.
 
-The resulting artifact records exact gateway SHA, exact Pingora package family, configured proxy and metrics worker counts, registered service count, topology, connection/round pressure, p50/p95/p99/max socket-close latency, survivors at the close bound, maximum process-exit time, scheduler deltas, topology rows, and optional perf counters.
+The resulting artifact records exact gateway SHA, exact Pingora package family, configured proxy and metrics worker counts, registered service count, topology, connection/round pressure, per-round pre-signal jitter, p50/p95/p99/max socket-close latency, survivors at the close bound, maximum process-exit time, scheduler deltas, topology rows, and optional perf counters.
 
 ## Alternatives rejected
 
-Running the existing four-CPU hosted capacity job at higher virtual-user counts was rejected because concurrency pressure does not create NUMA topology or equivalent scheduler behavior. Inferring worker count from `nproc` was rejected because #73 makes worker topology an explicit Admin Config input. Automatically triggering the self-hosted profile on every pull request was rejected because it would create routine queue pressure and could select an unrepresentative host. Pinning or copying an unreleased supplier branch to recreate the historical shared-`Notify` implementation was rejected because mutable supplier code is not a release authority and would violate the gateway ownership boundary.
+Running the existing four-CPU hosted capacity job at higher virtual-user counts was rejected because concurrency pressure does not create NUMA topology or equivalent scheduler behavior. Inferring worker count from `nproc` was rejected because #73 makes worker topology an explicit Admin Config input. Automatically triggering the self-hosted profile on every pull request was rejected because it would create routine queue pressure and could select an unrepresentative host. Adding a temporary write-capable workflow only to execute the branch before review was rejected because `workflow_dispatch` still requires the workflow definition on the default branch and a self-modifying execution path would violate the repository's evidence and workflow-ownership rules. Pinning or copying an unreleased supplier branch to recreate the historical shared-`Notify` implementation was rejected because mutable supplier code is not a release authority and would violate the gateway ownership boundary.
 
 ## Evidence and promotion
 
@@ -42,7 +44,7 @@ This ADR does not authorize an independent `APPROVED` review, protected merge, i
 
 - `tests/shutdown_contention_profile.rs` — real-process parked-connection profile and source-bound evidence receipt.
 - `tests/numa_shutdown_profile_contract.rs` — fail-closed executable workflow/profile policy.
-- `.github/workflows/numa-shutdown-profile.yml` — explicit manual execution lane for a representative self-hosted Linux host.
+- `.github/workflows/numa-shutdown-profile.yml` — explicit manual execution lane for a representative self-hosted Linux host after the workflow definition is present on the default branch.
 - ContextualWisdomLab/pingora-gateway#46 — canonical Runtime Isolation contention acceptance.
 - ContextualWisdomLab/pingora-gateway#73 — explicit proxy-worker topology prerequisite.
 - cloudflare/pingora#844 — historical many-core shutdown-notification contention report.
@@ -50,6 +52,8 @@ This ADR does not authorize an independent `APPROVED` review, protected merge, i
 ## References
 
 Cloudflare, Inc. (2026, September 9). *Pingora 0.9.0* [Software release]. GitHub. https://github.com/cloudflare/pingora/releases/tag/0.9.0
+
+GitHub. (2026). *Manually running a workflow*. GitHub Docs. https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow
 
 Linux kernel developers. (2026). *Scheduler statistics*. The Linux Kernel documentation. https://docs.kernel.org/scheduler/sched-stats.html
 
