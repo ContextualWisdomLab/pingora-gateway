@@ -33,7 +33,18 @@ fn profile_workflow_fails_closed_before_measurement_on_nonrepresentative_topolog
             "missing topology/load contract: {required}"
         );
     }
-    assert!(WORKFLOW.contains("lscpu -p=CPU,NODE,SOCKET"));
+    for required in [
+        "Cpus_allowed_list",
+        "filtered_topology",
+        "process_allowed_cpu_list",
+        "test \"$online_cpus\" -eq \"$(nproc)\"",
+        "lscpu -p=CPU,NODE,SOCKET",
+    ] {
+        assert!(
+            WORKFLOW.contains(required),
+            "workflow must derive admission and receipt topology from one process-allowed CPU set: {required}"
+        );
+    }
     assert!(WORKFLOW.contains("CWL_NUMA_PROFILE: 1"));
     assert!(WORKFLOW.contains("--ignored --exact representative_numa_shutdown_profile"));
 }
@@ -58,12 +69,22 @@ fn profile_fixture_preserves_external_shutdown_and_scheduler_evidence_invariants
         "shutdown_close_p99_ms",
         "shutdown_close_max_ms",
         "survivors_at_close_bound",
+        "Cpus_allowed_list",
+        "process_allowed_cpus",
+        "same_task_set",
+        "checked_delta",
+        "checked_sub",
+        "scheduler_sample_complete",
+        "scheduler_task_set_changed",
+        "scheduler_counter_regressed",
     ] {
         assert!(
             PROFILE.contains(required),
             "missing profile evidence invariant: {required}"
         );
     }
+    assert!(PROFILE.contains("BTreeMap<u32, SchedulerCounters>"));
+    assert!(!PROFILE.contains("saturating_delta"));
     assert!(PROFILE.contains("#[ignore ="));
     assert!(PROFILE.contains("CWL_NUMA_PROFILE"));
 }
@@ -74,6 +95,10 @@ fn adr_keeps_performance_evidence_separate_from_correctness_and_release_credit()
         "Status: Proposed",
         "64 logical CPUs",
         "2 NUMA nodes",
+        "process-allowed CPU set",
+        "stable TID identity",
+        "incomplete",
+        "task-set churn",
         "4096",
         "25",
         "one second",
