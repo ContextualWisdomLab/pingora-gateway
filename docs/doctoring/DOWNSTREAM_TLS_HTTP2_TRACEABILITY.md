@@ -20,62 +20,41 @@ At that source:
 
 - `TlsSettings::intermediate(cert_path, key_path)` constructs the server acceptor and loads the PEM private key and certificate chain.
 - `TlsSettings::intermediate` does not call `check_private_key()`; the CWL delivery adapter therefore performs that explicit pairing check before listener activation.
-- `TlsSettings::enable_h2()` maps to `ALPN::H2H1`, preferring HTTP/2 while allowing HTTP/1.1 fallback.
+- `TlsSettings::enable_h2()` installs `ALPN::H2H1`; its `prefer_h2` callback returns `AlpnError::NOACK` when there is no common advertised protocol.
+- Pingora exposes the underlying OpenSSL-compatible `SslAcceptorBuilder` through the public TLS settings API, so CWL can install a stricter ALPN selector without vendoring or copying supplier source.
 - `add_tls_with_settings` is used only after the versioned transport-neutral Admin Config has been admitted and materialized.
 
 Supplier source: https://github.com/cloudflare/pingora/blob/702f69015e53f7244d6ad2e743de571d859a70a4/pingora-core/src/listeners/tls/boringssl_openssl/mod.rs
 
 ## Standards mapping
 
-RFC 9113 defines HTTP/2. For HTTPS, the HTTP/2 protocol identifier is `h2`; h2c is a distinct non-TLS mode and is not admitted by this increment. RFC 7301 defines ALPN negotiation. The current `h2_http1` contract deliberately permits only the Pingora H2-preferred/H1-allowed policy rather than accepting arbitrary operator protocol lists.
+RFC 9113 defines HTTP/2. For HTTPS, the HTTP/2 protocol identifier is `h2`; h2c is a distinct non-TLS mode and is not admitted by this increment.
+
+RFC 7301 defines ALPN negotiation. It requires the server to choose a common advertised protocol and, when an ALPN-bearing client offers no protocol supported by the server, terminate with fatal `no_application_protocol`. The CWL `h2_http1` selector therefore scans the client wire list, prefers `h2`, falls back to `http/1.1` only when offered, and returns `AlpnError::ALERT_FATAL` for no overlap or malformed vectors. This is intentionally stricter than Pingora 0.9.0's convenience H2/H1 selector.
 
 RFC 9846 is the current TLS 1.3 specification and obsoletes RFC 8446. RFC 9525 supplies current service-identity verification guidance for TLS applications. The real-wire tests use a controlled CA and a certificate for `gateway.test` to exercise identity validation rather than disabling peer verification.
 
 RFC 9000 and RFC 9114 show why HTTP/3 is not a TLS-listener checkbox: HTTP/3 is mapped over QUIC and therefore introduces a UDP/QUIC transport surface. H3 remains fail-closed until a release-qualified server capability and a separate operational/security contract exist.
 
-## RED to implementation to GREEN chain
+## RED / repair chain
 
-PR #75 was created from exact #73 base `625cae4f156366bc39d6782161a4a5f336d58624`. Its original tests established that the production roots had no versioned downstream TLS authority. The implementation then introduced:
+PR #75 was created from exact #73 base `625cae4f156366bc39d6782161a4a5f336d58624`. Its original RED established that the production roots had no versioned downstream TLS authority. The implementation then introduced transport-neutral downstream TLS configuration, generic v2 / pg-erd v3 admission, the Pingora delivery adapter, TLS listener composition, and real-wire H2/H1 fallback/lifecycle tests. Subsequent ordinary-forward repairs resolved stale fixture, coverage, formatting, Clippy and child-process lifecycle findings without weakening gates.
 
-- `DownstreamTlsConfig` and `DownstreamAlpnPolicy` in a transport-neutral bounded context;
-- generic config version 2 and pg-erd config version 3 with fail-closed version transitions;
-- `tls_delivery` as the Pingora adapter;
-- conditional `add_tls_with_settings` listener composition in both production roots;
-- real-wire H2, HTTP/1.1 fallback, pg-erd TLS and lifecycle/failure tests.
+Exact predecessor `a7f12c8ee67bfe06a802aab66f7f038ec11bfb6f` completed CI `34530278038`, Supply Chain `34530277984` and PgErd bounded-origin capacity `34530278009` successfully. That remains historical exact evidence only.
 
-CodeRabbit review later found process-lifecycle defects in the real-wire fixtures. Ordinary forward repairs moved child ownership into cleanup guards before handshake attempts and replaced an unbounded `Command::output()` negative-startup path with deadline-bounded `try_wait()` plus kill/reap. All three review threads are resolved on the current lineage.
+A later standards review found a distinct protocol defect before release: Pingora 0.9.0's H2/H1 convenience selector returns `NOACK` on ALPN no-overlap, whereas RFC 7301 requires fatal `no_application_protocol` when the client supplied ALPN but no protocol overlaps. Test-only exact `5aebba832692debdf99a6866b22be25deea9cdb2` added a real-wire unsupported-ALPN handshake oracle. Its hosted CI was cancelled by the subsequent ordinary-forward repair before the test job executed, so that SHA is a realistic RED definition, not a terminal hosted RED receipt.
 
-Exact predecessor `a7f12c8ee67bfe06a802aab66f7f038ec11bfb6f` completed:
+Ordinary-forward source exact `2d97b944e855cc04346b4fbd85838c5abb4ce506` replaced `enable_h2()` with a small CWL-owned selector installed through Pingora/OpenSSL's public callback surface. It preserves H2 preference, permits H1 only when offered, rejects malformed wire lists without panic and returns fatal on no overlap. Unit tests cover H2 preference, H1 fallback, no overlap and malformed vectors. Later documentation commits create newer exact identities; no GREEN is transferred until the unchanged current head passes required checks.
 
-- CI `34530278038`: formatting, locked compile/tests, Clippy, warnings-denied rustdoc, pinned coverage tooling, owned-production coverage enforcement, resolved-lock verification, rootless OCI runtime and both load contracts — success;
-- Supply Chain `34530277984` — success;
-- PgErd bounded-origin capacity `34530278009` — success.
+## What this increment can prove
 
-The documentation/ADR repairs after that SHA create a new exact head. No predecessor GREEN transfers to the new head; the branch remains Draft until the new identity completes the required checks.
-
-## What this increment proves
-
-The current increment can prove, on an exact head with terminal checks:
-
-- explicit versioned TLS listener authority rather than implicit transport mutation;
-- read-only certificate/key materialization and mismatch failure before listener activation;
-- verified TLS service identity in the real-wire fixture;
-- negotiated `h2` over TLS;
-- actual H2 request/response flow through the generic production root;
-- deliberate HTTP/1.1 fallback over the same TLS policy;
-- pg-erd TLS listener activation without converting its bounded route contract into a generic router;
-- cleanup of child processes on success, panic, timeout and negative-startup paths.
+On an unchanged exact head with terminal checks, the increment can prove explicit versioned TLS listener authority, read-only certificate/key materialization, certificate/key mismatch failure before listener activation, verified TLS service identity, negotiated H2, deliberate H1 fallback, fatal unsupported-ALPN behavior, actual H2 request/response flow through the generic production root, bounded pg-erd TLS activation and child-process cleanup.
 
 ## What remains RED / not release-qualified
 
 This increment must not be promoted to complete H2 production parity by inference. Issue #51 still requires realistic acceptance for concurrent streams, reset/cancellation, GOAWAY/graceful drain, header/body admission, flow control/backpressure, origin failure/recovery, readiness, forwarding trust, new-handshake versus reused-connection timing and rollback/cutover observability.
 
-Two supplier roots remain especially important for H2 downstream to H1 upstream translation:
-
-- `cloudflare/pingora#901`: Cookie field coalescing semantics;
-- `cloudflare/pingora#936`: zero-length DATA/body-termination semantics.
-
-Open contributor heads are not released dependency authority. The gateway must consume a maintainer-integrated/release-qualified supplier identity or enforce a versioned deployment protocol path that makes the affected downgrade unreachable before claiming parity.
+Two supplier roots remain especially important for H2 downstream to H1 upstream translation: `cloudflare/pingora#901` for Cookie coalescing and `cloudflare/pingora#936` for zero-length DATA/body termination. Open contributor heads are not released dependency authority. The gateway must consume a maintainer-integrated/release-qualified supplier identity or enforce a versioned deployment protocol path that makes the affected downgrade unreachable before claiming parity.
 
 HTTP/3/QUIC remains unsupported. No H3 credit is earned from TLS, ALPN or H2 evidence.
 
