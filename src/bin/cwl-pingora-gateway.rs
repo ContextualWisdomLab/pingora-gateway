@@ -42,6 +42,10 @@ fn main() -> ExitCode {
     server.add_service(proxy_service);
 
     let mut metrics_service = pingora_prometheus::prometheus_http_service();
+    // Pingora's global `threads` value also sizes HttpProxy shutdown sharding, so the proxy must
+    // keep that exact value. The low-volume metrics listener is isolated at one worker instead of
+    // multiplying operator-facing telemetry threads with proxy capacity.
+    metrics_service.threads = Some(1);
     metrics_service.add_tcp(&metrics_listener);
     server.add_service(metrics_service);
 
