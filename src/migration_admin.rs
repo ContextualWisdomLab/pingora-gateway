@@ -28,6 +28,10 @@ pub const PG_ERD_MIGRATION_CONFIG_VERSION: u32 = 1;
 /// Opt-in pg-erd configuration version that requires an explicit response-body lifetime budget.
 pub const PG_ERD_RESPONSE_LIFETIME_CONFIG_VERSION: u32 = 2;
 
+const fn default_service_threads() -> usize {
+    1
+}
+
 /// Fail-closed admin configuration for the characterized `pg-erd-cloud` migration runtime.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -39,6 +43,8 @@ pub struct PgErdMigrationConfig {
     max_in_flight_requests: usize,
     #[serde(default)]
     max_upstream_response_body_ms: Option<u64>,
+    #[serde(default = "default_service_threads")]
+    service_threads: usize,
     upstream_keepalive_pool_size: usize,
     upstreams: Vec<UpstreamConfig>,
 }
@@ -73,6 +79,9 @@ pub enum PgErdMigrationConfigError {
         /// Stable characterized upstream whose operator binding used port zero.
         upstream_name: String,
     },
+    /// A zero service-worker count would construct an invalid runtime topology.
+    #[error("service_threads must be greater than zero")]
+    InvalidServiceThreads,
     /// A zero keepalive pool would silently change upstream connection-capacity behavior.
     #[error("upstream_keepalive_pool_size must be greater than zero")]
     InvalidUpstreamKeepalivePoolSize,
@@ -137,6 +146,11 @@ impl PgErdMigrationConfig {
         self.max_upstream_response_body_ms
     }
 
+    /// Returns the validated worker count assigned independently to each Pingora service runtime.
+    pub fn service_threads(&self) -> usize {
+        self.service_threads
+    }
+
     /// Returns the validated Pingora upstream keepalive-pool budget.
     pub fn upstream_keepalive_pool_size(&self) -> usize {
         self.upstream_keepalive_pool_size
@@ -179,6 +193,9 @@ impl PgErdMigrationConfig {
         }
         if socket_authorities_overlap(self.listener, self.metrics_listener) {
             return Err(PgErdMigrationConfigError::ListenerCollision);
+        }
+        if self.service_threads == 0 {
+            return Err(PgErdMigrationConfigError::InvalidServiceThreads);
         }
         if self.upstream_keepalive_pool_size == 0 {
             return Err(PgErdMigrationConfigError::InvalidUpstreamKeepalivePoolSize);
