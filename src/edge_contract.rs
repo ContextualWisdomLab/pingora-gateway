@@ -14,12 +14,14 @@ use thiserror::Error;
 /// The only configuration version implemented by this release line.
 pub const CURRENT_GATEWAY_CONFIG_VERSION: u32 = 1;
 
-/// Maximum worker threads an operator may assign independently to one service runtime.
+/// Maximum global data-plane worker count admitted by this configuration contract.
 ///
-/// The current process registers two service runtimes. Capping each at 256 keeps accidental
-/// configuration from expanding one gateway process into an unbounded thread fan-out while still
-/// covering the 128-core NUMA class that motivated explicit topology control. Raising this limit
-/// requires fresh capacity and shutdown-contention evidence rather than inheriting host CPU count.
+/// Pingora applies this global value to services that do not provide a service-level override.
+/// The production proxy follows it so `HttpProxy` runtime and shutdown sharding stay aligned,
+/// while the low-volume Prometheus service is explicitly fixed at one worker. Capping the global
+/// data-plane value at 256 prevents unbounded proxy thread fan-out while still covering the
+/// 128-core NUMA class that motivated explicit topology control. Raising this limit requires fresh
+/// capacity and shutdown-contention evidence rather than inheriting host CPU count.
 pub const MAX_SERVICE_THREADS_PER_SERVICE: usize = 256;
 
 const fn default_service_threads() -> usize {
@@ -40,11 +42,12 @@ pub struct GatewayConfig {
     pub max_request_body_bytes: u64,
     /// Maximum number of non-health downstream requests admitted concurrently by this process.
     pub max_in_flight_requests: usize,
-    /// Number of worker threads assigned independently to each service runtime.
+    /// Global worker count used by the data-plane proxy service.
     ///
-    /// Omitted version-1 configurations retain the historical one-worker topology. Operators must
-    /// set this explicitly when profiling or deploying a multi-worker runtime; it is never derived
-    /// from host CPU count.
+    /// Pingora services may override the global value; production composition keeps Prometheus at
+    /// one worker. Omitted version-1 configurations retain the historical one-proxy-worker
+    /// topology. Operators must set this explicitly when profiling or deploying a multi-worker
+    /// proxy; it is never derived from host CPU count.
     #[serde(default = "default_service_threads")]
     pub service_threads: usize,
     /// Maximum number of reusable upstream keepalive connections retained by Pingora.
@@ -138,15 +141,15 @@ pub enum GatewayConfigError {
     /// A zero in-flight budget would reject every proxied request.
     #[error("max_in_flight_requests must be greater than zero")]
     InvalidInFlightRequestLimit,
-    /// A zero service-worker count would construct an invalid runtime topology.
+    /// A zero data-plane worker count would construct an invalid proxy runtime topology.
     #[error("service_threads must be greater than zero")]
     InvalidServiceThreads,
-    /// The declared worker topology exceeds the bounded per-service process contract.
-    #[error("service_threads {actual} exceeds the per-service maximum {max}")]
+    /// The declared global data-plane worker topology exceeds this contract's safety ceiling.
+    #[error("service_threads {actual} exceeds the data-plane maximum {max}")]
     ServiceThreadsExceedLimit {
-        /// Operator-requested worker count for each service runtime.
+        /// Operator-requested global worker count followed by the proxy service.
         actual: usize,
-        /// Maximum worker count admitted by this contract version.
+        /// Maximum global data-plane worker count admitted by this contract version.
         max: usize,
     },
     /// A zero keepalive pool silently disables reusable upstream connections and changes capacity.
