@@ -68,7 +68,7 @@ upstreams:
 
 Version 2 retains all version-1 generic network/runtime invariants and requires `downstream_tls`. Both certificate/key references must be non-empty absolute paths. Admin parsing validates only deterministic references; `tls_delivery` materializes them once immediately before listener construction and fails activation if Pingora/OpenSSL cannot load them or if the private key does not match the certificate. Certificate issuance, renewal, revocation, backup and private-key custody remain outside this repository.
 
-The only admitted ALPN policy is `h2_http1`. It maps to Pingora `TlsSettings::enable_h2()`: HTTP/2 is preferred when offered and HTTP/1.1 remains allowed as fallback. h2c is not enabled. HTTP/3/QUIC is not implied by this field and remains unsupported by this contract.
+The only admitted ALPN policy is `h2_http1`. The delivery adapter uses Pingora/OpenSSL's public ALPN callback surface to prefer `h2`, fall back to `http/1.1` only when the client actually offers it, and fail the TLS handshake for an ALPN-bearing client with no admitted protocol overlap or a malformed ALPN vector. This deliberately strengthens Pingora 0.9.0's `enable_h2()` convenience behavior to satisfy RFC 7301's fatal `no_application_protocol` requirement on no overlap. h2c is not enabled. HTTP/3/QUIC is not implied by this field and remains unsupported by this contract.
 
 A version-2 source capability is not a complete mixed-protocol parity claim. Supplier `cloudflare/pingora#901` and `#936` continue to gate H2-downstream to H1-upstream Cookie/body-framing correctness until maintainer-integrated, release-qualified identities exist or an alternate deployment contract makes those downgrade paths unreachable.
 
@@ -150,7 +150,7 @@ upstreams:
       idle_ms: 10000
 ```
 
-Version 3 retains all version-2 response-lifetime semantics and additionally requires `downstream_tls` with the same read-only materialization and `h2_http1` policy as generic version 2. Earlier versions reject this field. Missing TLS material or missing response lifetime in version 3 fails before listener activation.
+Version 3 retains all version-2 response-lifetime semantics and additionally requires `downstream_tls` with the same read-only materialization and strict `h2_http1` policy as generic version 2. Earlier versions reject this field. Missing TLS material or missing response lifetime in version 3 fails before listener activation.
 
 The characterized routing profile remains fixed: `/healthz` is routed to `backend`, the raw `/api` prefix contract routes to `backend`, and fallback routes to `frontend`; `/livez` and `/readyz` remain process-local. Product authentication/business rules, Keyverse identity, Wardnet/EgressWeave verdicts, arbitrary service discovery and request-controlled routing are not configurable here.
 
