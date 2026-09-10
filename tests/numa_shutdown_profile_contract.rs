@@ -34,7 +34,7 @@ fn profile_workflow_fails_closed_before_measurement_on_nonrepresentative_topolog
         );
     }
     assert!(WORKFLOW.contains("lscpu -p=CPU,NODE,SOCKET"));
-    assert!(WORKFLOW.contains("CWL_NUMA_PROFILE=1"));
+    assert!(WORKFLOW.contains("CWL_NUMA_PROFILE: 1"));
     assert!(WORKFLOW.contains("--ignored --exact representative_numa_shutdown_profile"));
 }
 
@@ -52,6 +52,7 @@ fn profile_fixture_preserves_external_shutdown_and_scheduler_evidence_invariants
         "nonvoluntary_ctxt_switches",
         "configured_proxy_service_threads",
         "parked_connections",
+        "pre_signal_jitter_ms",
         "shutdown_close_p50_ms",
         "shutdown_close_p95_ms",
         "shutdown_close_p99_ms",
