@@ -111,8 +111,12 @@ fn reserve_distinct_loopback_addresses() -> (SocketAddr, SocketAddr) {
     let traffic = TcpListener::bind("127.0.0.1:0").expect("traffic port should be available");
     let metrics = TcpListener::bind("127.0.0.1:0").expect("metrics port should be available");
     let addresses = (
-        traffic.local_addr().expect("traffic reservation has an address"),
-        metrics.local_addr().expect("metrics reservation has an address"),
+        traffic
+            .local_addr()
+            .expect("traffic reservation has an address"),
+        metrics
+            .local_addr()
+            .expect("metrics reservation has an address"),
     );
     assert_ne!(addresses.0, addresses.1);
     addresses
@@ -137,7 +141,10 @@ fn write_gateway_config(
 
 fn spawn_gateway(config: &NamedTempFile) -> Child {
     Command::new(env!("CARGO_BIN_EXE_cwl-pingora-gateway"))
-        .args(["--config", config.path().to_str().expect("UTF-8 config path")])
+        .args([
+            "--config",
+            config.path().to_str().expect("UTF-8 config path"),
+        ])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::inherit())
@@ -150,7 +157,8 @@ fn connect_http1(
     certificates: &LocalCertificates,
     process: &mut Child,
 ) -> pingora::tls::ssl::SslStream<TcpStream> {
-    let mut builder = SslConnector::builder(SslMethod::tls_client()).expect("TLS client should build");
+    let mut builder =
+        SslConnector::builder(SslMethod::tls_client()).expect("TLS client should build");
     builder
         .set_ca_file(&certificates.ca_cert)
         .expect("local CA should load");
@@ -193,12 +201,16 @@ fn h2_http1_policy_negotiates_verified_http1_fallback_and_proxies_real_traffic()
     let upstream_listener = TcpListener::bind("127.0.0.1:0").expect("upstream should bind");
     let upstream = upstream_listener.local_addr().expect("upstream address");
     let upstream_fixture = thread::spawn(move || {
-        let (mut stream, _) = upstream_listener.accept().expect("gateway should connect upstream");
+        let (mut stream, _) = upstream_listener
+            .accept()
+            .expect("gateway should connect upstream");
         stream
             .set_read_timeout(Some(Duration::from_secs(5)))
             .expect("upstream read timeout should be set");
         let mut request = [0_u8; 4096];
-        let read = stream.read(&mut request).expect("upstream request should be readable");
+        let read = stream
+            .read(&mut request)
+            .expect("upstream request should be readable");
         let request = String::from_utf8_lossy(&request[..read]);
         assert!(
             request.starts_with("GET /fallback HTTP/1.1\r\n"),
@@ -223,14 +235,18 @@ fn h2_http1_policy_negotiates_verified_http1_fallback_and_proxies_real_traffic()
         "h2_http1 must retain explicit HTTP/1.1 ALPN fallback"
     );
 
-    tls.write_all(b"GET /fallback HTTP/1.1\r\nHost: gateway.test\r\nConnection: close\r\n\r\n")
-        .expect("HTTP/1.1 fallback request should write");
-    tls.flush().expect("HTTP/1.1 fallback request should flush");
+    tls.write_all(
+        b"GET /fallback HTTP/1.1\r\nHost: gateway.test\r\nConnection: close\r\n\r\n",
+    )
+    .expect("HTTP/1.1 fallback request should write");
+    tls.flush()
+        .expect("HTTP/1.1 fallback request should flush");
 
     let mut response = Vec::new();
     tls.read_to_end(&mut response)
         .expect("HTTP/1.1 fallback response should be readable");
-    let response = String::from_utf8(response).expect("HTTP/1.1 response must be UTF-8 in fixture");
+    let response =
+        String::from_utf8(response).expect("HTTP/1.1 response must be UTF-8 in fixture");
     assert!(response.starts_with("HTTP/1.1 200 OK\r\n"));
     assert!(response.ends_with("tls-h1-ok!!!"));
 
