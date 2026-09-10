@@ -18,6 +18,8 @@ use std::time::{Duration, Instant};
 use pingora::tls::ssl::{SslConnector, SslMethod, SslVerifyMode};
 use tempfile::{tempdir, NamedTempFile};
 
+const MAX_ORIGIN_REQUEST_HEADER_BYTES: usize = 64 * 1024;
+
 struct GatewayProcess(Child);
 
 impl Drop for GatewayProcess {
@@ -249,11 +251,22 @@ fn read_request(stream: &mut TcpStream) -> String {
     stream
         .set_read_timeout(Some(Duration::from_secs(5)))
         .expect("upstream read timeout should be set");
-    let mut request = [0_u8; 4096];
-    let read = stream
-        .read(&mut request)
-        .expect("upstream request should be readable");
-    String::from_utf8_lossy(&request[..read]).into_owned()
+    let mut request = Vec::new();
+    let mut buffer = [0_u8; 1024];
+    loop {
+        let read = stream
+            .read(&mut buffer)
+            .expect("upstream request should be readable");
+        assert!(read > 0, "upstream closed before request headers completed");
+        request.extend_from_slice(&buffer[..read]);
+        assert!(
+            request.len() <= MAX_ORIGIN_REQUEST_HEADER_BYTES,
+            "upstream request headers exceeded the fixture bound"
+        );
+        if request.windows(4).any(|window| window == b"\r\n\r\n") {
+            return String::from_utf8_lossy(&request).into_owned();
+        }
+    }
 }
 
 fn write_origin_response(stream: &mut TcpStream, body: &str) {
