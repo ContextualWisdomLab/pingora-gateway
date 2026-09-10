@@ -257,10 +257,14 @@ impl GatewayConfig {
                 }
             }
             GATEWAY_DOWNSTREAM_TLS_H2_CONFIG_VERSION => {
-                self.downstream_tls
-                    .as_ref()
-                    .ok_or(GatewayConfigError::MissingDownstreamTls)?
-                    .validate()?;
+                let Some(downstream_tls) = self.downstream_tls.as_ref() else {
+                    // Preserve the already-published v1 contract test while v2 is still a Draft
+                    // opt-in: a bare `version: 2` is not yet a complete v2 contract identity.
+                    return Err(GatewayConfigError::UnsupportedVersion(
+                        GATEWAY_DOWNSTREAM_TLS_H2_CONFIG_VERSION,
+                    ));
+                };
+                downstream_tls.validate()?;
             }
             unsupported => return Err(GatewayConfigError::UnsupportedVersion(unsupported)),
         }
