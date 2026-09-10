@@ -42,10 +42,7 @@ const _: () = assert!(
 /// validated Admin Config value. This wrapper preserves existing library callers at the historical
 /// one-worker topology rather than deriving worker count from host CPU availability.
 pub fn build_server_conf(upstream_keepalive_pool_size: usize) -> ServerConf {
-    build_server_conf_with_service_threads(
-        upstream_keepalive_pool_size,
-        V1_DEFAULT_SERVICE_THREADS,
-    )
+    build_server_conf_with_service_threads(upstream_keepalive_pool_size, V1_DEFAULT_SERVICE_THREADS)
 }
 
 /// Builds the Pingora server configuration with an explicit validated service-worker topology.
