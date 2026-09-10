@@ -11,6 +11,7 @@ use cwl_pingora_gateway::runtime_composition::{
     server_conf_for_pg_erd,
 };
 use cwl_pingora_gateway::runtime_policy::V1_DEFAULT_SERVICE_THREADS;
+use pingora::upstreams::peer::Peer;
 
 fn generic_yaml(service_threads: Option<usize>) -> String {
     let topology = service_threads
