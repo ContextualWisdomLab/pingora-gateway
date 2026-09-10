@@ -149,10 +149,9 @@ mod tests {
     }
 
     fn delivery_error(config: &DownstreamTlsConfig) -> DownstreamTlsDeliveryError {
-        match build_downstream_tls_settings(config) {
-            Ok(_) => panic!("invalid TLS material must not become listener authority"),
-            Err(error) => error,
-        }
+        build_downstream_tls_settings(config)
+            .err()
+            .expect("invalid TLS material must not become listener authority")
     }
 
     #[test]
