@@ -52,6 +52,9 @@ fn profile_workflow_fails_closed_before_measurement_on_nonrepresentative_topolog
 #[test]
 fn representative_profile_runs_the_release_built_gateway_candidate() {
     for required in [
+        "rustup toolchain install 1.98.1",
+        "rustup default 1.98.1",
+        "release: 1.98.1",
         "cargo build --release --locked --bin cwl-pingora-gateway",
         "CWL_PROFILE_GATEWAY_BINARY",
         "target/release/cwl-pingora-gateway",
@@ -59,12 +62,14 @@ fn representative_profile_runs_the_release_built_gateway_candidate() {
     ] {
         assert!(
             WORKFLOW.contains(required),
-            "representative workflow must bind a release-built gateway candidate: {required}"
+            "representative workflow must bind the reviewed release compiler and release-built gateway candidate: {required}"
         );
     }
+    assert!(!WORKFLOW.contains("rustup toolchain install 1.98.0"));
     assert!(PROFILE.contains("CWL_PROFILE_GATEWAY_BINARY"));
     assert!(PROFILE.contains("gateway_binary_sha256"));
     assert!(!PROFILE.contains("CARGO_BIN_EXE_cwl-pingora-gateway"));
+    assert!(ADR.contains("Rust 1.98.1"));
 }
 
 #[test]
