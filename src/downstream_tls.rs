@@ -172,12 +172,10 @@ mod tests {
     #[test]
     fn delivery_propagates_config_validation_before_materialization() {
         let config = direct_config(PathBuf::from("relative.crt"), PathBuf::from("/tmp/key.pem"));
-        assert!(matches!(
-            delivery_error(&config),
-            DownstreamTlsDeliveryError::InvalidConfig(
-                DownstreamTlsConfigError::RelativeCertificateChainFile
-            )
-        ));
+        assert_eq!(
+            delivery_error(&config).to_string(),
+            DownstreamTlsConfigError::RelativeCertificateChainFile.to_string()
+        );
     }
 
     #[test]
@@ -207,10 +205,10 @@ mod tests {
         let (_directory, certificate, private_key) = issue_certificate();
         let missing_certificate = certificate.with_file_name("missing.crt");
         let missing_config = direct_config(missing_certificate, private_key.clone());
-        assert!(matches!(
-            delivery_error(&missing_config),
-            DownstreamTlsDeliveryError::Materialization(_)
-        ));
+        assert_eq!(
+            std::mem::discriminant(&delivery_error(&missing_config)),
+            std::mem::discriminant(&DownstreamTlsDeliveryError::Materialization(String::new()))
+        );
 
         let mismatch_directory = tempdir().expect("mismatch-key workspace should be available");
         let mismatched_key = mismatch_directory.path().join("mismatched.key");
@@ -224,9 +222,9 @@ mod tests {
             "rsa_keygen_bits:2048",
         ]);
         let mismatch_config = direct_config(certificate, mismatched_key);
-        assert!(matches!(
-            delivery_error(&mismatch_config),
-            DownstreamTlsDeliveryError::Materialization(_)
-        ));
+        assert_eq!(
+            std::mem::discriminant(&delivery_error(&mismatch_config)),
+            std::mem::discriminant(&DownstreamTlsDeliveryError::Materialization(String::new()))
+        );
     }
 }
