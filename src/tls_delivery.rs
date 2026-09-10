@@ -4,6 +4,8 @@
 //! construction. It does not issue, rotate, persist or otherwise become authoritative for TLS
 //! identity material.
 
+use std::fmt::Display;
+
 use pingora::listeners::tls::TlsSettings;
 use pingora::tls::ssl::{AlpnError, SslVersion};
 use thiserror::Error;
@@ -49,6 +51,10 @@ pub enum DownstreamTlsDeliveryError {
     SecurityProfile(String),
 }
 
+fn security_profile_error(error: impl Display) -> DownstreamTlsDeliveryError {
+    DownstreamTlsDeliveryError::SecurityProfile(error.to_string())
+}
+
 /// Selects the highest-preference protocol admitted by the `h2_http1` edge contract.
 ///
 /// Pingora 0.9.0's convenience `enable_h2()` callback returns `NOACK` when a client sends ALPN
@@ -88,16 +94,16 @@ fn apply_downstream_tls_security_profile(
 ) -> Result<(), DownstreamTlsDeliveryError> {
     settings
         .set_min_proto_version(Some(SslVersion::TLS1_2))
-        .map_err(|error| DownstreamTlsDeliveryError::SecurityProfile(error.to_string()))?;
+        .map_err(security_profile_error)?;
     settings
         .set_max_proto_version(Some(SslVersion::TLS1_3))
-        .map_err(|error| DownstreamTlsDeliveryError::SecurityProfile(error.to_string()))?;
+        .map_err(security_profile_error)?;
     settings
         .set_cipher_list(DOWNSTREAM_TLS12_CIPHER_LIST)
-        .map_err(|error| DownstreamTlsDeliveryError::SecurityProfile(error.to_string()))?;
+        .map_err(security_profile_error)?;
     settings
         .set_ciphersuites(DOWNSTREAM_TLS13_CIPHERSUITES)
-        .map_err(|error| DownstreamTlsDeliveryError::SecurityProfile(error.to_string()))?;
+        .map_err(security_profile_error)?;
     Ok(())
 }
 
@@ -142,7 +148,15 @@ pub fn build_downstream_tls_settings(
 
 #[cfg(test)]
 mod tests {
-    use super::{select_h2_http1, H2_ALPN, HTTP1_ALPN};
+    use super::{security_profile_error, select_h2_http1, H2_ALPN, HTTP1_ALPN};
+
+    #[test]
+    fn security_profile_errors_preserve_backend_diagnostics() {
+        assert_eq!(
+            security_profile_error("profile rejected").to_string(),
+            "unable to apply downstream TLS security profile: profile rejected"
+        );
+    }
 
     #[test]
     fn strict_alpn_prefers_h2_even_when_http1_is_offered_first() {
