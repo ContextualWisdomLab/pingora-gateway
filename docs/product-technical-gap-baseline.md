@@ -60,7 +60,7 @@ Released Pingora 0.9.0 still applies relative per-read timeout semantics and exp
 
 Draft #72 is the executable real-socket parser-admission RED. A single-large-field request exceeding the byte budget and a many-small-fields request exceeding the field-count budget both reach the production `ProxyHttp` lifecycle instead of failing before application/origin admission. Same-head load, OCI, Supply Chain, and bounded-origin capacity are independently GREEN.
 
-Released Pingora 0.9.0 predates this capability and therefore does not close #72. Current contributor #1000 has, however, materially advanced on the 0.9.0 main line. Current exact candidate `6a90c79b61fbbc70b518709de6802165668cba2c` repairs all seven CWL findings accumulated across the earlier candidate lineage at **mutable-candidate scope**:
+Released Pingora 0.9.0 predates this capability and therefore does not close #72. Current contributor #1000 has materially advanced on the 0.9.0 main line. Exact candidate `6a90c79b61fbbc70b518709de6802165668cba2c` repairs all seven CWL findings accumulated across the earlier candidate lineage at **mutable-candidate scope**:
 
 1. configured byte limits reject zero and values above the legacy `MAX_HEADER_SIZE` ceiling;
 2. configured header-count limits reject zero and values above `MAX_HEADERS` through supported configuration/mutation paths;
@@ -70,9 +70,9 @@ Released Pingora 0.9.0 predates this capability and therefore does not close #72
 6. the underlying read is bounded by the remaining configured header-byte budget with `take(remaining as u64)` rather than merely rejecting after an over-read;
 7. an exact-budget `Partial` header is rejected before another socket read while exact-budget `Complete(s)` remains accepted.
 
-The current candidate includes regressions for exact-limit complete success, exact-limit incomplete immediate rejection/no-extra-read, remaining-budget multi-read rejection, exact-limit multi-read success, direct setter bounds, and pipelined suffix preservation. Current Semgrep is GREEN; the exact-head upstream build is still executing at this baseline update. Exact-current technical COMMENT review reports no new actionable semantic/resource-bound defect in the four-file candidate range, but it is not an approval or release authority.
+The candidate includes regressions for exact-limit complete success, exact-limit incomplete immediate rejection/no-extra-read, remaining-budget multi-read rejection, exact-limit multi-read success, direct setter bounds, and pipelined suffix preservation. Exact Semgrep and upstream build are now GREEN; the full Rust 1.97.1 and nightly lanes pass fmt/check/test/doc-test/clippy/audit/machete and the reduced Rust 1.85.0 lane passes its configured checks. Exact-current technical COMMENT review reports no new actionable semantic/resource-bound defect in the four-file candidate range, but neither candidate execution nor COMMENT review is maintainer approval, protected integration, or release authority.
 
-The next edge is `#1000 exact-head build terminal → maintainer review/integration → later release-qualified supplier identity containing the capability → optional explicit positive versioned CWL Admin Config → unchanged #72 parser/application/origin GREEN`. CWL must not pin the mutable contributor head or substitute a callback-only 431 response for parser admission.
+The next edge is `maintainer review/integration of the exact-head GREEN candidate → later release-qualified supplier identity containing the capability → optional explicit positive versioned CWL Admin Config → unchanged #72 parser/application/origin GREEN`. CWL must not pin the mutable contributor head or substitute a callback-only 431 response for parser admission.
 
 ## Mixed protocol: H2 downstream to H1 upstream — #53 / upstream #901 and #936
 
