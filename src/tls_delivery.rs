@@ -36,7 +36,7 @@ pub enum DownstreamTlsDeliveryError {
 /// but offers no supported protocol. RFC 7301 requires that case to terminate with the fatal
 /// `no_application_protocol` alert. This adapter therefore uses Pingora's public TLS builder API
 /// to preserve H2 preference/H1 fallback while making no-overlap and malformed ALPN fail closed.
-fn select_h2_http1<'a>(client_protocols: &'a [u8]) -> Result<&'a [u8], AlpnError> {
+fn select_h2_http1(client_protocols: &[u8]) -> Result<&[u8], AlpnError> {
     let mut remaining = client_protocols;
     let mut h2 = None;
     let mut http1 = None;
