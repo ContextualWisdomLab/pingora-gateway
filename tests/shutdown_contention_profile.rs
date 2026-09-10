@@ -82,9 +82,11 @@ impl SchedulerSnapshot {
             delta.cpu_runtime_ns = delta
                 .cpu_runtime_ns
                 .checked_add(after.cpu_runtime_ns.checked_sub(before.cpu_runtime_ns)?)?;
-            delta.runqueue_wait_ns = delta
-                .runqueue_wait_ns
-                .checked_add(after.runqueue_wait_ns.checked_sub(before.runqueue_wait_ns)?)?;
+            delta.runqueue_wait_ns = delta.runqueue_wait_ns.checked_add(
+                after
+                    .runqueue_wait_ns
+                    .checked_sub(before.runqueue_wait_ns)?,
+            )?;
             delta.timeslices = delta
                 .timeslices
                 .checked_add(after.timeslices.checked_sub(before.timeslices)?)?;
@@ -143,9 +145,15 @@ fn command_stdout(program: &str, args: &[&str]) -> String {
 
 fn parse_cpu_list(raw: &str) -> BTreeSet<usize> {
     let mut cpus = BTreeSet::new();
-    for part in raw.split(',').map(str::trim).filter(|part| !part.is_empty()) {
+    for part in raw
+        .split(',')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+    {
         if let Some((start, end)) = part.split_once('-') {
-            let start = start.parse::<usize>().expect("CPU range start must be numeric");
+            let start = start
+                .parse::<usize>()
+                .expect("CPU range start must be numeric");
             let end = end.parse::<usize>().expect("CPU range end must be numeric");
             assert!(start <= end, "CPU affinity range must be ascending");
             cpus.extend(start..=end);
