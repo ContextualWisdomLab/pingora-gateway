@@ -45,8 +45,32 @@ jobs:
           command -v pkg-config
           pkg-config --exists openssl
 
-          online_cpus="$(nproc)"
-          numa_nodes="$(lscpu -p=CPU,NODE,SOCKET | awk -F, '!/^#/ && $2 != "-" {nodes[$2]=1} END {print length(nodes)}')"
+          allowed_cpu_list="$(awk '/^Cpus_allowed_list:/ {print $2}' /proc/self/status)"
+          test -n "$allowed_cpu_list"
+          filtered_topology="$RUNNER_TEMP/numa-filtered-topology.csv"
+          {
+            printf '%s\n' 'cpu,node,socket'
+            lscpu -p=CPU,NODE,SOCKET | awk -F, -v allowed="$allowed_cpu_list" '
+              function cpu_allowed(cpu, ranges, count, index, bounds) {
+                count = split(allowed, ranges, ",")
+                for (index = 1; index <= count; index++) {
+                  if (index(ranges[index], "-") > 0) {
+                    split(ranges[index], bounds, "-")
+                    if (cpu >= bounds[1] + 0 && cpu <= bounds[2] + 0) return 1
+                  } else if (cpu == ranges[index] + 0) {
+                    return 1
+                  }
+                }
+                return 0
+              }
+              !/^#/ && cpu_allowed($1 + 0) {print}
+            '
+          } >"$filtered_topology"
+
+          online_cpus="$(tail -n +2 "$filtered_topology" | awk 'NF {count++} END {print count+0}')"
+          numa_nodes="$(tail -n +2 "$filtered_topology" | awk -F, '$2 != "-" {nodes[$2]=1} END {print length(nodes)}')"
+          sockets="$(tail -n +2 "$filtered_topology" | awk -F, '$3 != "-" {sockets[$3]=1} END {print length(sockets)}')"
+          test "$online_cpus" -eq "$(nproc)"
           test "$online_cpus" -ge "$MIN_ONLINE_CPUS"
           test "$numa_nodes" -ge "$MIN_NUMA_NODES"
           test "$SERVICE_THREADS" -le "$online_cpus"
@@ -58,10 +82,10 @@ jobs:
 
           {
             printf 'expected_sha=%s\n' "$EXPECTED_SHA"
-            printf 'online_cpus=%s\nnuma_nodes=%s\n' "$online_cpus" "$numa_nodes"
+            printf 'process_allowed_cpu_list=%s\n' "$allowed_cpu_list"
+            printf 'online_cpus=%s\nnuma_nodes=%s\nsockets=%s\n' "$online_cpus" "$numa_nodes" "$sockets"
             printf 'soft_nofile=%s\nhard_nofile=%s\n' "$(ulimit -Sn)" "$hard_nofile"
-            printf '%s\n' 'cpu,node,socket'
-            lscpu -p=CPU,NODE,SOCKET | grep -v '^#'
+            cat "$filtered_topology"
           } >"$RUNNER_TEMP/numa-host-preflight.txt"
       - name: Select reviewed Rust toolchain
         shell: bash
