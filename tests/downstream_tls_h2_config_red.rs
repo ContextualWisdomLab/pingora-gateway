@@ -95,11 +95,8 @@ fn pg_erd_migration_admits_tls_only_after_the_response_lifetime_contract() {
         Err(PgErdMigrationConfigError::DownstreamTlsRequiresVersion3)
     );
 
-    let missing_lifetime = PG_ERD_TLS_H2_CONFIG.replacen(
-        "max_upstream_response_body_ms: 15000\n",
-        "",
-        1,
-    );
+    let missing_lifetime =
+        PG_ERD_TLS_H2_CONFIG.replacen("max_upstream_response_body_ms: 15000\n", "", 1);
     assert_eq!(
         PgErdMigrationConfig::from_yaml(&missing_lifetime),
         Err(PgErdMigrationConfigError::MissingUpstreamResponseBodyLifetime)
@@ -130,11 +127,7 @@ fn downstream_tls_rejects_relative_or_empty_secret_material_references() {
         ))
     );
 
-    let empty_key = SHARED_TLS_H2_CONFIG.replacen(
-        "/run/secrets/cwl-edge/tls.key",
-        "\"   \"",
-        1,
-    );
+    let empty_key = SHARED_TLS_H2_CONFIG.replacen("/run/secrets/cwl-edge/tls.key", "\"   \"", 1);
     assert_eq!(
         GatewayConfig::from_yaml(&empty_key),
         Err(GatewayConfigError::DownstreamTls(
