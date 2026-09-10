@@ -83,7 +83,7 @@ fn rejects_malformed_yaml_before_network_authority() {
 fn rejects_unknown_contract_version() {
     let yaml = with_runtime_limits(
         r#"
-version: 2
+version: 3
 listener: 127.0.0.1:6188
 upstreams:
   - name: api
@@ -100,7 +100,7 @@ upstreams:
 
     assert_eq!(
         GatewayConfig::from_yaml(&yaml),
-        Err(GatewayConfigError::UnsupportedVersion(2))
+        Err(GatewayConfigError::UnsupportedVersion(3))
     );
 }
 

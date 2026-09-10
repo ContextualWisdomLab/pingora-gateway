@@ -79,7 +79,7 @@ fn shared_gateway_admits_only_the_opt_in_versioned_downstream_tls_h2_contract() 
     );
     assert_eq!(
         GatewayConfig::from_yaml(&incomplete_v2),
-        Err(GatewayConfigError::UnsupportedVersion(2))
+        Err(GatewayConfigError::MissingDownstreamTls)
     );
 }
 
@@ -109,7 +109,7 @@ fn pg_erd_migration_admits_tls_only_after_the_response_lifetime_contract() {
     );
     assert_eq!(
         PgErdMigrationConfig::from_yaml(&incomplete_v3),
-        Err(PgErdMigrationConfigError::UnsupportedVersion(3))
+        Err(PgErdMigrationConfigError::MissingDownstreamTls)
     );
 }
 

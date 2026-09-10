@@ -306,10 +306,10 @@ fn pg_erd_admin_config_rejects_unknown_incomplete_and_future_versions() {
 
     let future = valid_yaml().replace(
         &format!("version: {PG_ERD_MIGRATION_CONFIG_VERSION}"),
-        "version: 3",
+        "version: 4",
     );
     assert_eq!(
         PgErdMigrationConfig::from_yaml(&future),
-        Err(PgErdMigrationConfigError::UnsupportedVersion(3))
+        Err(PgErdMigrationConfigError::UnsupportedVersion(4))
     );
 }
