@@ -167,10 +167,9 @@ fn pg_erd_admin_config_rejects_zero_service_threads() {
 
 #[test]
 fn pg_erd_admin_config_admits_exact_service_thread_ceiling() {
-    let config = PgErdMigrationConfig::from_yaml(&pg_erd_yaml(Some(
-        MAX_SERVICE_THREADS_PER_SERVICE,
-    )))
-    .expect("exact pg-erd worker ceiling should remain admissible");
+    let config =
+        PgErdMigrationConfig::from_yaml(&pg_erd_yaml(Some(MAX_SERVICE_THREADS_PER_SERVICE)))
+            .expect("exact pg-erd worker ceiling should remain admissible");
 
     assert_eq!(
         server_conf_for_pg_erd(&config)
