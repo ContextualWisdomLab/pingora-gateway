@@ -6,9 +6,10 @@ on:
       - test/parked-read-shutdown-red-v1
     paths:
       - Cargo.toml
+      - .github/workflows/resolve-pingora-0_9_0-lock.yml
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: resolve-pingora-0-9-0-lock-${{ github.ref }}
@@ -23,7 +24,6 @@ jobs:
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
         with:
           ref: ${{ github.sha }}
-          persist-credentials: false
       - name: Verify checkout identity
         run: test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
       - name: Install Rust 1.98.0
@@ -37,6 +37,16 @@ jobs:
           cargo update -p pingora-prometheus --precise 0.9.0
           cargo metadata --locked --format-version 1 >/tmp/metadata.json
           git diff --check -- Cargo.lock
+      - name: Commit generated lock to this exact branch
+        run: |
+          set -euo pipefail
+          test -n "$(git status --porcelain -- Cargo.lock)"
+          git diff --exit-code -- Cargo.toml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add Cargo.lock
+          git commit -m 'build: resolve Pingora 0.9.0 lock'
+          git push origin "HEAD:${GITHUB_REF_NAME}"
       - name: Upload Cargo-generated lock
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
