@@ -38,6 +38,7 @@ pub enum DownstreamTlsDeliveryError {
 /// to preserve H2 preference/H1 fallback while making no-overlap and malformed ALPN fail closed.
 fn select_h2_http1<'a>(client_protocols: &'a [u8]) -> Result<&'a [u8], AlpnError> {
     let mut remaining = client_protocols;
+    let mut h2 = None;
     let mut http1 = None;
 
     while let Some((&length, rest)) = remaining.split_first() {
@@ -47,15 +48,14 @@ fn select_h2_http1<'a>(client_protocols: &'a [u8]) -> Result<&'a [u8], AlpnError
         }
         let (protocol, tail) = rest.split_at(length);
         if protocol == H2_ALPN {
-            return Ok(protocol);
-        }
-        if protocol == HTTP1_ALPN {
+            h2 = Some(protocol);
+        } else if protocol == HTTP1_ALPN {
             http1 = Some(protocol);
         }
         remaining = tail;
     }
 
-    http1.ok_or(AlpnError::ALERT_FATAL)
+    h2.or(http1).ok_or(AlpnError::ALERT_FATAL)
 }
 
 /// Builds one Pingora TLS listener configuration from validated operator references.
@@ -125,5 +125,7 @@ mod tests {
     fn strict_alpn_rejects_malformed_wire_lists_without_panicking() {
         assert!(select_h2_http1(b"\x00").is_err());
         assert!(select_h2_http1(b"\x08http").is_err());
+        assert!(select_h2_http1(b"\x02h2\x08http").is_err());
+        assert!(select_h2_http1(b"\x08http/1.1\x00").is_err());
     }
 }
