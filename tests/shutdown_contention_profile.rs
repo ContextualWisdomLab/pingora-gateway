@@ -54,7 +54,9 @@ impl SchedulerSample {
         Self {
             task_count: self.task_count,
             cpu_runtime_ns: self.cpu_runtime_ns.saturating_sub(earlier.cpu_runtime_ns),
-            runqueue_wait_ns: self.runqueue_wait_ns.saturating_sub(earlier.runqueue_wait_ns),
+            runqueue_wait_ns: self
+                .runqueue_wait_ns
+                .saturating_sub(earlier.runqueue_wait_ns),
             timeslices: self.timeslices.saturating_sub(earlier.timeslices),
             voluntary_ctxt_switches: self
                 .voluntary_ctxt_switches
@@ -71,6 +73,7 @@ struct RoundEvidence {
     close_latencies_ms: Vec<u128>,
     survivors_at_close_bound: usize,
     process_exit_ms: u128,
+    pre_signal_jitter_ms: usize,
     scheduler_delta: Option<SchedulerSample>,
 }
 
@@ -103,9 +106,16 @@ fn detect_topology() -> Topology {
     let csv = command_stdout("lscpu", &["-p=CPU,NODE,SOCKET"]);
     let mut nodes = BTreeSet::new();
     let mut sockets = BTreeSet::new();
-    for line in csv.lines().filter(|line| !line.starts_with('#') && !line.is_empty()) {
+    for line in csv
+        .lines()
+        .filter(|line| !line.starts_with('#') && !line.is_empty())
+    {
         let fields: Vec<_> = line.split(',').collect();
-        assert_eq!(fields.len(), 3, "lscpu topology row must have CPU,NODE,SOCKET");
+        assert_eq!(
+            fields.len(),
+            3,
+            "lscpu topology row must have CPU,NODE,SOCKET"
+        );
         assert!(fields[0].parse::<usize>().is_ok(), "CPU id must be numeric");
         if fields[1] != "-" {
             nodes.insert(fields[1].to_owned());
@@ -133,7 +143,11 @@ fn reserve_distinct_loopback_addresses() -> (SocketAddr, SocketAddr) {
     addresses
 }
 
-fn write_config(listener: SocketAddr, metrics_listener: SocketAddr, service_threads: usize) -> NamedTempFile {
+fn write_config(
+    listener: SocketAddr,
+    metrics_listener: SocketAddr,
+    service_threads: usize,
+) -> NamedTempFile {
     let mut file = NamedTempFile::new().expect("temporary profile config should be writable");
     writeln!(
         file,
@@ -155,7 +169,10 @@ fn wait_until_listening(address: SocketAddr, process: &mut Child) {
         if TcpStream::connect_timeout(&address, Duration::from_millis(100)).is_ok() {
             return;
         }
-        assert!(Instant::now() < deadline, "gateway did not start within 15 seconds");
+        assert!(
+            Instant::now() < deadline,
+            "gateway did not start within 15 seconds"
+        );
         thread::sleep(Duration::from_millis(25));
     }
 }
@@ -172,7 +189,10 @@ fn read_zero_length_health_response(stream: &mut TcpStream) {
             .expect("health response should arrive before timeout");
         assert!(read > 0, "gateway closed before health response completed");
         response.extend_from_slice(&buffer[..read]);
-        assert!(response.len() <= MAX_HEADER_BYTES, "health header exceeded 16 KiB");
+        assert!(
+            response.len() <= MAX_HEADER_BYTES,
+            "health header exceeded 16 KiB"
+        );
         if response.windows(4).any(|window| window == b"\r\n\r\n") {
             break;
         }
@@ -198,7 +218,9 @@ fn park_health_connections(address: SocketAddr, count: usize) -> Vec<TcpStream> 
             .set_nodelay(true)
             .expect("profile socket TCP_NODELAY should be configurable");
         stream
-            .write_all(b"GET /livez HTTP/1.1\r\nHost: gateway.test\r\nConnection: keep-alive\r\n\r\n")
+            .write_all(
+                b"GET /livez HTTP/1.1\r\nHost: gateway.test\r\nConnection: keep-alive\r\n\r\n",
+            )
             .unwrap_or_else(|error| panic!("parked connection {index} write failed: {error}"));
         read_zero_length_health_response(&mut stream);
         stream
@@ -225,7 +247,11 @@ fn parse_status_counter(status: &str, key: &str) -> u64 {
         .lines()
         .find_map(|line| {
             let (name, raw) = line.split_once(':')?;
-            (name == key).then(|| raw.trim().parse::<u64>().expect("status counter must be numeric"))
+            (name == key).then(|| {
+                raw.trim()
+                    .parse::<u64>()
+                    .expect("status counter must be numeric")
+            })
         })
         .unwrap_or(0)
 }
@@ -249,7 +275,9 @@ fn read_scheduler_sample(pid: u32) -> Option<SchedulerSample> {
         sample.runqueue_wait_ns = sample
             .runqueue_wait_ns
             .saturating_add(values[1].parse::<u64>().ok()?);
-        sample.timeslices = sample.timeslices.saturating_add(values[2].parse::<u64>().ok()?);
+        sample.timeslices = sample
+            .timeslices
+            .saturating_add(values[2].parse::<u64>().ok()?);
 
         let status = fs::read_to_string(format!("/proc/{pid}/task/{tid}/status")).ok()?;
         sample.voluntary_ctxt_switches = sample
@@ -264,7 +292,7 @@ fn read_scheduler_sample(pid: u32) -> Option<SchedulerSample> {
 
 fn percentile(sorted: &[u128], percentile: usize) -> u128 {
     assert!(!sorted.is_empty());
-    let rank = ((sorted.len() * percentile) + 99) / 100;
+    let rank = (sorted.len() * percentile).div_ceil(100);
     sorted[rank.saturating_sub(1).min(sorted.len() - 1)]
 }
 
@@ -275,19 +303,33 @@ fn wait_for_process_exit(process: &mut Child, started: Instant) -> u128 {
             .try_wait()
             .expect("gateway process state should be readable")
         {
-            assert!(status.success(), "SIGTERM shutdown must exit successfully: {status}");
+            assert!(
+                status.success(),
+                "SIGTERM shutdown must exit successfully: {status}"
+            );
             return started.elapsed().as_millis();
         }
-        assert!(Instant::now() < deadline, "gateway exceeded the 30-second process exit bound");
+        assert!(
+            Instant::now() < deadline,
+            "gateway exceeded the 30-second process exit bound"
+        );
         thread::sleep(Duration::from_millis(2));
     }
 }
 
-fn run_round(service_threads: usize, parked_connections: usize, close_bound_ms: usize) -> RoundEvidence {
+fn run_round(
+    service_threads: usize,
+    parked_connections: usize,
+    close_bound_ms: usize,
+    pre_signal_jitter_ms: usize,
+) -> RoundEvidence {
     let (gateway_address, metrics_address) = reserve_distinct_loopback_addresses();
     let config = write_config(gateway_address, metrics_address, service_threads);
     let child = Command::new(env!("CARGO_BIN_EXE_cwl-pingora-gateway"))
-        .args(["--config", config.path().to_str().expect("UTF-8 config path")])
+        .args([
+            "--config",
+            config.path().to_str().expect("UTF-8 config path"),
+        ])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -297,6 +339,7 @@ fn run_round(service_threads: usize, parked_connections: usize, close_bound_ms: 
     wait_until_listening(gateway_address, &mut process.0);
 
     let mut streams = park_health_connections(gateway_address, parked_connections);
+    thread::sleep(Duration::from_millis(pre_signal_jitter_ms as u64));
     let scheduler_before = read_scheduler_sample(process.0.id());
     let signal_sent_at = Instant::now();
     let signal_status = Command::new("kill")
@@ -307,6 +350,7 @@ fn run_round(service_threads: usize, parked_connections: usize, close_bound_ms: 
 
     let close_bound = Duration::from_millis(close_bound_ms as u64);
     let mut close_latencies_ms = vec![None; streams.len()];
+    let mut scheduler_after = None;
     let mut probe = [0_u8; 1];
     while signal_sent_at.elapsed() < close_bound {
         let mut open = 0_usize;
@@ -321,37 +365,59 @@ fn run_round(service_threads: usize, parked_connections: usize, close_bound_ms: 
                 Err(error) => panic!("parked connection {index} did not close cleanly: {error}"),
             }
         }
+        if let Some(sample) = read_scheduler_sample(process.0.id()) {
+            scheduler_after = Some(sample);
+        }
         if open == 0 {
             break;
         }
         thread::sleep(Duration::from_millis(1));
     }
 
-    let survivors_at_close_bound = close_latencies_ms.iter().filter(|value| value.is_none()).count();
-    let scheduler_after = read_scheduler_sample(process.0.id());
+    let survivors_at_close_bound = close_latencies_ms
+        .iter()
+        .filter(|value| value.is_none())
+        .count();
+    if let Some(sample) = read_scheduler_sample(process.0.id()) {
+        scheduler_after = Some(sample);
+    }
     let process_exit_ms = wait_for_process_exit(&mut process.0, signal_sent_at);
-    let scheduler_delta = scheduler_before.zip(scheduler_after).map(|(before, after)| after.saturating_delta(before));
+    let scheduler_delta = scheduler_before
+        .zip(scheduler_after)
+        .map(|(before, after)| after.saturating_delta(before));
     let observed = close_latencies_ms.into_iter().flatten().collect::<Vec<_>>();
 
     RoundEvidence {
         close_latencies_ms: observed,
         survivors_at_close_bound,
         process_exit_ms,
+        pre_signal_jitter_ms,
         scheduler_delta,
     }
 }
 
 fn current_git_sha() -> String {
-    command_stdout("git", &["rev-parse", "HEAD"]).trim().to_owned()
+    command_stdout("git", &["rev-parse", "HEAD"])
+        .trim()
+        .to_owned()
 }
 
 fn append_scheduler_evidence(output: &mut String, round: usize, sample: Option<SchedulerSample>) {
     match sample {
         Some(sample) => {
             output.push_str(&format!("round_{round}_scheduler_available=true\n"));
-            output.push_str(&format!("round_{round}_scheduler_task_count={}\n", sample.task_count));
-            output.push_str(&format!("round_{round}_cpu_runtime_ns={}\n", sample.cpu_runtime_ns));
-            output.push_str(&format!("round_{round}_runqueue_wait_ns={}\n", sample.runqueue_wait_ns));
+            output.push_str(&format!(
+                "round_{round}_scheduler_task_count={}\n",
+                sample.task_count
+            ));
+            output.push_str(&format!(
+                "round_{round}_cpu_runtime_ns={}\n",
+                sample.cpu_runtime_ns
+            ));
+            output.push_str(&format!(
+                "round_{round}_runqueue_wait_ns={}\n",
+                sample.runqueue_wait_ns
+            ));
             output.push_str(&format!("round_{round}_timeslices={}\n", sample.timeslices));
             output.push_str(&format!(
                 "round_{round}_voluntary_ctxt_switches={}\n",
@@ -369,9 +435,10 @@ fn append_scheduler_evidence(output: &mut String, round: usize, sample: Option<S
 #[test]
 #[ignore = "requires an explicitly dispatched representative Linux/NUMA runner"]
 fn representative_numa_shutdown_profile() {
+    let profile_guard = std::env::var("CWL_NUMA_PROFILE")
+        .expect("ignored profile must not run without explicit CWL_NUMA_PROFILE=1");
     assert_eq!(
-        std::env::var("CWL_NUMA_PROFILE").as_deref(),
-        Ok("1"),
+        profile_guard, "1",
         "ignored profile must not run without explicit CWL_NUMA_PROFILE=1"
     );
 
@@ -387,12 +454,24 @@ fn representative_numa_shutdown_profile() {
         .expect("CWL_PROFILE_EXPECTED_SHA must bind evidence to an exact candidate");
 
     assert!((1..=256).contains(&service_threads));
-    assert!(parked_connections >= 4096, "representative profile must not reduce connection pressure");
-    assert!(rounds >= 25, "representative profile must preserve repeated shutdown jitter");
-    assert_eq!(close_bound_ms, 1000, "correctness evidence keeps the one-second close bound");
+    assert!(
+        parked_connections >= 4096,
+        "representative profile must not reduce connection pressure"
+    );
+    assert!(
+        rounds >= 25,
+        "representative profile must preserve repeated shutdown jitter"
+    );
+    assert_eq!(
+        close_bound_ms, 1000,
+        "correctness evidence keeps the one-second close bound"
+    );
 
     let actual_sha = current_git_sha();
-    assert_eq!(actual_sha, expected_sha, "profile checkout must match exact candidate SHA");
+    assert_eq!(
+        actual_sha, expected_sha,
+        "profile checkout must match exact candidate SHA"
+    );
     let topology = detect_topology();
     assert!(
         topology.online_cpus >= min_online_cpus,
@@ -413,36 +492,70 @@ fn representative_numa_shutdown_profile() {
     let mut all_survivors = 0_usize;
     let mut max_process_exit_ms = 0_u128;
     let mut scheduler_rounds = Vec::with_capacity(rounds);
-    for _ in 0..rounds {
-        let evidence = run_round(service_threads, parked_connections, close_bound_ms);
+    let mut jitter_rounds = Vec::with_capacity(rounds);
+    for round_index in 0..rounds {
+        let pre_signal_jitter_ms = ((round_index * 17) % 31) + 1;
+        let evidence = run_round(
+            service_threads,
+            parked_connections,
+            close_bound_ms,
+            pre_signal_jitter_ms,
+        );
         all_survivors += evidence.survivors_at_close_bound;
         max_process_exit_ms = max_process_exit_ms.max(evidence.process_exit_ms);
         all_close_latencies.extend(evidence.close_latencies_ms);
         scheduler_rounds.push(evidence.scheduler_delta);
+        jitter_rounds.push(evidence.pre_signal_jitter_ms);
     }
 
     all_close_latencies.sort_unstable();
-    assert!(!all_close_latencies.is_empty(), "profile must observe socket cleanup latencies");
+    assert!(
+        !all_close_latencies.is_empty(),
+        "profile must observe socket cleanup latencies"
+    );
     let p50 = percentile(&all_close_latencies, 50);
     let p95 = percentile(&all_close_latencies, 95);
     let p99 = percentile(&all_close_latencies, 99);
     let max = *all_close_latencies.last().expect("non-empty latency set");
 
     let mut output = String::new();
-    output.push_str(&format!("expected_sha={expected_sha}\nactual_sha={actual_sha}\n"));
+    output.push_str(&format!(
+        "expected_sha={expected_sha}\nactual_sha={actual_sha}\n"
+    ));
     output.push_str("supplier_packages=pingora=0.9.0,pingora-prometheus=0.9.0\n");
-    output.push_str(&format!("configured_proxy_service_threads={service_threads}\n"));
-    output.push_str(&format!("configured_metrics_service_threads={METRICS_SERVICE_THREADS}\n"));
-    output.push_str(&format!("registered_service_count={REGISTERED_SERVICE_COUNT}\n"));
+    output.push_str(&format!(
+        "configured_proxy_service_threads={service_threads}\n"
+    ));
+    output.push_str(&format!(
+        "configured_metrics_service_threads={METRICS_SERVICE_THREADS}\n"
+    ));
+    output.push_str(&format!(
+        "registered_service_count={REGISTERED_SERVICE_COUNT}\n"
+    ));
     output.push_str(&format!(
         "configured_service_worker_slots={}\n",
         service_threads + METRICS_SERVICE_THREADS
     ));
-    output.push_str(&format!("online_cpus={}\nnuma_nodes={}\nsockets={}\n", topology.online_cpus, topology.numa_nodes, topology.sockets));
-    output.push_str(&format!("parked_connections={parked_connections}\nprofile_rounds={rounds}\n"));
+    output.push_str(&format!(
+        "online_cpus={}\nnuma_nodes={}\nsockets={}\n",
+        topology.online_cpus, topology.numa_nodes, topology.sockets
+    ));
+    output.push_str(&format!(
+        "parked_connections={parked_connections}\nprofile_rounds={rounds}\n"
+    ));
     output.push_str(&format!("shutdown_close_bound_ms={close_bound_ms}\n"));
-    output.push_str(&format!("shutdown_close_p50_ms={p50}\nshutdown_close_p95_ms={p95}\nshutdown_close_p99_ms={p99}\nshutdown_close_max_ms={max}\n"));
-    output.push_str(&format!("survivors_at_close_bound={all_survivors}\nmax_process_exit_ms={max_process_exit_ms}\n"));
+    output.push_str(&format!(
+        "shutdown_close_p50_ms={p50}\nshutdown_close_p95_ms={p95}\nshutdown_close_p99_ms={p99}\nshutdown_close_max_ms={max}\n"
+    ));
+    output.push_str(&format!(
+        "survivors_at_close_bound={all_survivors}\nmax_process_exit_ms={max_process_exit_ms}\n"
+    ));
+    for (index, jitter_ms) in jitter_rounds.into_iter().enumerate() {
+        output.push_str(&format!(
+            "round_{}_pre_signal_jitter_ms={jitter_ms}\n",
+            index + 1
+        ));
+    }
     for (index, sample) in scheduler_rounds.into_iter().enumerate() {
         append_scheduler_evidence(&mut output, index + 1, sample);
     }
@@ -454,6 +567,12 @@ fn representative_numa_shutdown_profile() {
     output.push_str("topology_cpu_node_socket_end\n");
     fs::write(&evidence_path, output).expect("profile evidence receipt must be writable");
 
-    assert_eq!(all_survivors, 0, "no parked keep-alive connection may survive the one-second bound");
-    assert!(max <= close_bound_ms as u128, "all observed cleanup latencies must stay within the one-second bound");
+    assert_eq!(
+        all_survivors, 0,
+        "no parked keep-alive connection may survive the one-second bound"
+    );
+    assert!(
+        max <= close_bound_ms as u128,
+        "all observed cleanup latencies must stay within the one-second bound"
+    );
 }
