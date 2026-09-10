@@ -2,9 +2,11 @@
 set -euo pipefail
 
 SERVICE_THREADS=4
-# The production pg-erd process registers the proxy and Prometheus services. A Rust contract below
-# binds this evidence constant to the actual composition root so service-count drift fails CI.
+# The production pg-erd process registers one proxy service plus one Prometheus service. The proxy
+# follows Pingora's global thread setting because HttpProxy uses that same value to size shutdown
+# notification sharding; the metrics service deliberately overrides itself to one worker.
 REGISTERED_SERVICE_COUNT=2
+METRICS_SERVICE_THREADS=1
 
 # Wait for a synthetic origin without mistaking a crashed fixture for slow startup.
 wait_for_origin() {
@@ -174,8 +176,10 @@ EOF
 
 {
   printf 'configured_service_threads=%s\n' "$SERVICE_THREADS"
+  printf 'configured_proxy_service_threads=%s\n' "$SERVICE_THREADS"
+  printf 'configured_metrics_service_threads=%s\n' "$METRICS_SERVICE_THREADS"
   printf 'registered_service_count=%s\n' "$REGISTERED_SERVICE_COUNT"
-  printf 'configured_service_worker_slots=%s\n' "$((SERVICE_THREADS * REGISTERED_SERVICE_COUNT))"
+  printf 'configured_service_worker_slots=%s\n' "$((SERVICE_THREADS + METRICS_SERVICE_THREADS))"
   printf 'online_cpus=%s\n' "$(nproc)"
   printf '%s\n' 'cpu,node,socket'
   lscpu -p=CPU,NODE,SOCKET | grep -v '^#'
