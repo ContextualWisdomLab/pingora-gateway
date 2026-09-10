@@ -1,4 +1,6 @@
-use cwl_pingora_gateway::edge_contract::{GatewayConfig, GatewayConfigError};
+use cwl_pingora_gateway::edge_contract::{
+    GatewayConfig, GatewayConfigError, MAX_SERVICE_THREADS_PER_SERVICE,
+};
 use cwl_pingora_gateway::migration_admin::{PgErdMigrationConfig, PgErdMigrationConfigError};
 use cwl_pingora_gateway::runtime_policy::{
     build_server_conf_with_service_threads, V1_DEFAULT_SERVICE_THREADS,
@@ -52,6 +54,18 @@ fn generic_admin_config_rejects_zero_service_threads() {
 }
 
 #[test]
+fn generic_admin_config_rejects_service_threads_above_process_ceiling() {
+    let actual = MAX_SERVICE_THREADS_PER_SERVICE + 1;
+    assert_eq!(
+        GatewayConfig::from_yaml(&generic_yaml(Some(actual))),
+        Err(GatewayConfigError::ServiceThreadsExceedLimit {
+            actual,
+            max: MAX_SERVICE_THREADS_PER_SERVICE,
+        })
+    );
+}
+
+#[test]
 fn pg_erd_admin_config_propagates_explicit_service_threads() {
     let config = PgErdMigrationConfig::from_yaml(&pg_erd_yaml(Some(8)))
         .expect("explicit pg-erd worker topology should validate");
@@ -77,5 +91,17 @@ fn pg_erd_admin_config_rejects_zero_service_threads() {
     assert_eq!(
         PgErdMigrationConfig::from_yaml(&pg_erd_yaml(Some(0))),
         Err(PgErdMigrationConfigError::InvalidServiceThreads)
+    );
+}
+
+#[test]
+fn pg_erd_admin_config_rejects_service_threads_above_process_ceiling() {
+    let actual = MAX_SERVICE_THREADS_PER_SERVICE + 1;
+    assert_eq!(
+        PgErdMigrationConfig::from_yaml(&pg_erd_yaml(Some(actual))),
+        Err(PgErdMigrationConfigError::ServiceThreadsExceedLimit {
+            actual,
+            max: MAX_SERVICE_THREADS_PER_SERVICE,
+        })
     );
 }
