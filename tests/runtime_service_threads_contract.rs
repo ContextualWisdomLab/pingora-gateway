@@ -27,7 +27,8 @@ fn pg_erd_yaml(service_threads: Option<usize>) -> String {
 fn generic_admin_config_propagates_explicit_service_threads() {
     let config = GatewayConfig::from_yaml(&generic_yaml(Some(8)))
         .expect("explicit generic worker topology should validate");
-    let server_conf = server_conf_for_gateway(&config);
+    let server_conf = server_conf_for_gateway(&config)
+        .expect("validated generic config should compose a Pingora runtime");
 
     assert_eq!(config.service_threads, 8);
     assert_eq!(server_conf.threads, 8);
@@ -40,7 +41,9 @@ fn generic_admin_config_preserves_one_worker_compatibility_default() {
 
     assert_eq!(config.service_threads, V1_DEFAULT_SERVICE_THREADS);
     assert_eq!(
-        server_conf_for_gateway(&config).threads,
+        server_conf_for_gateway(&config)
+            .expect("validated compatibility config should compose")
+            .threads,
         V1_DEFAULT_SERVICE_THREADS
     );
 }
@@ -66,10 +69,23 @@ fn generic_admin_config_rejects_service_threads_above_process_ceiling() {
 }
 
 #[test]
+fn generic_runtime_composition_revalidates_programmatic_topology() {
+    let mut config = GatewayConfig::from_yaml(&generic_yaml(Some(8)))
+        .expect("initial generic worker topology should validate");
+    config.service_threads = 0;
+
+    assert_eq!(
+        server_conf_for_gateway(&config).unwrap_err(),
+        GatewayConfigError::InvalidServiceThreads
+    );
+}
+
+#[test]
 fn pg_erd_admin_config_propagates_explicit_service_threads() {
     let config = PgErdMigrationConfig::from_yaml(&pg_erd_yaml(Some(8)))
         .expect("explicit pg-erd worker topology should validate");
-    let server_conf = server_conf_for_pg_erd(&config);
+    let server_conf = server_conf_for_pg_erd(&config)
+        .expect("validated pg-erd config should compose a Pingora runtime");
 
     assert_eq!(config.service_threads(), 8);
     assert_eq!(server_conf.threads, 8);
@@ -82,7 +98,9 @@ fn pg_erd_admin_config_preserves_one_worker_compatibility_default() {
 
     assert_eq!(config.service_threads(), V1_DEFAULT_SERVICE_THREADS);
     assert_eq!(
-        server_conf_for_pg_erd(&config).threads,
+        server_conf_for_pg_erd(&config)
+            .expect("validated compatibility config should compose")
+            .threads,
         V1_DEFAULT_SERVICE_THREADS
     );
 }
@@ -104,5 +122,46 @@ fn pg_erd_admin_config_rejects_service_threads_above_process_ceiling() {
             actual,
             max: MAX_SERVICE_THREADS_PER_SERVICE,
         })
+    );
+}
+
+#[test]
+fn pg_erd_runtime_composition_rejects_deserialized_zero_threads() {
+    let config: PgErdMigrationConfig = serde_yaml::from_str(&pg_erd_yaml(Some(0)))
+        .expect("raw serde construction should demonstrate the validation bypass representation");
+
+    assert_eq!(
+        server_conf_for_pg_erd(&config).unwrap_err(),
+        PgErdMigrationConfigError::InvalidServiceThreads
+    );
+}
+
+#[test]
+fn pg_erd_runtime_composition_rejects_deserialized_threads_above_ceiling() {
+    let actual = MAX_SERVICE_THREADS_PER_SERVICE + 1;
+    let config: PgErdMigrationConfig = serde_yaml::from_str(&pg_erd_yaml(Some(actual)))
+        .expect("raw serde construction should preserve the invalid worker count for revalidation");
+
+    assert_eq!(
+        server_conf_for_pg_erd(&config).unwrap_err(),
+        PgErdMigrationConfigError::ServiceThreadsExceedLimit {
+            actual,
+            max: MAX_SERVICE_THREADS_PER_SERVICE,
+        }
+    );
+}
+
+#[test]
+fn pg_erd_runtime_composition_rejects_deserialized_zero_keepalive_pool() {
+    let yaml = pg_erd_yaml(Some(8)).replace(
+        "upstream_keepalive_pool_size: 32",
+        "upstream_keepalive_pool_size: 0",
+    );
+    let config: PgErdMigrationConfig = serde_yaml::from_str(&yaml)
+        .expect("raw serde construction should preserve the invalid keepalive budget");
+
+    assert_eq!(
+        server_conf_for_pg_erd(&config).unwrap_err(),
+        PgErdMigrationConfigError::InvalidUpstreamKeepalivePoolSize
     );
 }
