@@ -32,10 +32,14 @@ fn main() -> ExitCode {
         Ok(proxy) => proxy,
         Err(error) => return exit_with_error(error),
     };
+    let server_conf = match server_conf_for_gateway(&config) {
+        Ok(server_conf) => server_conf,
+        Err(error) => return exit_with_error(error),
+    };
     let listener = config.listener.to_string();
     let metrics_listener = config.metrics_listener.to_string();
 
-    let mut server = Server::new_with_opt_and_conf(None, server_conf_for_gateway(&config));
+    let mut server = Server::new_with_opt_and_conf(None, server_conf);
     server.bootstrap();
 
     let mut proxy_service = http_proxy_service(&server.configuration, proxy);
