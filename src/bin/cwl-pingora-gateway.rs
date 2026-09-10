@@ -8,9 +8,8 @@ use std::env;
 use std::fmt::Display;
 use std::process::ExitCode;
 
-use cwl_pingora_gateway::gateway_proxy::GatewayProxy;
 use cwl_pingora_gateway::logging_policy::init_runtime_logging;
-use cwl_pingora_gateway::runtime_composition::server_conf_for_gateway;
+use cwl_pingora_gateway::runtime_composition::compose_gateway_runtime;
 use cwl_pingora_gateway::startup::GatewayCommand;
 use pingora::prelude::{http_proxy_service, Server};
 use pingora::server::RunArgs;
@@ -28,12 +27,8 @@ fn main() -> ExitCode {
         Ok(config) => config,
         Err(error) => return exit_with_error(error),
     };
-    let proxy = match GatewayProxy::try_from_config(&config) {
-        Ok(proxy) => proxy,
-        Err(error) => return exit_with_error(error),
-    };
-    let server_conf = match server_conf_for_gateway(&config) {
-        Ok(server_conf) => server_conf,
+    let (proxy, server_conf) = match compose_gateway_runtime(&config) {
+        Ok(runtime) => runtime,
         Err(error) => return exit_with_error(error),
     };
     let listener = config.listener.to_string();
