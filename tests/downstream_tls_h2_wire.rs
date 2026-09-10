@@ -313,3 +313,41 @@ fn generic_gateway_negotiates_h2_over_verified_downstream_tls_and_proxies_real_t
         .join()
         .expect("cleartext upstream fixture should complete");
 }
+
+#[test]
+fn generic_gateway_rejects_a_client_that_offers_only_an_unsupported_alpn_protocol() {
+    let certificates = issue_gateway_certificate();
+    let upstream_listener = TcpListener::bind("127.0.0.1:0").expect("upstream should bind");
+    let upstream = upstream_listener.local_addr().expect("upstream address");
+    let (listener, metrics_listener) = reserve_distinct_loopback_addresses();
+    let config = write_gateway_config(listener, metrics_listener, upstream, &certificates);
+    let mut process = GatewayProcess(spawn_gateway(&config));
+
+    // Establish one verified supported handshake first so a later failure cannot be attributed to
+    // startup timing, certificate identity, or CA materialization.
+    drop(connect_h2(listener, &certificates, &mut process.0));
+
+    let mut builder =
+        SslConnector::builder(SslMethod::tls_client()).expect("TLS client should build");
+    builder
+        .set_ca_file(&certificates.ca_cert)
+        .expect("local CA should load");
+    builder.set_verify(SslVerifyMode::PEER);
+    builder
+        .set_alpn_protos(b"\x03foo")
+        .expect("unsupported ALPN wire list should still be syntactically valid");
+    let connector = builder.build();
+    let stream = TcpStream::connect_timeout(&listener, Duration::from_secs(2))
+        .expect("ready gateway should accept the TCP connection");
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .expect("downstream read timeout should be set");
+    stream
+        .set_write_timeout(Some(Duration::from_secs(5)))
+        .expect("downstream write timeout should be set");
+
+    assert!(
+        connector.connect("gateway.test", stream).is_err(),
+        "RFC 7301 requires a fatal no_application_protocol outcome when the client sends ALPN but offers no protocol supported by the h2_http1 contract"
+    );
+}
