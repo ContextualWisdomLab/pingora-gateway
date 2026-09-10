@@ -24,7 +24,7 @@ fn downstream_tls_delivery_pins_protocol_versions_and_cipher_policy() {
 }
 
 #[test]
-fn tls12_profile_excludes_deprecated_static_and_finite_field_key_exchange() {
+fn tls12_profile_admits_only_ephemeral_ecdhe_aead_suites() {
     let source = include_str!("../src/tls_delivery.rs");
     let declaration = source
         .split("const DOWNSTREAM_TLS12_CIPHER_LIST: &str = ")
@@ -34,10 +34,19 @@ fn tls12_profile_excludes_deprecated_static_and_finite_field_key_exchange() {
 
     assert!(declaration.contains("ECDHE-RSA-AES128-GCM-SHA256"));
     assert!(declaration.contains("ECDHE-ECDSA-AES128-GCM-SHA256"));
-    for forbidden in ["DHE-", "DH-", "RSA-AES", "ECDH-"] {
+
+    let normalized = declaration.replace(['"', '\\', '\n', ' '], "");
+    let suites: Vec<_> = normalized.split(':').filter(|suite| !suite.is_empty()).collect();
+    assert_eq!(suites.len(), 6, "TLS 1.2 profile cardinality changed unexpectedly");
+
+    for suite in suites {
         assert!(
-            !declaration.contains(forbidden),
-            "TLS 1.2 edge profile must not admit deprecated key exchange token {forbidden:?}"
+            suite.starts_with("ECDHE-RSA-") || suite.starts_with("ECDHE-ECDSA-"),
+            "TLS 1.2 suite must use ephemeral ECDHE authentication: {suite}"
+        );
+        assert!(
+            suite.contains("-GCM-") || suite.contains("-CHACHA20-POLY1305"),
+            "TLS 1.2 suite must use an admitted AEAD construction: {suite}"
         );
     }
 }
