@@ -1,8 +1,15 @@
+use std::path::PathBuf;
+
 use cwl_pingora_gateway::edge_contract::{
     GatewayConfig, GatewayConfigError, MAX_SERVICE_THREADS_PER_SERVICE,
 };
+use cwl_pingora_gateway::gateway_proxy::GatewayProxyError;
 use cwl_pingora_gateway::migration_admin::{PgErdMigrationConfig, PgErdMigrationConfigError};
-use cwl_pingora_gateway::runtime_composition::{server_conf_for_gateway, server_conf_for_pg_erd};
+use cwl_pingora_gateway::pingora_delivery::PeerBuildError;
+use cwl_pingora_gateway::runtime_composition::{
+    compose_gateway_runtime, compose_pg_erd_runtime, server_conf_for_gateway,
+    server_conf_for_pg_erd,
+};
 use cwl_pingora_gateway::runtime_policy::V1_DEFAULT_SERVICE_THREADS;
 
 fn generic_yaml(service_threads: Option<usize>) -> String {
@@ -78,6 +85,35 @@ fn generic_runtime_composition_revalidates_programmatic_topology() {
         server_conf_for_gateway(&config).unwrap_err(),
         GatewayConfigError::InvalidServiceThreads
     );
+    assert_eq!(
+        compose_gateway_runtime(&config).unwrap_err(),
+        GatewayProxyError::InvalidConfiguration(GatewayConfigError::InvalidServiceThreads)
+    );
+}
+
+#[test]
+fn generic_runtime_composition_materializes_transport_after_topology_validation() {
+    let config = GatewayConfig::from_yaml(&generic_yaml(Some(8)))
+        .expect("valid generic runtime should parse and validate");
+    let (proxy, server_conf) = compose_gateway_runtime(&config)
+        .expect("valid topology and transport should compose together");
+
+    assert_eq!(server_conf.threads, 8);
+    assert_eq!(proxy.build_upstream_peer().address().to_string(), "127.0.0.1:8080");
+}
+
+#[test]
+fn generic_runtime_composition_preserves_transport_activation_failure() {
+    let mut config = GatewayConfig::from_yaml(&generic_yaml(Some(8)))
+        .expect("base generic runtime should validate");
+    config.upstreams[0].tls = true;
+    config.upstreams[0].sni = Some("api.internal.example".to_string());
+    config.upstreams[0].trust_bundle_file = Some(PathBuf::from("/definitely/missing/cwl-ca.pem"));
+
+    assert!(matches!(
+        compose_gateway_runtime(&config).unwrap_err(),
+        GatewayProxyError::UpstreamActivation(PeerBuildError::ReadTrustBundle { .. })
+    ));
 }
 
 #[test]
@@ -134,6 +170,10 @@ fn pg_erd_runtime_composition_rejects_deserialized_zero_threads() {
         server_conf_for_pg_erd(&config).unwrap_err(),
         PgErdMigrationConfigError::InvalidServiceThreads
     );
+    assert_eq!(
+        compose_pg_erd_runtime(&config).unwrap_err(),
+        PgErdMigrationConfigError::InvalidServiceThreads
+    );
 }
 
 #[test]
@@ -163,5 +203,29 @@ fn pg_erd_runtime_composition_rejects_deserialized_zero_keepalive_pool() {
     assert_eq!(
         server_conf_for_pg_erd(&config).unwrap_err(),
         PgErdMigrationConfigError::InvalidUpstreamKeepalivePoolSize
+    );
+}
+
+#[test]
+fn pg_erd_runtime_composition_materializes_characterized_transport_after_validation() {
+    let config = PgErdMigrationConfig::from_yaml(&pg_erd_yaml(Some(8)))
+        .expect("valid pg-erd runtime should parse and validate");
+    let (_, server_conf) = compose_pg_erd_runtime(&config)
+        .expect("valid topology and characterized transport should compose together");
+
+    assert_eq!(server_conf.threads, 8);
+}
+
+#[test]
+fn pg_erd_runtime_composition_preserves_transport_contract_failure() {
+    let yaml = pg_erd_yaml(Some(8)).replace("name: backend", "name: outside-plan");
+    let config: PgErdMigrationConfig = serde_yaml::from_str(&yaml)
+        .expect("raw serde construction should preserve the invalid transport identity");
+
+    assert_eq!(
+        compose_pg_erd_runtime(&config).unwrap_err(),
+        PgErdMigrationConfigError::UnknownTransportAuthority {
+            upstream_name: "outside-plan".to_string(),
+        }
     );
 }
