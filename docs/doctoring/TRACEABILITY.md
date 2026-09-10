@@ -1,110 +1,105 @@
 # Primary-Source and APA-7 Traceability
 
-This file links material technical/security claims to primary standards or upstream sources. Revalidate version/advisory claims immediately before release.
+This document maps material edge-runtime, protocol, toolchain, container, and supplier claims to primary standards or first-party upstream evidence. Version, advisory, protected-head, and release claims are revalidated before promotion. Mutable contributor PRs are evidence candidates, not release authority.
 
-| Claim | Source |
-| --- | --- |
-| Pingora server/proxy composition and graceful server lifecycle | Cloudflare Pingora source at pinned commit `09696b51bc59315353d96686355861604d0bb48c`, still the protected upstream `main` head observed on 2026-09-06 |
-| Pingora's server default `max_retries` is 16, while the proxy loop copies that field and loops while its attempt counter is below the value | `pingora-core/src/server/configuration/mod.rs` and `pingora-proxy/src/lib.rs` at pinned commit `09696b51bc59315353d96686355861604d0bb48c`; CWL v1 therefore sets the field to `1` for one total attempt |
-| Graceful SIGTERM uses `grace_period_seconds` and `graceful_shutdown_timeout_seconds`, with framework fallbacks when unset | `pingora-core/src/server/mod.rs` and `pingora-core/src/server/configuration/mod.rs` at the pinned commit; CWL v1 sets 5 s grace and 10 s per-runtime graceful timeout explicitly inside a 30 s external termination budget |
-| Standard upstream request policy supports hop-by-hop/connection-nominated stripping and normalized WebSocket-only HTTP/1 upgrade forwarding | Cloudflare Pingora `HttpUpstreamRequestPolicy` / peer implementation at pinned commit `09696b51bc59315353d96686355861604d0bb48c` |
-| Pingora OpenSSL peers support a per-peer CA store; when configured it replaces the verification store for that peer while certificate and hostname verification remain separately enabled | `pingora-core/src/upstreams/peer.rs`, `pingora-core/src/connectors/tls/boringssl_openssl/mod.rs`, and `pingora-core/src/protocols/tls/boringssl_openssl/mod.rs` at pinned commit `09696b51bc59315353d96686355861604d0bb48c` |
-| Forwarded-header grammar and trust semantics | RFC 7239 |
-| HTTP semantics | RFC 9110 |
-| HTTP/1.1 message framing/hop-by-hop requirements | RFC 9112 |
-| HTTP/2 framing and connection semantics, including H2 Cookie-field reconstruction before a non-H2 hop | RFC 9113 |
-| HTTP/3 semantics over QUIC | RFC 9114; HTTP/3 is not claimed implemented by this v1 candidate until executable listener/interoperability evidence exists |
-| Current TLS 1.3 protocol semantics and application identity-verification responsibility | RFC 9846, published July 2026, which obsoletes RFC 8446 and points applications to RFC 9525 for identity verification |
-| New protocols using TLS must require TLS 1.3 | RFC 9852, BCP 195, July 2026; this gateway is not claiming a new application protocol and still requires explicit migration-time protocol compatibility evidence |
-| GitHub Actions concurrency permits `cancel-in-progress` to be a conditional expression; group names should include workflow identity to prevent cross-workflow cancellation; event-specific properties may use `github.run_id` as a guaranteed unique fallback | GitHub Docs, *Control the concurrency of workflows and jobs*, revalidated 2026-09-05 |
-| With the default single pending slot, a newly queued run in the same concurrency group replaces an existing pending run even when `cancel-in-progress` is false | GitHub Docs, *Control the concurrency of workflows and jobs*; CWL rerun isolation therefore avoids placing historical reruns in the same first-attempt PR group |
-| Pull-request workflow activity can explicitly include both `converted_to_draft` and `ready_for_review`, and job-level `if` conditions are evaluated before a job is routed to a runner | GitHub Docs, *Events that trigger workflows* and *Contexts reference*, revalidated 2026-09-05; CWL uses the draft-conversion event in the same PR concurrency group to retract superseded Ready work while direct jobs skip, then uses Ready re-admission to restore normal checks |
-| Re-running a workflow uses the same original `GITHUB_SHA` and `GITHUB_REF` | GitHub Docs, *Re-running workflows and jobs*; rerun evidence is historical execution of the same triggered revision, not a new source revision |
-| Cargo can replace the compiler executable or wrap compiler invocations through `RUSTC`, `RUSTC_WRAPPER`, `RUSTC_WORKSPACE_WRAPPER`, `CARGO_BUILD_RUSTC`, `CARGO_BUILD_RUSTC_WRAPPER`, and `CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER`; repository Cargo configuration can carry the corresponding `build.rustc`, `build.rustc-wrapper`, and `build.rustc-workspace-wrapper` authority | The Cargo Book, *Environment Variables* and *Configuration*; release-path acceptance therefore rejects these YAML/shell authorities and rejects repository `.cargo/config.toml` / `.cargo/config` until a separate Cargo configuration contract exists |
-| Docker `ENV` persists environment variables into subsequent build instructions, while declared `ARG` values are available to subsequent `RUN` instructions as build-time environment variables; either can therefore carry Cargo compiler-wrapper authority into an OCI release build after an earlier standalone Rust verification | Docker Docs, *Dockerfile reference* and *Build variables*; the gateway compiler-wrapper contract rejects all governed compiler variables in Docker `ENV`, `ARG`, shell-form `RUN`, and JSON-form `RUN` before release compilation |
-| Bash declaration commands give assignment arguments assignment-statement semantics; `declare` and `typeset` can therefore persist a Cargo executable variable in the current workflow shell just as `export`/`readonly` can persist assignment authority | GNU Bash Reference Manual, *Shell Parameters* / *Shell Builtin Commands*, revalidated 2026-09-06. The current oracle explicitly covers observed release-path `export`, `readonly`, `declare`, and `typeset` forms; no `local CARGO` release-path use was found, so function-local parsing is not claimed complete |
-| Bash command substitution supports both `$(command)` and the legacy backquote form; the first unescaped backquote terminates the old form. Inside double quotes, backquote retains its special command-substitution meaning while a single-quote character is literal text rather than a quoting delimiter | GNU Bash Reference Manual, *Command Substitution* and *Double Quotes*, revalidated 2026-09-06. Release-path shell control already rejects active legacy backquotes; the command-substitution companion now applies the existing compiler-authority analyzer to active backquote bodies and tracks both quote modes so double-quoted legacy bodies are not skipped |
-| GNU Coreutils `env -S` / `--split-string=STRING` performs a second argument-splitting pass; short options can be combined (for example `-vS`); `--` delimits only the option list; `NAME=VALUE` operands still precede the first non-assignment command operand, and all later words are child-command arguments | GNU Coreutils 9.11 manual, *Common options* and *env invocation*; the gateway release-path oracle therefore fails closed on split-string/unmodelled option grammar, continues compiler-assignment inspection after `env --`, and stops only at the first child command so child arguments such as `/usr/bin/printf -S` or assignment-looking strings are not misclassified |
-| Rust `Debug` is programmer-facing and derived struct output contains field names/values, but derived `Debug` formats are explicitly not stable; a semantics-preserving supplier characterization must therefore distinguish field identity without treating incidental spacing/layout as a release contract | Rust 1.98.1 standard-library `std::fmt::Debug` documentation, revalidated 2026-09-06. `tests/pingora_supplier_semantics_contract.rs` consequently accepts equivalent compact/multiline field layouts while still rejecting overlapping identifiers such as `total_connection_timeout` for `connection_timeout` |
-| March 2026 Pingora request-smuggling/cache-key advisories are patched in 0.8.0 | GitHub Security Advisories GHSA-xq2h-p299-vjwv, GHSA-hj7x-879w-vrp7, GHSA-f93w-pcj3-rggc |
-| Pingora 0.8.1 is the latest public GitHub Release observed on 2026-09-06 and bounds default HTTP/2 server limits | Cloudflare Pingora GitHub Releases, 0.8.1, 2026-06-04; the observed GitHub release object is not marked immutable |
-| Historical derivative-free Pingora tags `0.3.0`, `0.1.1`, and `0.1.0` are not drop-in dependencies for the current gateway request-policy boundary because their exact `PeerOptions` commit snapshots lack the current `http_upstream_request_policy` / `HttpUpstreamRequestPolicy` peer API used by `src/pingora_delivery.rs`; `0.3.0` also fails the current immutable-release gate | The historical tag labels resolve to exact commits `9f70abe97b3210feef1d19a6003a523ebf0517d1` (`0.3.0`), `6cd881ff7597a6ba36b92a8efca714435c21ed88` (`0.1.1`), and `b4264f1f2499762b8fe33e75d9f4ee1dc2db2fdb` (`0.1.0`); compare those immutable `pingora-core/src/upstreams/peer.rs` snapshots with the pinned current source and gateway exact `32e0aeedac7b0fe6234d476245f37994b1b9168f`. GitHub Release `0.3.0` reports `immutable: false`. This proves direct-downgrade incompatibility only and does not rule out a separately governed backport/port. |
-| The pinned upstream head is seven commits after the prior security-resolution pin `6463ad6407a1d3fe256f1951dd0ecb054477e3f6`; the relevant retry/grace configuration remains unchanged at the new head | GitHub compare `6463ad6...09696b5` plus the exact `ServerConf` source at `09696b5` |
-| Rust 1.98.1 repairs a Rust 1.98.0 vtable-generation miscompilation that can emit a null pointer where a trait-object function pointer should be, causing undefined behavior | Rust Release Team, Rust 1.98.1 announcement, 2026-09-03. Draft #56 is the separately gated release-path repair and must not be treated as inherited before integration |
-| OCI runtime-spec 1.3.0 is the latest released runtime specification observed on 2026-09-05 | Open Container Initiative runtime-spec v1.3.0 release notice and release list; runtime hardening claims still require executable container evidence |
-| `lru` versions before 0.18.2 are affected by RUSTSEC-2026-0253 | RustSec advisory RUSTSEC-2026-0253; the upstream pin includes the first-fixed `lru` dependency change, but release must use a committed audited lock |
-| `derivative` is unmaintained and RUSTSEC-2024-0388 has no patched versions | RustSec advisory RUSTSEC-2024-0388. The downstream policy therefore requires a maintainer-integrated supplier repair/removal rather than a generic audit ignore |
+## Current supplier and implementation traceability
+
+| Claim | Primary evidence | Acceptance consequence |
+| --- | --- | --- |
+| Pingora 0.9.0 is the current published supplier release observed on 2026-09-10 KST | Cloudflare Pingora GitHub Release `0.9.0`, published 2026-09-09T23:34:48Z; protected release-source commit `702f69015e53f7244d6ad2e743de571d859a70a4` | Release-name existence is not blanket migration credit. The exact consumer dependency identity and unchanged gateway behavior must still be proven. |
+| Pingora 0.9.0 contains the graceful-shutdown lost-wakeup repair | Pingora 0.9.0 release notes: proxy shutdown notifications are sharded and the graceful-shutdown lost-wakeup race is closed | Historical #844/#969 becomes provenance for correctness; gateway #70 moves to exact registry pin/lock transition and unchanged downstream GREEN. |
+| Released 0.9.0 does not expose CWL's required configurable H1 request-header byte/count admission | Released `pingora-core` HTTP/1 source at `702f690...`; downstream #72 executable real-socket RED | Callback-only rejection is not equivalent to parser admission. A later release-qualified supplier capability is required. |
+| Current upstream parser-admission candidate repairs the seven CWL findings at mutable-candidate scope | `cloudflare/pingora#1000@6a90c79b61fbbc70b518709de6802165668cba2c`, four-file current range; exact-current CWL COMMENT review `5162454757` | Candidate source may advance owner-path confidence but cannot be pinned or treated as maintainer-integrated/released authority. Exact build, maintainer integration, later release, then unchanged #72 GREEN remain required. |
+| Released 0.9.0 still lacks a supported monotonic whole-request-header deadline | Released H1 request-read path at `702f690...`; open upstream #447; downstream #71 fresh/reused real-socket RED | Per-read inactivity timeout does not satisfy a whole-header lifetime contract. |
+| Pingora 0.9.0 still carries `derivative 2.2.0` in the relevant graph | Released/tagged workspace source at `702f690...`; open upstream #889; RustSec RUSTSEC-2024-0388 | #54 remains intentionally RED until a later release-qualified supplier identity removes the package and the consumer lock is regenerated. |
+| Released 0.9.0 does not close H2→H1 Cookie coalescing | Released proxy sanitizer at `702f690...`; downstream #53 real TLS/H2→H1 wire RED; open contributor #901 | Multiple H2 Cookie fields must be reconstructed as one H1 Cookie field using the protocol-defined delimiter before release credit. |
+| Zero-length application writes must not own the H1 chunk terminator | Pingora issue/PR lineage #935/#936; contributor #936 remains open | `finish()` must remain the sole chunk-terminator owner; async and cancel-safe write paths require regression evidence before release credit. |
+
+## Protocol and security standards
+
+| Area | Primary standard | Gateway use |
+| --- | --- | --- |
+| HTTP semantics | RFC 9110 | Method/status/header semantics and intermediary obligations. |
+| HTTP/1.1 | RFC 9112 | Message parsing/framing, connection handling, chunked coding and hop-by-hop correctness. |
+| HTTP/2 | RFC 9113 | H2 framing/connection rules; Section 8.2.3 permits Cookie field splitting and requires recombination before a non-H2 hop. |
+| QUIC transport | RFC 9000 | Transport basis for HTTP/3 acceptance. |
+| HTTP/3 | RFC 9114 | HTTP semantics over QUIC; no H3 product credit without executable interoperability evidence. |
+| WebSocket | RFC 6455 | Upgrade/framing semantics for HTTP/1.1 WebSocket acceptance. |
+| WebSocket over HTTP/2 | RFC 8441 | Extended CONNECT path when H2 WebSocket support is in scope. |
+| WebSocket over HTTP/3 | RFC 9220 | Extended CONNECT/bootstrap path when H3 WebSocket support is in scope. |
+| Forwarded header | RFC 7239 | Forwarding grammar; request-supplied client identity remains untrusted until an explicit trust contract admits it. |
+| TLS 1.3 | RFC 9846 (July 2026) | Current TLS 1.3 protocol specification; it obsoletes RFC 8446 and leaves application identity verification to the application protocol profile. |
+| TLS service identity | RFC 9525 | Certificate/service identity verification guidance for TLS applications. |
+| New-protocol TLS baseline | RFC 9852 / BCP 195 (July 2026) | New protocols using TLS must require TLS 1.3; existing gateway compatibility still requires explicit product/deployment evidence rather than silent policy widening. |
+
+## Rust, Cargo, OCI, and supply-chain authority
+
+| Claim | Primary evidence | Acceptance consequence |
+| --- | --- | --- |
+| Rust 1.98.1 repairs the Rust 1.98.0 vtable-generation miscompilation | Rust Release Team, *Announcing Rust 1.98.1*, 2026-09-03 | Release-producing gateway paths select/verify 1.98.1; #56 remains a separately governed prerequisite until normally integrated. |
+| `derivative` is unmaintained and RUSTSEC-2024-0388 has no patched versions | RustSec Advisory Database, RUSTSEC-2024-0388 | Commercial supplier-intake policy requires removal/replacement, not an audit ignore. |
+| Cargo lock/source/checksum evidence must be resolver-generated | Cargo Book: dependency resolution, lockfiles, registries and `--locked` behavior | A manifest-only Pingora transition or hand-authored `Cargo.lock` is invalid; registry source/checksum authority must come from Cargo resolution. |
+| OCI runtime-spec v1.3.0 is the latest runtime-spec release observed during the 2026-09-10 refresh | Open Container Initiative, `runtime-spec` releases | Rootless/read-only/capability/seccomp/AppArmor/SELinux and lifecycle claims are tested against actual runtime behavior; the spec version alone is not runtime hardening evidence. |
+| OCI image-spec v1.1.1 is the latest image-spec release observed during the 2026-09-10 refresh | Open Container Initiative, `image-spec` releases | Immutable image digest/config/layer semantics use the current image format authority. |
+| OCI distribution-spec v1.1.1 is the latest distribution-spec release observed during the 2026-09-10 refresh | Open Container Initiative, `distribution-spec` releases | Registry publication/retrieval claims require digest-bound artifacts; tag names alone are not immutable deployment identity. |
+
+## Gateway evidence doctrine
+
+The repository distinguishes four evidence classes:
+
+1. **source characterization** — exact code/spec evidence explaining why a RED or invariant exists;
+2. **candidate execution** — exact-head tests/checks on a mutable branch;
+3. **release authority** — maintainer/protected integration plus immutable/versioned dependency or gateway artifact identity;
+4. **deployment evidence** — exact artifact exercised in parity, shadow/canary, rollback and cutover traffic.
+
+A later class is never inferred solely from an earlier one. In particular, contributor PR CI is not release authority, a GitHub Release label is not a consumer lock, a loopback p95 is not WAN/TLS production SLO evidence, and disappearance of Nginx/OpenResty strings is not migration completion.
 
 ## References
 
-Cloudflare. (2026, June 4). *Pingora 0.8.1*. GitHub. https://github.com/cloudflare/pingora/releases/tag/0.8.1
+Bishop, M. (2022). *HTTP/3* (RFC 9114). RFC Editor. https://www.rfc-editor.org/rfc/rfc9114
 
-Cloudflare. (2024, July 12). *Pingora 0.3.0*. GitHub. https://github.com/cloudflare/pingora/releases/tag/0.3.0
+Cloudflare. (2026, September 9). *Pingora 0.9.0* [Software release]. GitHub. https://github.com/cloudflare/pingora/releases/tag/0.9.0
 
-Cloudflare. (n.d.). *Pingora upstream peer options* [Source code, commit 09696b51bc59315353d96686355861604d0bb48c]. GitHub. https://github.com/cloudflare/pingora/blob/09696b51bc59315353d96686355861604d0bb48c/pingora-core/src/upstreams/peer.rs
+Cloudflare. (n.d.). *Pingora configurable H1 request-header limits* (Pull request #1000). GitHub. https://github.com/cloudflare/pingora/pull/1000
 
-Cloudflare. (n.d.). *Pingora upstream peer options for release 0.3.0* [Source code, commit 9f70abe97b3210feef1d19a6003a523ebf0517d1]. GitHub. https://github.com/cloudflare/pingora/blob/9f70abe97b3210feef1d19a6003a523ebf0517d1/pingora-core/src/upstreams/peer.rs
+Cloudflare. (n.d.). *Support for configurable timeout for downstream connections in HTTP/1.1* (Issue #447). GitHub. https://github.com/cloudflare/pingora/issues/447
 
-Cloudflare. (n.d.). *Pingora upstream peer options for release 0.1.1* [Source code, commit 6cd881ff7597a6ba36b92a8efca714435c21ed88]. GitHub. https://github.com/cloudflare/pingora/blob/6cd881ff7597a6ba36b92a8efca714435c21ed88/pingora-core/src/upstreams/peer.rs
+Cloudflare. (n.d.). *RUSTSEC-2024-0388: derivative is unmaintained* (Issue #889). GitHub. https://github.com/cloudflare/pingora/issues/889
 
-Cloudflare. (n.d.). *Pingora upstream peer options for release 0.1.0* [Source code, commit b4264f1f2499762b8fe33e75d9f4ee1dc2db2fdb]. GitHub. https://github.com/cloudflare/pingora/blob/b4264f1f2499762b8fe33e75d9f4ee1dc2db2fdb/pingora-core/src/upstreams/peer.rs
+Cloudflare. (n.d.). *Concatenate HTTP/2 Cookie headers when proxying to HTTP/1.1* (Pull request #901). GitHub. https://github.com/cloudflare/pingora/pull/901
 
-Cloudflare. (n.d.). *Pingora OpenSSL upstream TLS connector* [Source code, commit 09696b51bc59315353d96686355861604d0bb48c]. GitHub. https://github.com/cloudflare/pingora/blob/09696b51bc59315353d96686355861604d0bb48c/pingora-core/src/connectors/tls/boringssl_openssl/mod.rs
+Cloudflare. (n.d.). *Do not emit the chunked terminator for zero-length body writes* (Pull request #936). GitHub. https://github.com/cloudflare/pingora/pull/936
 
-Cloudflare. (n.d.). *Pingora server configuration* [Source code, commit 09696b51bc59315353d96686355861604d0bb48c]. GitHub. https://github.com/cloudflare/pingora/blob/09696b51bc59315353d96686355861604d0bb48c/pingora-core/src/server/configuration/mod.rs
-
-Cloudflare. (n.d.). *Pingora server lifecycle* [Source code, commit 09696b51bc59315353d96686355861604d0bb48c]. GitHub. https://github.com/cloudflare/pingora/blob/09696b51bc59315353d96686355861604d0bb48c/pingora-core/src/server/mod.rs
-
-Cloudflare. (n.d.). *Pingora proxy implementation* [Source code, commit 09696b51bc59315353d96686355861604d0bb48c]. GitHub. https://github.com/cloudflare/pingora/blob/09696b51bc59315353d96686355861604d0bb48c/pingora-proxy/src/lib.rs
-
-Cloudflare. (2026). *HTTP request smuggling via premature upgrade* (GHSA-xq2h-p299-vjwv). GitHub Security Advisories. https://github.com/cloudflare/pingora/security/advisories/GHSA-xq2h-p299-vjwv
-
-Cloudflare. (2026). *HTTP request smuggling via HTTP/1.0 and Transfer-Encoding misparsing* (GHSA-hj7x-879w-vrp7). GitHub Security Advisories. https://github.com/cloudflare/pingora/security/advisories/GHSA-hj7x-879w-vrp7
-
-Cloudflare. (2026). *Cache key poisoning advisory* (GHSA-f93w-pcj3-rggc). GitHub Security Advisories. https://github.com/cloudflare/pingora/security/advisories/GHSA-f93w-pcj3-rggc
-
-Docker, Inc. (n.d.). *Build variables*. Docker Docs. https://docs.docker.com/build/building/variables/
-
-Docker, Inc. (n.d.). *Dockerfile reference*. Docker Docs. https://docs.docker.com/reference/dockerfile/
+Fette, I., & Melnikov, A. (2011). *The WebSocket protocol* (RFC 6455). RFC Editor. https://www.rfc-editor.org/rfc/rfc6455
 
 Fielding, R., Nottingham, M., & Reschke, J. (2022). *HTTP semantics* (RFC 9110). RFC Editor. https://www.rfc-editor.org/rfc/rfc9110
 
+Internet Security Research Group. (n.d.). *RustSec advisory database: RUSTSEC-2024-0388*. https://rustsec.org/advisories/RUSTSEC-2024-0388.html
+
+McManus, P. (2018). *Bootstrapping WebSockets with HTTP/2* (RFC 8441). RFC Editor. https://www.rfc-editor.org/rfc/rfc8441
+
 Nottingham, M. (2022). *HTTP/1.1* (RFC 9112). RFC Editor. https://www.rfc-editor.org/rfc/rfc9112
 
-Thomson, M., & Benfield, C. (2022). *HTTP/2* (RFC 9113). RFC Editor. https://www.rfc-editor.org/rfc/rfc9113
+Open Container Initiative. (2025, March 3). *OCI image format specification v1.1.1* [Software specification release]. GitHub. https://github.com/opencontainers/image-spec/releases/tag/v1.1.1
 
-Bishop, M. (2022). *HTTP/3* (RFC 9114). RFC Editor. https://www.rfc-editor.org/rfc/rfc9114
+Open Container Initiative. (2025, November 4). *OCI runtime specification v1.3.0* [Software specification release]. GitHub. https://github.com/opencontainers/runtime-spec/releases/tag/v1.3.0
 
-Rescorla, E. (2026). *The Transport Layer Security (TLS) Protocol Version 1.3* (RFC 9846). RFC Editor. https://www.rfc-editor.org/rfc/rfc9846
-
-Salz, R., & Aviram, N. (2026). *New protocols using TLS must require TLS 1.3* (RFC 9852, BCP 195). RFC Editor. https://www.rfc-editor.org/rfc/rfc9852
+Open Container Initiative. (n.d.). *OCI distribution specification v1.1.1* [Software specification release]. GitHub. https://github.com/opencontainers/distribution-spec/releases/tag/v1.1.1
 
 Petersson, A., & Nilsson, M. (2014). *Forwarded HTTP extension* (RFC 7239). RFC Editor. https://www.rfc-editor.org/rfc/rfc7239
 
-GitHub. (n.d.). *Control the concurrency of workflows and jobs*. GitHub Docs. https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency
-
-GitHub. (n.d.). *Events that trigger workflows*. GitHub Docs. https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows
-
-GitHub. (n.d.). *Contexts reference*. GitHub Docs. https://docs.github.com/en/actions/reference/workflows-and-actions/contexts
-
-GitHub. (n.d.). *Re-running workflows and jobs*. GitHub Docs. https://docs.github.com/en/actions/how-tos/manage-workflow-runs/re-run-workflows-and-jobs
-
-Free Software Foundation. (n.d.). *Bash reference manual*. GNU Project. https://www.gnu.org/software/bash/manual/bash.html
-
-Free Software Foundation. (2026). *Common options (GNU Coreutils 9.11)*. GNU Coreutils manual. https://www.gnu.org/software/coreutils/manual/html_node/Common-options.html
-
-Free Software Foundation. (2026). *env invocation (GNU Coreutils 9.11)*. GNU Coreutils manual. https://www.gnu.org/software/coreutils/manual/html_node/env-invocation.html
-
-Open Container Initiative. (2025, November 4). *OCI runtime-spec v1.3.0 release notice*. https://opencontainers.org/release-notices/v1-3-0-runtime-spec/
-
-Rust Project Developers. (n.d.). *Configuration*. The Cargo Book. https://doc.rust-lang.org/cargo/reference/config.html
-
-Rust Project Developers. (n.d.). *Debug*. Rust 1.98.1 standard library documentation. https://doc.rust-lang.org/stable/std/fmt/trait.Debug.html
-
-Rust Project Developers. (n.d.). *Environment variables*. The Cargo Book. https://doc.rust-lang.org/cargo/reference/environment-variables.html
+Rescorla, E. (2026). *The Transport Layer Security (TLS) Protocol Version 1.3* (RFC 9846). RFC Editor. https://www.rfc-editor.org/rfc/rfc9846
 
 Rust Release Team. (2026, September 3). *Announcing Rust 1.98.1*. Rust Blog. https://blog.rust-lang.org/2026/09/03/Rust-1.98.1/
 
-Rust Secure Code Working Group. (2024, November 10). *RUSTSEC-2024-0388: derivative—`derivative` is unmaintained; consider using an alternative*. RustSec Advisory Database. https://rustsec.org/advisories/RUSTSEC-2024-0388.html
+Salowey, J., Zhou, H., Eronen, P., & Tschofenig, H. (2022). *Bootstrapping WebSockets with HTTP/3* (RFC 9220). RFC Editor. https://www.rfc-editor.org/rfc/rfc9220
 
-Rust Secure Code Working Group. (2026, August 11). *RUSTSEC-2026-0253: lru—memory safety issue under panic*. RustSec Advisory Database. https://rustsec.org/advisories/RUSTSEC-2026-0253.html
+Salz, R., & Aviram, N. (2026). *New protocols using TLS must require TLS 1.3* (RFC 9852, BCP 195). RFC Editor. https://www.rfc-editor.org/rfc/rfc9852
+
+Thomson, M., & Benfield, C. (2022). *HTTP/2* (RFC 9113). RFC Editor. https://www.rfc-editor.org/rfc/rfc9113
+
+Thomson, M., & Turner, S. (2024). *Recommendations for secure use of transport layer security (TLS) and datagram transport layer security (DTLS)* (RFC 9525). RFC Editor. https://www.rfc-editor.org/rfc/rfc9525
+
+Thomson, M., & Turner, S. (2021). *QUIC: A UDP-based multiplexed and secure transport* (RFC 9000). RFC Editor. https://www.rfc-editor.org/rfc/rfc9000
+
+The Cargo Project Developers. (n.d.). *Cargo Book*. https://doc.rust-lang.org/cargo/
