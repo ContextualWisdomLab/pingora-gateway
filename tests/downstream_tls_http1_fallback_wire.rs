@@ -156,6 +156,7 @@ fn connect_http1(
     address: SocketAddr,
     certificates: &LocalCertificates,
     process: &mut Child,
+    advertise_http1_alpn: bool,
 ) -> pingora::tls::ssl::SslStream<TcpStream> {
     let mut builder =
         SslConnector::builder(SslMethod::tls_client()).expect("TLS client should build");
@@ -163,9 +164,11 @@ fn connect_http1(
         .set_ca_file(&certificates.ca_cert)
         .expect("local CA should load");
     builder.set_verify(SslVerifyMode::PEER);
-    builder
-        .set_alpn_protos(b"\x08http/1.1")
-        .expect("HTTP/1.1 ALPN wire list should be valid");
+    if advertise_http1_alpn {
+        builder
+            .set_alpn_protos(b"\x08http/1.1")
+            .expect("HTTP/1.1 ALPN wire list should be valid");
+    }
     let connector = builder.build();
 
     let deadline = Instant::now() + Duration::from_secs(10);
@@ -226,7 +229,7 @@ fn h2_http1_policy_negotiates_verified_http1_fallback_and_proxies_real_traffic()
     let (listener, metrics_listener) = reserve_distinct_loopback_addresses();
     let config = write_gateway_config(listener, metrics_listener, upstream, &certificates);
     let mut process = GatewayProcess(spawn_gateway(&config));
-    let mut tls = connect_http1(listener, &certificates, &mut process.0);
+    let mut tls = connect_http1(listener, &certificates, &mut process.0, true);
 
     assert_eq!(
         tls.ssl().selected_alpn_protocol(),
@@ -248,4 +251,59 @@ fn h2_http1_policy_negotiates_verified_http1_fallback_and_proxies_real_traffic()
     upstream_fixture
         .join()
         .expect("cleartext upstream fixture should complete");
+}
+
+#[test]
+fn h2_http1_policy_preserves_verified_http1_for_clients_without_alpn() {
+    let certificates = issue_gateway_certificate();
+    let upstream_listener = TcpListener::bind("127.0.0.1:0").expect("upstream should bind");
+    let upstream = upstream_listener.local_addr().expect("upstream address");
+    let upstream_fixture = thread::spawn(move || {
+        let (mut stream, _) = upstream_listener
+            .accept()
+            .expect("gateway should connect upstream");
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .expect("upstream read timeout should be set");
+        let mut request = [0_u8; 4096];
+        let read = stream
+            .read(&mut request)
+            .expect("upstream request should be readable");
+        let request = String::from_utf8_lossy(&request[..read]);
+        assert!(
+            request.starts_with("GET /no-alpn HTTP/1.1\r\n"),
+            "no-ALPN TLS client must retain HTTP/1.1 compatibility through the gateway: {request:?}"
+        );
+        stream
+            .write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Length: 14\r\nConnection: close\r\n\r\ntls-h1-no-alpn",
+            )
+            .expect("upstream response should be writable");
+    });
+
+    let (listener, metrics_listener) = reserve_distinct_loopback_addresses();
+    let config = write_gateway_config(listener, metrics_listener, upstream, &certificates);
+    let mut process = GatewayProcess(spawn_gateway(&config));
+    let mut tls = connect_http1(listener, &certificates, &mut process.0, false);
+
+    assert_eq!(
+        tls.ssl().selected_alpn_protocol(),
+        None,
+        "a client that omits ALPN must not be assigned a synthetic negotiated protocol"
+    );
+
+    tls.write_all(b"GET /no-alpn HTTP/1.1\r\nHost: gateway.test\r\nConnection: close\r\n\r\n")
+        .expect("no-ALPN HTTP/1.1 request should write");
+    tls.flush().expect("no-ALPN HTTP/1.1 request should flush");
+
+    let mut response = Vec::new();
+    tls.read_to_end(&mut response)
+        .expect("no-ALPN HTTP/1.1 response should be readable");
+    let response = String::from_utf8(response).expect("HTTP/1.1 response must be UTF-8 in fixture");
+    assert!(response.starts_with("HTTP/1.1 200 OK\r\n"));
+    assert!(response.ends_with("tls-h1-no-alpn"));
+
+    upstream_fixture
+        .join()
+        .expect("no-ALPN cleartext upstream fixture should complete");
 }
