@@ -229,9 +229,8 @@ fn pg_erd_version_three_tls_listener_routes_healthz_over_real_http1_fallback() {
 
     let (listener, metrics_listener) = reserve_distinct_loopback_addresses();
     let config = write_pg_erd_config(listener, metrics_listener, backend, frontend, &certificates);
-    let mut child = spawn_gateway(&config);
-    let mut tls = connect_http1(listener, &certificates, &mut child);
-    let _process = GatewayProcess(child);
+    let mut process = GatewayProcess(spawn_gateway(&config));
+    let mut tls = connect_http1(listener, &certificates, &mut process.0);
 
     assert_eq!(
         tls.ssl().selected_alpn_protocol(),
