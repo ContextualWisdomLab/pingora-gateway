@@ -111,8 +111,12 @@ fn reserve_distinct_loopback_addresses() -> (SocketAddr, SocketAddr) {
     let traffic = TcpListener::bind("127.0.0.1:0").expect("traffic port should be available");
     let metrics = TcpListener::bind("127.0.0.1:0").expect("metrics port should be available");
     let addresses = (
-        traffic.local_addr().expect("traffic reservation has an address"),
-        metrics.local_addr().expect("metrics reservation has an address"),
+        traffic
+            .local_addr()
+            .expect("traffic reservation has an address"),
+        metrics
+            .local_addr()
+            .expect("metrics reservation has an address"),
     );
     assert_ne!(addresses.0, addresses.1);
     addresses
@@ -153,7 +157,8 @@ fn connect_h2(
     certificates: &LocalCertificates,
     process: &mut Child,
 ) -> pingora::tls::ssl::SslStream<TcpStream> {
-    let mut builder = SslConnector::builder(SslMethod::tls_client()).expect("TLS client should build");
+    let mut builder =
+        SslConnector::builder(SslMethod::tls_client()).expect("TLS client should build");
     builder
         .set_ca_file(&certificates.ca_cert)
         .expect("local CA should load");
@@ -206,8 +211,12 @@ fn write_h2_frame(
     header[3] = frame_type;
     header[4] = flags;
     header[5..9].copy_from_slice(&(stream_id & 0x7fff_ffff).to_be_bytes());
-    stream.write_all(&header).expect("H2 frame header should write");
-    stream.write_all(payload).expect("H2 frame payload should write");
+    stream
+        .write_all(&header)
+        .expect("H2 frame header should write");
+    stream
+        .write_all(payload)
+        .expect("H2 frame payload should write");
 }
 
 fn read_h2_frame(stream: &mut impl Read) -> (u8, u8, u32, Vec<u8>) {
@@ -230,12 +239,16 @@ fn generic_gateway_negotiates_h2_over_verified_downstream_tls_and_proxies_real_t
     let upstream_listener = TcpListener::bind("127.0.0.1:0").expect("upstream should bind");
     let upstream = upstream_listener.local_addr().expect("upstream address");
     let upstream_fixture = thread::spawn(move || {
-        let (mut stream, _) = upstream_listener.accept().expect("gateway should connect upstream");
+        let (mut stream, _) = upstream_listener
+            .accept()
+            .expect("gateway should connect upstream");
         stream
             .set_read_timeout(Some(Duration::from_secs(5)))
             .expect("upstream read timeout should be set");
         let mut request = [0_u8; 4096];
-        let read = stream.read(&mut request).expect("upstream request should be readable");
+        let read = stream
+            .read(&mut request)
+            .expect("upstream request should be readable");
         let request = String::from_utf8_lossy(&request[..read]);
         assert!(
             request.starts_with("GET / HTTP/1.1\r\n"),
@@ -292,7 +305,10 @@ fn generic_gateway_negotiates_h2_over_verified_downstream_tls_and_proxies_real_t
         }
     }
 
-    assert!(stream_one_ended, "H2 response stream must terminate normally");
+    assert!(
+        stream_one_ended,
+        "H2 response stream must terminate normally"
+    );
     assert_eq!(response_body, b"tls-h2-ok");
     upstream_fixture
         .join()
