@@ -79,14 +79,10 @@ fn representative_profile_cannot_green_without_scheduler_evidence_for_every_roun
         "round_${round}_scheduler_available=true",
         "round_${round}_scheduler_sample_complete=true",
     ] {
-        assert!(
-            WORKFLOW.contains(required),
-            "representative workflow must reject a receipt missing stable-TID scheduler evidence: {required}"
-        );
+        assert!(WORKFLOW.contains(required), "missing scheduler gate: {required}");
     }
-    assert!(ADR.contains(
-        "Every profiling round must produce a complete stable-TID scheduler delta"
-    ));
+    let adr_rule = "Every profiling round must produce a complete stable-TID scheduler delta";
+    assert!(ADR.contains(adr_rule), "missing scheduler ADR rule");
 }
 
 #[test]
