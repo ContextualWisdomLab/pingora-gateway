@@ -43,6 +43,7 @@ jobs:
           command -v rustup
           command -v cargo
           command -v pkg-config
+          command -v sha256sum
           pkg-config --exists openssl
 
           allowed_cpu_list="$(awk '/^Cpus_allowed_list:/ {print $2}' /proc/self/status)"
@@ -91,9 +92,26 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          rustup toolchain install 1.98.1 --profile minimal --component clippy,rustfmt
-          rustup default 1.98.1
-          rustc --version --verbose | grep -Fx 'release: 1.98.1'
+          rustup toolchain install 1.98.0 --profile minimal --component clippy,rustfmt
+          rustup default 1.98.0
+          rustc --version --verbose | grep -Fx 'release: 1.98.0'
+      - name: Build exact release gateway candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --release --locked --bin cwl-pingora-gateway
+          gateway_binary="$GITHUB_WORKSPACE/target/release/cwl-pingora-gateway"
+          test -x "$gateway_binary"
+          gateway_binary_sha256="$(sha256sum "$gateway_binary" | awk '{print $1}')"
+          test "${#gateway_binary_sha256}" -eq 64
+          printf 'CWL_PROFILE_GATEWAY_BINARY_SHA256=%s\n' "$gateway_binary_sha256" >>"$GITHUB_ENV"
+          {
+            printf 'gateway_build_profile=release\n'
+            printf 'gateway_binary_sha256=%s\n' "$gateway_binary_sha256"
+            printf 'gateway_binary_path=%s\n' "$gateway_binary"
+            rustc --version --verbose
+            cargo --version
+          } >"$RUNNER_TEMP/numa-build-provenance.txt"
       - name: Execute representative parked-read shutdown profile
         shell: bash
         env:
@@ -106,6 +124,7 @@ jobs:
           CWL_PROFILE_ROUNDS: ${{ env.PROFILE_ROUNDS }}
           CWL_PROFILE_CLOSE_BOUND_MS: ${{ env.CLOSE_BOUND_MS }}
           CWL_PROFILE_EVIDENCE_PATH: ${{ runner.temp }}/numa-shutdown-profile.txt
+          CWL_PROFILE_GATEWAY_BINARY: ${{ github.workspace }}/target/release/cwl-pingora-gateway
         run: |
           set -euo pipefail
           perf_args=()
@@ -131,6 +150,8 @@ jobs:
           set -euo pipefail
           test -s "$RUNNER_TEMP/numa-shutdown-profile.txt"
           grep -Fx "expected_sha=$EXPECTED_SHA" "$RUNNER_TEMP/numa-shutdown-profile.txt"
+          grep -Fx 'gateway_build_profile=release' "$RUNNER_TEMP/numa-shutdown-profile.txt"
+          grep -Fx "gateway_binary_sha256=$CWL_PROFILE_GATEWAY_BINARY_SHA256" "$RUNNER_TEMP/numa-shutdown-profile.txt"
           grep -Fx 'survivors_at_close_bound=0' "$RUNNER_TEMP/numa-shutdown-profile.txt"
       - name: Upload NUMA shutdown evidence
         if: ${{ always() }}
@@ -139,6 +160,7 @@ jobs:
           name: numa-shutdown-profile-${{ env.EXPECTED_SHA }}
           path: |
             ${{ runner.temp }}/numa-host-preflight.txt
+            ${{ runner.temp }}/numa-build-provenance.txt
             ${{ runner.temp }}/numa-shutdown-profile.txt
             ${{ runner.temp }}/perf-capability.txt
             ${{ runner.temp }}/perf-stat.txt
