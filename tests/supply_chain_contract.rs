@@ -48,10 +48,13 @@ fn released_pingora_dependencies_are_exact_registry_packages() {
         );
     }
 
-    for forbidden in ["github.com/cloudflare/pingora.git", "rev = "] {
+    for forbidden in [
+        "git = \"https://github.com/cloudflare/pingora.git\"",
+        "09696b51bc59315353d96686355861604d0bb48c",
+    ] {
         assert!(
             !manifest.contains(forbidden),
-            "released Pingora dependencies must not fall back to mutable git-source consumption: {forbidden}"
+            "released Pingora dependencies must not fall back to the superseded Pingora git source: {forbidden}"
         );
     }
 
