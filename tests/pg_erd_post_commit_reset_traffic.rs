@@ -155,8 +155,10 @@ fn raw_request_until_committed_then_reset(
     reset_release: mpsc::Sender<()>,
 ) -> (Vec<u8>, DownstreamTermination) {
     let mut downstream = TcpStream::connect(address).expect("gateway should accept traffic");
+    // The observer must outlive the characterized 5 s upstream read budget. Matching deadlines
+    // lets scheduler jitter manufacture EAGAIN before Pingora can surface the bounded termination.
     downstream
-        .set_read_timeout(Some(Duration::from_secs(5)))
+        .set_read_timeout(Some(Duration::from_secs(7)))
         .expect("downstream timeout should be configurable");
     downstream
         .write_all(request)
