@@ -99,7 +99,10 @@ fn generic_runtime_composition_materializes_transport_after_topology_validation(
         .expect("valid topology and transport should compose together");
 
     assert_eq!(server_conf.threads, 8);
-    assert_eq!(proxy.build_upstream_peer().address().to_string(), "127.0.0.1:8080");
+    assert_eq!(
+        proxy.build_upstream_peer().address().to_string(),
+        "127.0.0.1:8080"
+    );
 }
 
 #[test]
@@ -108,8 +111,7 @@ fn generic_runtime_composition_preserves_transport_activation_failure() {
         .expect("base generic runtime should validate");
     config.upstreams[0].tls = true;
     config.upstreams[0].sni = Some("api.internal.example".to_string());
-    config.upstreams[0].trust_bundle_file =
-        Some(PathBuf::from("/definitely/missing/cwl-ca.pem"));
+    config.upstreams[0].trust_bundle_file = Some(PathBuf::from("/definitely/missing/cwl-ca.pem"));
 
     assert!(matches!(
         compose_gateway_runtime(&config).unwrap_err(),
