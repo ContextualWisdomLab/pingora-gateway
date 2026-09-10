@@ -75,18 +75,15 @@ fn representative_profile_runs_the_release_built_gateway_candidate() {
 #[test]
 fn representative_profile_cannot_green_without_scheduler_evidence_for_every_round() {
     for required in [
-        "scheduler_available_rounds",
-        "scheduler_required_rounds",
-        "assert_eq!(scheduler_available_rounds, rounds",
+        "for round in $(seq 1 \"$PROFILE_ROUNDS\")",
+        "round_${round}_scheduler_available=true",
+        "round_${round}_scheduler_sample_complete=true",
     ] {
         assert!(
-            PROFILE.contains(required),
-            "representative profile must fail closed when stable-TID scheduler evidence is incomplete: {required}"
+            WORKFLOW.contains(required),
+            "representative workflow must reject a receipt missing stable-TID scheduler evidence: {required}"
         );
     }
-    assert!(WORKFLOW.contains(
-        "grep -Fx \"scheduler_available_rounds=$PROFILE_ROUNDS\" \"$RUNNER_TEMP/numa-shutdown-profile.txt\""
-    ));
     assert!(ADR.contains(
         "Every profiling round must produce a complete stable-TID scheduler delta"
     ));
