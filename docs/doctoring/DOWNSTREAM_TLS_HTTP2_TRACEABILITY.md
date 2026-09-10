@@ -37,6 +37,10 @@ RFC 7301 defines ALPN negotiation. It requires the server to choose a common adv
 
 OpenSSL documents ALPN protocol lists as vectors of non-empty 8-bit length-prefixed byte strings; zero-length and truncated entries are invalid. Its server ALPN callback is not invoked when ClientHello contains no ALPN extension. Consequently an ALPN-bearing no-overlap client and a client that omits ALPN are distinct compatibility cases: the former is rejected, while the latter may complete verified TLS with no negotiated application protocol and continue on Pingora's ordinary HTTP/1 path.
 
+RFC 9112 defines an HTTP/1.1 message header section as the start-line and field lines followed by the empty-line delimiter. The real-origin fixtures therefore read until the complete `\r\n\r\n` boundary rather than assuming one TCP read contains one header section, and cap fixture header evidence at 64 KiB.
+
+Rust's `std::net::TcpStream::set_read_timeout` applies a timeout to blocking `read` calls; it is not an end-to-end HTTP-header lifetime primitive. To make the fixture's stated five-second evidence bound monotonic across multiple successful reads, the current helper fixes one `Instant` deadline and supplies only the remaining duration to each subsequent socket read. This is test-evidence integrity only and does not alter Pingora's production `read_ms` or claim to solve the separate whole-request-header lifetime root tracked by #45/#447.
+
 RFC 9846 is the current TLS 1.3 specification and obsoletes RFC 8446. RFC 9852, published in July 2026 as BCP 195, updates TLS deployment guidance so new protocols that use TLS must require TLS 1.3. This migration deploys existing HTTPS/HTTP/2 rather than defining a new application protocol, so RFC 9852 is a security-design input rather than authority to silently break existing TLS 1.2 consumers. Before cutover, consumer evidence and security policy must select an explicit accepted TLS version/cipher contract and test it directly instead of relying on an inherited library profile. RFC 9525 supplies current service-identity verification guidance for TLS applications. The real-wire tests use a controlled CA and a certificate for `gateway.test` to exercise identity validation rather than disabling peer verification.
 
 RFC 9000 and RFC 9114 show why HTTP/3 is not a TLS-listener checkbox: HTTP/3 is mapped over QUIC and therefore introduces a UDP/QUIC transport surface. H3 remains fail-closed until a release-qualified server capability and a separate operational/security contract exist.
@@ -56,6 +60,8 @@ Fresh review of the selector then found that an early return on a valid `h2` pre
 Real-wire compatibility review also found that source-level OpenSSL semantics alone did not prove the legacy TLS client case most relevant to Nginx/OpenResty parity. Exact `d751be56fb043b95084f3e810435ca76de05dfc6` adds a certificate-verified client that deliberately sends no ALPN extension, asserts that no synthetic protocol is negotiated, sends a real HTTP/1.1 request through the generic production root and requires a successful origin round trip. Exact `9d00693d4142035b5559851c6c7688a5ac2bcf3b` updates the test strategy to make both complete-vector validation and no-ALPN compatibility explicit. Later exact heads must run these unchanged contracts GREEN; no predecessor result transfers.
 
 Code-current documentation review then found the inherited CHANGELOG still described the old 0.8.x shutdown/parser state and omitted current worker-topology/TLS behavior. Exact `f063f84e17aa8c6ffc6e0df1df2f6f22360f0e9e` repairs that exact fetched blob without changing production behavior. The current TRACEABILITY update adds the 2026 TLS standards/offload decision boundary; exact-head checks after this documentation movement must be reacquired before promotion.
+
+Hosted execution then exposed a fixture-only deadline collision in the pg-erd post-commit observer. `9c0a0378afb617256bc76a4f2ec77ba3c3bae910` moved only that observer's outer read budget to seven seconds while leaving production `read_ms: 5000` unchanged. Review of the TLS/H1 origin fixtures next found that one `TcpStream::read` was incorrectly treated as a complete request header; `071293cf2c960ac1032a1c1ca1015cb600f84c12` changed the helper to read through the complete HTTP/1 header delimiter with a 64 KiB cap. A further evidence review found that the helper's socket timeout still reset on each successful read. Exact `96ce09c03fde641e91e8802cb9590dc56a9f1913` replaces that resettable inactivity budget with one absolute five-second deadline and per-read remaining budget. These repairs alter test evidence only, not production TLS/HTTP timing or routing semantics.
 
 ## What this increment can prove
 
@@ -83,6 +89,8 @@ Cloudflare, Inc. (2026). *Pingora server configuration* (source `702f69015e53f72
 
 Cloudflare, Inc. (2026). *Pingora TLS listener implementation* (source `702f69015e53f7244d6ad2e743de571d859a70a4`). https://github.com/cloudflare/pingora/blob/702f69015e53f7244d6ad2e743de571d859a70a4/pingora-core/src/listeners/tls/boringssl_openssl/mod.rs
 
+Fielding, R. T., Nottingham, M., & Reschke, J. (2022). *HTTP/1.1* (RFC 9112). Internet Engineering Task Force. https://doi.org/10.17487/RFC9112
+
 Friedl, S., Popov, A., Langley, A., & Stephan, E. (2014). *Transport Layer Security (TLS) Application-Layer Protocol Negotiation Extension* (RFC 7301). Internet Engineering Task Force. https://doi.org/10.17487/RFC7301
 
 Iyengar, J., & Thomson, M. (2021). *QUIC: A UDP-based multiplexed and secure transport* (RFC 9000). Internet Engineering Task Force. https://doi.org/10.17487/RFC9000
@@ -90,6 +98,8 @@ Iyengar, J., & Thomson, M. (2021). *QUIC: A UDP-based multiplexed and secure tra
 OpenSSL Project Authors. (2024). *SSL_CTX_set_alpn_select_cb* (OpenSSL 3.1 documentation). https://docs.openssl.org/3.1/man3/SSL_CTX_set_alpn_select_cb/
 
 Rescorla, E. (2026). *The Transport Layer Security (TLS) Protocol Version 1.3* (RFC 9846). Internet Engineering Task Force. https://doi.org/10.17487/RFC9846
+
+Rust Project Developers. (n.d.). *TcpStream in std::net*. Rust Standard Library. https://doc.rust-lang.org/std/net/struct.TcpStream.html
 
 Saint-Andre, P., & Salz, R. (2023). *Service identity in TLS* (RFC 9525). Internet Engineering Task Force. https://doi.org/10.17487/RFC9525
 
