@@ -1,6 +1,16 @@
 # Configuration Contracts
 
-## Generic `cwl-pingora-gateway` version 1
+## Shared invariants
+
+Both production binaries parse strict YAML and reject unknown fields. Traffic and metrics listeners must be non-zero and must not overlap one effective socket authority, including wildcard/concrete and IPv4-mapped IPv6 aliases. Request-body, in-flight, data-plane worker and upstream keepalive budgets must be positive; `service_threads` is admitted only in `1..=256`. The gateway never derives worker count from host CPU count. The proxy service follows Pingora's global `ServerConf::threads`; the Prometheus service is explicitly overridden to one worker.
+
+Every upstream has a stable non-empty name, a non-zero socket address, an explicit `tls` flag and positive connection/total-connection/read/write/idle budgets. TLS upstreams require non-empty SNI. Optional `trust_bundle_file` must be an absolute path and is read once during peer materialization before listener activation. Cleartext upstreams may specify neither SNI nor trust bundle. Request-controlled destinations are never admitted.
+
+Pingora `read_ms` is a per-read inactivity budget, not a whole-response deadline. The gateway does not reinterpret it as an application SLO or total-response timer. `max_in_flight_requests` is a process-local admission budget for non-health requests; saturation fails fast with HTTP 503. `/livez` and `/readyz` remain process-local health paths and do not consume that budget.
+
+## Generic `cwl-pingora-gateway`
+
+### Version 1 — cleartext downstream
 
 ```yaml
 version: 1
@@ -24,27 +34,53 @@ upstreams:
       idle_ms: 10000
 ```
 
-Unknown fields are rejected. `version` must be `1`. `listener`, `metrics_listener`, and `address` are socket addresses with non-zero ports. Port zero is rejected because this deployment contract requires stable operator-declared listener authority and a concrete connectable upstream rather than OS-selected ephemeral listener ports or unusable upstream destinations. Traffic and metrics listeners must not overlap one effective socket authority. Equal addresses, same-port same-family wildcard/concrete aliases, exact IPv4-mapped IPv6 aliases of the same IPv4 address, an IPv4 wildcard paired with any mapped IPv4 authority, a mapped IPv4 wildcard paired with any native or mapped IPv4 authority, and the platform-dependent same-port IPv6-wildcard/IPv4 combination all fail closed; distinct concrete non-aliased addresses may use the same port. `max_request_body_bytes`, `max_in_flight_requests`, `service_threads`, and `upstream_keepalive_pool_size` must all be positive. `service_threads` must not exceed 256. Generic v1 requires exactly one upstream and a non-empty stable upstream name. Every timeout must be positive.
+Version 1 remains the original one-upstream cleartext downstream contract. It must not contain `downstream_tls`; attempting to add the field fails closed rather than silently changing transport semantics. The generic runtime has no route table, request-controlled destination, credentials, ACME, retry count, static-root, WebSocket switch or load-balancer policy.
 
-`service_threads` is the validated data-plane worker count passed into Pingora `ServerConf::threads`. The proxy service follows that global value, and Pingora's `HttpProxy` uses the same value to size its sharded graceful-shutdown notification path. The process also registers a Prometheus service, but both production composition roots explicitly override that low-volume metrics listener to one worker instead of multiplying telemetry workers with proxy capacity. Existing unreleased version-1 configurations that omit the field therefore preserve one proxy worker plus one metrics worker; new deployment and profiling configurations should state the proxy value explicitly. The gateway never infers it from host CPU count. Values of zero or more than 256 fail closed before listener activation. The 256-worker ceiling is a safety boundary rather than a deployment recommendation: raising it requires a later contract decision backed by capacity, scheduler and shutdown-contention evidence. Increasing the value within the admitted range makes a multi-worker proxy topology executable, but does not by itself prove NUMA scaling, shutdown-tail behavior, or production capacity.
+For cleartext downstream traffic the forwarding policy removes request-controlled `Forwarded`, `X-Forwarded-For`, `X-Forwarded-Host`, `X-Forwarded-Port`, `X-Forwarded-Proto`, `X-Forwarded-Server`, and `X-Real-IP`, then emits only gateway-owned transport facts. It does not assert user identity.
 
-The field name remains `service_threads` because it maps to Pingora's global `ServerConf` contract; it must not be interpreted as “multiply every registered service by this value.” Service-level overrides are part of the production composition. Capacity evidence must therefore record the configured proxy worker count, registered service count, metrics-service override, CPU/socket/NUMA topology and derived configured service-worker slots separately. Those slots are not a total OS process-thread count because Pingora/runtime internals may own additional threads.
+### Version 2 — downstream TLS with H2/H1 ALPN
 
-The timeout fields map directly to the pinned Pingora peer options rather than defining a second gateway timer model. In particular, `read_ms` is a **per-read inactivity budget**: Pingora waits at most that long for each individual upstream `read()` and resets the timer after a successful read. It is not a total-response deadline. A connected upstream that sends no response bytes is therefore bounded by `read_ms`, while a slow-drip response can remain alive across multiple successful reads. Generic v1 still has no whole-response lifetime and must not infer one from `read_ms`.
+```yaml
+version: 2
+listener: 0.0.0.0:6443
+metrics_listener: 127.0.0.1:6192
+max_request_body_bytes: 1048576
+max_in_flight_requests: 128
+service_threads: 4
+upstream_keepalive_pool_size: 32
+downstream_tls:
+  certificate_chain_file: /etc/cwl/tls/server.crt
+  private_key_file: /etc/cwl/tls/server.key
+  alpn: h2_http1
+upstreams:
+  - name: application
+    address: 10.0.0.20:8443
+    tls: true
+    sni: application.internal.example
+    trust_bundle_file: /etc/cwl/application-ca.pem
+    timeouts:
+      connection_ms: 1000
+      total_connection_ms: 2000
+      read_ms: 5000
+      write_ms: 5000
+      idle_ms: 10000
+```
 
-`max_in_flight_requests` is a process-local backpressure boundary for non-health downstream requests. When the budget is exhausted, the runtime fails fast with HTTP 503 instead of admitting unbounded work. `/livez` and `/readyz` bypass this application admission budget so saturation does not hide process health. The admission lease is released when the request context ends, including failed requests. `upstream_keepalive_pool_size` is wired directly into Pingora's `ServerConf`; the runtime does not inherit Pingora's framework default of 128 reusable upstream connections.
+Version 2 retains all version-1 generic network/runtime invariants and requires `downstream_tls`. Both certificate/key references must be non-empty absolute paths. Admin parsing validates only deterministic references; `tls_delivery` materializes them once immediately before listener construction and fails activation if Pingora/OpenSSL cannot load them or if the private key does not match the certificate. Certificate issuance, renewal, revocation, backup and private-key custody remain outside this repository.
 
-Generic v1 has no operator-facing HTTP/1 request-header byte/count field. At the pinned Pingora revision, finite HTTP/1 parser ceilings are supplier constants applied before the `ProxyHttp` request callback; a later `request_filter()` size check can express application semantics but cannot be credited as parser/pre-allocation admission. Issue #43 and supplier `cloudflare/pingora#993` track a supported parser-phase control. Until an immutable supplier capability exists, adding a speculative field here would create a configuration promise the runtime cannot enforce at the required phase. HTTP/2 decoded-header-list limits are a different protocol accounting model and must not be reused as HTTP/1 wire/parser bytes.
+The only admitted ALPN policy is `h2_http1`. It maps to Pingora `TlsSettings::enable_h2()`: HTTP/2 is preferred when offered and HTTP/1.1 remains allowed as fallback. h2c is not enabled. HTTP/3/QUIC is not implied by this field and remains unsupported by this contract.
 
-`tls: true` requires non-empty `sni`, which Pingora uses for SNI and hostname verification together with certificate verification. `trust_bundle_file` is optional and, when present, must be an absolute path to a non-empty PEM certificate bundle readable during peer activation before listeners open. The bundle supplies trust anchors for that upstream instead of changing certificate-authority ownership: issuance and rotation remain external responsibilities. If `trust_bundle_file` is omitted, Pingora uses platform trust roots. `tls: false` forbids both `sni` and `trust_bundle_file`.
+A version-2 source capability is not a complete mixed-protocol parity claim. Supplier `cloudflare/pingora#901` and `#936` continue to gate H2-downstream to H1-upstream Cookie/body-framing correctness until maintainer-integrated, release-qualified identities exist or an alternate deployment contract makes those downgrade paths unreachable.
 
-The generic contract does not include route tables, user-selected destinations, credentials, downstream certificates, ACME, retry counts, static roots, WebSocket switches, or load-balancer policy. Adding one of those fields changes public semantics and requires a versioned contract/ADR plus behavior tests. `service_threads` is the pre-release runtime-capacity exception recorded in ADR 0012: omission preserves the only previously characterized proxy topology, while explicit use is bounded and executable before the first immutable gateway release.
+## Bounded `cwl-pingora-pg-erd-migration`
 
-Generic v1 downstream transport is cleartext TCP. Before proxying, the generic adapter removes request-controlled `Forwarded`, `X-Forwarded-For`, `X-Forwarded-Host`, `X-Forwarded-Port`, `X-Forwarded-Proto`, `X-Forwarded-Server`, and `X-Real-IP`, then emits only gateway-owned `Forwarded: proto=http` to the upstream; it does not assert client identity. Upstream HTTP remains HTTP/1.1-only in this release line.
+This binary consumes a migration-specific Admin Config. It is not a generic multi-route language. Operator input can bind only listener/metrics authority, bounded runtime values, and concrete transport data for the already characterized `backend` and `frontend` upstream identities. Route rules and edge-owned response policy remain compiled migration contracts.
 
-## Bounded `cwl-pingora-pg-erd-migration` candidate
+### Version 1 — historical cleartext profile
 
-The dedicated pg-erd migration binary consumes a different, migration-specific Admin Config profile. Version 1 remains readable only to preserve the existing unreleased characterization stack. Version 2 is the opt-in response-lifetime increment and requires an explicit positive `max_upstream_response_body_ms`; version 1 rejects that field so the old contract cannot silently acquire new timing semantics. Both unreleased versions admit the runtime-only `service_threads` data-plane capacity control; omission preserves the historical one-proxy-worker topology while the metrics service remains fixed at one worker. ADR 0012 records this bounded pre-release addition separately from routing or product semantics.
+Version 1 preserves the original cleartext profile. It rejects `max_upstream_response_body_ms` and `downstream_tls`.
+
+### Version 2 — cleartext plus response-body progress lifetime
 
 ```yaml
 version: 2
@@ -76,24 +112,64 @@ upstreams:
       idle_ms: 10000
 ```
 
-The numeric response-lifetime value above is an illustrative configuration example, not a pg-erd production SLO. A deployment owner must choose the version-2 value from its observed long-response contract before canary or cutover. Version 2 rejects zero or a missing response-body lifetime rather than substituting a hidden default.
+Version 2 requires a positive explicit `max_upstream_response_body_ms` and remains cleartext downstream. The value starts at the first non-informational upstream response header and is checked on non-empty body-progress callbacks; it is not an exact timer interrupt for a pending read. Version 2 rejects `downstream_tls`.
 
-As in the generic runtime, `service_threads` sets Pingora's global worker count used by the proxy service and by `HttpProxy` shutdown-notifier sharding. The metrics service explicitly overrides itself to one worker. The admitted proxy range is 1 through 256 inclusive. Omitting the field preserves one proxy worker for compatibility with the existing unreleased characterization stack, while representative multi-worker/NUMA profiling must name the explicit proxy value used for the run and the metrics override. The gateway does not derive worker count from CPU availability, and a high-core host with `service_threads: 1` is not evidence for multi-worker contention or scaling. The 256 ceiling limits accidental data-plane thread fan-out and is not itself a recommended production setting.
+### Version 3 — response lifetime plus downstream TLS/H2
 
-`max_upstream_response_body_ms` starts when Pingora invokes the upstream-response-header filter for the first non-informational response, before body-progress callbacks are processed. Runtime Isolation compares elapsed monotonic time only when a non-empty upstream body chunk is actually observed. Once that progress boundary is at or beyond the configured lifetime, the callback raises an upstream-scoped fatal error. Empty/end-of-stream bookkeeping callbacks do not create a false timeout. If the response status/header was already committed, the gateway terminates that incomplete downstream response instead of inventing a second status or silently routing to the other pg-erd origin. The ordinary request context then drops its in-flight admission lease.
+```yaml
+version: 3
+listener: 0.0.0.0:6443
+metrics_listener: 127.0.0.1:6192
+max_request_body_bytes: 1048576
+max_in_flight_requests: 128
+max_upstream_response_body_ms: 30000
+service_threads: 4
+upstream_keepalive_pool_size: 32
+downstream_tls:
+  certificate_chain_file: /etc/cwl/tls/server.crt
+  private_key_file: /etc/cwl/tls/server.key
+  alpn: h2_http1
+upstreams:
+  - name: backend
+    address: 10.0.0.20:8000
+    tls: false
+    timeouts:
+      connection_ms: 1000
+      total_connection_ms: 2000
+      read_ms: 5000
+      write_ms: 5000
+      idle_ms: 10000
+  - name: frontend
+    address: 10.0.0.21:3000
+    tls: false
+    timeouts:
+      connection_ms: 1000
+      total_connection_ms: 2000
+      read_ms: 5000
+      write_ms: 5000
+      idle_ms: 10000
+```
 
-This callback guard is deliberately not described as an exact timer interrupt. At the pinned Pingora revision, `read_ms` still applies independently to each upstream read and resets after a successful read. A continuously progressing body is therefore stopped at the first non-empty body callback at or beyond `max_upstream_response_body_ms`; a response that becomes quiescent is bounded by `read_ms`. The current callback surface does not wake a pending read at the absolute body-lifetime instant, and slow-drip of an incomplete **response header** remains a separate transport gap. Neither limitation may be hidden in parity or production-SLO claims.
+Version 3 retains all version-2 response-lifetime semantics and additionally requires `downstream_tls` with the same read-only materialization and `h2_http1` policy as generic version 2. Earlier versions reject this field. Missing TLS material or missing response lifetime in version 3 fails before listener activation.
 
-The request-header parser-admission gap above also applies to pg-erd versions 1 and 2. Neither version may silently acquire a header-budget field before the supplier exposes an enforceable parser-phase hook and a deliberate later Admin Config version adopts it with real-listener RED→GREEN evidence. The fixed current Pingora HTTP/1 ceiling is not a migration-specific configurable budget, and callback-only rejection is not equivalent resource evidence.
+The characterized routing profile remains fixed: `/healthz` is routed to `backend`, the raw `/api` prefix contract routes to `backend`, and fallback routes to `frontend`; `/livez` and `/readyz` remain process-local. Product authentication/business rules, Keyverse identity, Wardnet/EgressWeave verdicts, arbitrary service discovery and request-controlled routing are not configurable here.
 
-This is not a generic multi-route configuration language. Operator input can bind only concrete transport/TLS values for the compiled `backend` and `frontend` identities. Missing, extra, duplicate, renamed, port-zero, or otherwise invalid listener/metrics/upstream transport authorities fail closed before listener activation. Port zero is rejected because this deployment contract requires stable operator-declared socket authority rather than an OS-selected ephemeral listener or an unusable upstream destination. Listener and metrics authority use the same effective-authority invariant as generic v1, including exact and wildcard IPv4-mapped aliases, same-port same-family wildcard/concrete aliases, and the platform-dependent same-port IPv6-wildcard/IPv4 combination; distinct concrete non-aliased addresses remain admissible. Routes and edge-owned response fields are not configurable: the characterized profile fixes exact `/healthz -> backend`, raw `PathPrefix(`/api`) -> backend` semantics including `/apiary`, fallback `/ -> frontend`, and the four captured response fields `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, and `Permissions-Policy: geolocation=(), microphone=(), camera=()`.
+## Protocol admission and security boundaries
 
-Admin parsing validates only deterministic configuration and authority invariants. It does not read custom trust-bundle bytes. If an admitted TLS upstream supplies `trust_bundle_file`, the canonical Pingora peer adapter reads and parses that material exactly once during `build_proxy`, still before listeners are registered. An unreadable or invalid bundle therefore blocks activation without a validate-then-reload trust-file window.
+Every immutable Pingora upstream peer uses `HttpUpstreamRequestPolicy::deny_upgrades()`. The transport-neutral request guard also rejects HTTP/1 Upgrade attempts before application admission/origin selection. This is explicit non-support for WebSocket/HTTP Upgrade, not partial WebSocket parity.
 
-The migration adapter reserves `/livez` and `/readyz` as process-local Pingora health endpoints and does not route them to either consumer origin. The legacy consumer `/healthz` remains distinct routed application traffic to `backend`. Hostile request-controlled `Forwarded`, `X-Forwarded-*`, `X-Real-IP`, and `X-Forwarded-Server` identity is not trusted; characterized compatibility fields are rebuilt from accepted downstream transport/request authority. The current captured Traefik entryPoint is cleartext `web`, so this candidate emits downstream scheme `http`. HTTPS/TLS listener behavior requires a separate executable contract.
+Downstream HTTP/1 request-header byte/count admission and whole-header lifetime remain supplier-owned pre-callback constraints tracked separately. Callback-only validation is not credited as parser/pre-allocation admission. HTTP/2 decoded-header-list accounting is a different protocol model and must not be presented as equivalent to HTTP/1 wire/parser byte admission.
 
-The migration profile cannot configure product authentication/business rules, Keyverse identity, Wardnet/EgressWeave verdicts, certificate issuance/rotation, service discovery, arbitrary destinations, or Context Graph/EA state. Source-level listener capability is not release, deployment, parity, canary, cutover, or legacy-removal evidence.
+Downstream TLS/H2 source admission does not close the full HTTP/2 operational matrix. Real migration acceptance still requires the issue #51 matrix for concurrent streams, reset/cancellation, GOAWAY/drain, header/body limits, flow control/backpressure, origin failure/recovery, forwarding trust, timing and rollback/cutover observability. HTTP/3 remains a separate QUIC/UDP contract.
 
-## Shared observability boundary
+## Observability and data minimization
 
-Both binaries reserve `/livez` and `/readyz` for process health and use the dedicated metrics listener for low-cardinality Prometheus telemetry. The metrics service is intentionally fixed to one Pingora worker and is not scaled by the data-plane `service_threads` value. Operators should normally bind metrics to loopback, a pod-only address, or another access-controlled observability network rather than the public traffic address. Shared application telemetry is limited to request count, request-error count, observed request-body bytes, and backpressure rejection count. Access logs record only response status, coarse success/error outcome, and observed request-body byte count; request URI, host, client identity, authorization, cookies, tokens, and configured credentials are intentionally absent.
+The shared process exposes bounded request/error/body-byte/backpressure metrics and low-cardinality transport completion logs. It does not log authorization headers, cookies, tokens, customer payloads, arbitrary request paths, trust-bundle contents, certificate private-key material or configuration credentials. TLS listener activation must not turn certificate paths or cryptographic material into metric labels or access-log content.
+
+## Performance and release evidence
+
+`service_threads` is Pingora's global data-plane worker input for services without a service-level override. The proxy follows it; the Prometheus service remains one worker. Values above 256 fail closed. The ceiling is a safety bound, not a deployment recommendation. Representative capacity evidence must record configured proxy workers, registered services/overrides and CPU/socket/NUMA topology rather than reporting `service_threads` as total OS threads.
+
+Controlled loopback k6 evidence is a regression bound, not a production SLO. TLS/H2 buyer-path evidence must distinguish new-connection/handshake cost from reused-connection traffic and keep applicable routing/TLS I/O in the measurement. The repository's `<20 ms` gate applies only where the specific buyer path declares it and cannot be met by reducing samples/concurrency or measuring unrealistic warm-only traffic.
+
+A PR head is not a deployable identity. Protected release promotion requires exact-head formatting/tests/Clippy/rustdoc/owned-production coverage, realistic traffic and failure evidence, rootless read-only OCI execution, current supply-chain scan, immutable artifact digest, SBOM/provenance/reproducibility evidence, rollback rehearsal, consumer deployment pin, shadow/canary, observed rollback, cutover and verified legacy removal.
