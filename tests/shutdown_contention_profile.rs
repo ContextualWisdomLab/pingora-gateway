@@ -6,7 +6,7 @@
 
 #![cfg(target_os = "linux")]
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
@@ -39,8 +39,22 @@ struct Topology {
     csv: String,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct SchedulerCounters {
+    cpu_runtime_ns: u64,
+    runqueue_wait_ns: u64,
+    timeslices: u64,
+    voluntary_ctxt_switches: u64,
+    nonvoluntary_ctxt_switches: u64,
+}
+
+#[derive(Debug, Clone)]
+struct SchedulerSnapshot {
+    tasks: BTreeMap<u32, SchedulerCounters>,
+}
+
 #[derive(Debug, Clone, Copy, Default)]
-struct SchedulerSample {
+struct SchedulerDelta {
     task_count: u64,
     cpu_runtime_ns: u64,
     runqueue_wait_ns: u64,
@@ -49,23 +63,52 @@ struct SchedulerSample {
     nonvoluntary_ctxt_switches: u64,
 }
 
-impl SchedulerSample {
-    fn saturating_delta(self, earlier: Self) -> Self {
-        Self {
-            task_count: self.task_count,
-            cpu_runtime_ns: self.cpu_runtime_ns.saturating_sub(earlier.cpu_runtime_ns),
-            runqueue_wait_ns: self
-                .runqueue_wait_ns
-                .saturating_sub(earlier.runqueue_wait_ns),
-            timeslices: self.timeslices.saturating_sub(earlier.timeslices),
-            voluntary_ctxt_switches: self
-                .voluntary_ctxt_switches
-                .saturating_sub(earlier.voluntary_ctxt_switches),
-            nonvoluntary_ctxt_switches: self
-                .nonvoluntary_ctxt_switches
-                .saturating_sub(earlier.nonvoluntary_ctxt_switches),
-        }
+impl SchedulerSnapshot {
+    fn same_task_set(&self, other: &Self) -> bool {
+        self.tasks.keys().eq(other.tasks.keys())
     }
+
+    fn checked_delta(&self, earlier: &Self) -> Option<SchedulerDelta> {
+        if !self.same_task_set(earlier) {
+            return None;
+        }
+
+        let mut delta = SchedulerDelta {
+            task_count: self.tasks.len().try_into().ok()?,
+            ..SchedulerDelta::default()
+        };
+        for (tid, after) in &self.tasks {
+            let before = earlier.tasks.get(tid)?;
+            delta.cpu_runtime_ns = delta
+                .cpu_runtime_ns
+                .checked_add(after.cpu_runtime_ns.checked_sub(before.cpu_runtime_ns)?)?;
+            delta.runqueue_wait_ns = delta
+                .runqueue_wait_ns
+                .checked_add(after.runqueue_wait_ns.checked_sub(before.runqueue_wait_ns)?)?;
+            delta.timeslices = delta
+                .timeslices
+                .checked_add(after.timeslices.checked_sub(before.timeslices)?)?;
+            delta.voluntary_ctxt_switches = delta.voluntary_ctxt_switches.checked_add(
+                after
+                    .voluntary_ctxt_switches
+                    .checked_sub(before.voluntary_ctxt_switches)?,
+            )?;
+            delta.nonvoluntary_ctxt_switches = delta.nonvoluntary_ctxt_switches.checked_add(
+                after
+                    .nonvoluntary_ctxt_switches
+                    .checked_sub(before.nonvoluntary_ctxt_switches)?,
+            )?;
+        }
+        Some(delta)
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct SchedulerEvidence {
+    delta: Option<SchedulerDelta>,
+    sample_incomplete: bool,
+    task_set_changed: bool,
+    counter_regressed: bool,
 }
 
 #[derive(Debug)]
@@ -74,7 +117,7 @@ struct RoundEvidence {
     survivors_at_close_bound: usize,
     process_exit_ms: u128,
     pre_signal_jitter_ms: usize,
-    scheduler_delta: Option<SchedulerSample>,
+    scheduler: SchedulerEvidence,
 }
 
 fn required_env_usize(name: &str) -> usize {
@@ -98,15 +141,41 @@ fn command_stdout(program: &str, args: &[&str]) -> String {
     String::from_utf8(output.stdout).expect("profile command output must be UTF-8")
 }
 
+fn parse_cpu_list(raw: &str) -> BTreeSet<usize> {
+    let mut cpus = BTreeSet::new();
+    for part in raw.split(',').map(str::trim).filter(|part| !part.is_empty()) {
+        if let Some((start, end)) = part.split_once('-') {
+            let start = start.parse::<usize>().expect("CPU range start must be numeric");
+            let end = end.parse::<usize>().expect("CPU range end must be numeric");
+            assert!(start <= end, "CPU affinity range must be ascending");
+            cpus.extend(start..=end);
+        } else {
+            cpus.insert(part.parse::<usize>().expect("CPU id must be numeric"));
+        }
+    }
+    assert!(!cpus.is_empty(), "process CPU affinity must not be empty");
+    cpus
+}
+
+fn process_allowed_cpus() -> BTreeSet<usize> {
+    let status = fs::read_to_string("/proc/self/status")
+        .expect("representative Linux profile must expose /proc/self/status");
+    let allowed = status
+        .lines()
+        .find_map(|line| line.strip_prefix("Cpus_allowed_list:"))
+        .expect("/proc/self/status must expose Cpus_allowed_list");
+    parse_cpu_list(allowed.trim())
+}
+
 fn detect_topology() -> Topology {
-    let online_cpus = command_stdout("nproc", &[])
-        .trim()
-        .parse::<usize>()
-        .expect("nproc must return an integer");
-    let csv = command_stdout("lscpu", &["-p=CPU,NODE,SOCKET"]);
+    let allowed_cpus = process_allowed_cpus();
+    let raw_csv = command_stdout("lscpu", &["-p=CPU,NODE,SOCKET"]);
+    let mut observed_cpus = BTreeSet::new();
     let mut nodes = BTreeSet::new();
     let mut sockets = BTreeSet::new();
-    for line in csv
+    let mut csv = String::new();
+
+    for line in raw_csv
         .lines()
         .filter(|line| !line.starts_with('#') && !line.is_empty())
     {
@@ -116,7 +185,13 @@ fn detect_topology() -> Topology {
             3,
             "lscpu topology row must have CPU,NODE,SOCKET"
         );
-        assert!(fields[0].parse::<usize>().is_ok(), "CPU id must be numeric");
+        let cpu = fields[0].parse::<usize>().expect("CPU id must be numeric");
+        if !allowed_cpus.contains(&cpu) {
+            continue;
+        }
+        observed_cpus.insert(cpu);
+        csv.push_str(line);
+        csv.push('\n');
         if fields[1] != "-" {
             nodes.insert(fields[1].to_owned());
         }
@@ -124,8 +199,13 @@ fn detect_topology() -> Topology {
             sockets.insert(fields[2].to_owned());
         }
     }
+
+    assert_eq!(
+        observed_cpus, allowed_cpus,
+        "every process-allowed CPU must have a filtered lscpu topology row"
+    );
     Topology {
-        online_cpus,
+        online_cpus: allowed_cpus.len(),
         numa_nodes: nodes.len(),
         sockets: sockets.len(),
         csv,
@@ -242,52 +322,44 @@ fn park_health_connections(address: SocketAddr, count: usize) -> Vec<TcpStream> 
     streams
 }
 
-fn parse_status_counter(status: &str, key: &str) -> u64 {
-    status
-        .lines()
-        .find_map(|line| {
-            let (name, raw) = line.split_once(':')?;
-            (name == key).then(|| {
-                raw.trim()
-                    .parse::<u64>()
-                    .expect("status counter must be numeric")
-            })
-        })
-        .unwrap_or(0)
+fn parse_status_counter(status: &str, key: &str) -> Option<u64> {
+    status.lines().find_map(|line| {
+        let (name, raw) = line.split_once(':')?;
+        if name != key {
+            return None;
+        }
+        raw.trim().parse::<u64>().ok()
+    })
 }
 
-fn read_scheduler_sample(pid: u32) -> Option<SchedulerSample> {
+fn read_scheduler_snapshot(pid: u32) -> Option<SchedulerSnapshot> {
     let task_dir = format!("/proc/{pid}/task");
     let entries = fs::read_dir(task_dir).ok()?;
-    let mut sample = SchedulerSample::default();
-    for entry in entries.flatten() {
-        let tid = entry.file_name();
-        let tid = tid.to_string_lossy();
+    let mut tasks = BTreeMap::new();
+    for entry in entries {
+        let entry = entry.ok()?;
+        let tid = entry.file_name().to_string_lossy().parse::<u32>().ok()?;
         let schedstat = fs::read_to_string(format!("/proc/{pid}/task/{tid}/schedstat")).ok()?;
         let values: Vec<_> = schedstat.split_whitespace().collect();
         if values.len() < 3 {
             return None;
         }
-        sample.task_count += 1;
-        sample.cpu_runtime_ns = sample
-            .cpu_runtime_ns
-            .saturating_add(values[0].parse::<u64>().ok()?);
-        sample.runqueue_wait_ns = sample
-            .runqueue_wait_ns
-            .saturating_add(values[1].parse::<u64>().ok()?);
-        sample.timeslices = sample
-            .timeslices
-            .saturating_add(values[2].parse::<u64>().ok()?);
-
         let status = fs::read_to_string(format!("/proc/{pid}/task/{tid}/status")).ok()?;
-        sample.voluntary_ctxt_switches = sample
-            .voluntary_ctxt_switches
-            .saturating_add(parse_status_counter(&status, "voluntary_ctxt_switches"));
-        sample.nonvoluntary_ctxt_switches = sample
-            .nonvoluntary_ctxt_switches
-            .saturating_add(parse_status_counter(&status, "nonvoluntary_ctxt_switches"));
+        let counters = SchedulerCounters {
+            cpu_runtime_ns: values[0].parse::<u64>().ok()?,
+            runqueue_wait_ns: values[1].parse::<u64>().ok()?,
+            timeslices: values[2].parse::<u64>().ok()?,
+            voluntary_ctxt_switches: parse_status_counter(&status, "voluntary_ctxt_switches")?,
+            nonvoluntary_ctxt_switches: parse_status_counter(
+                &status,
+                "nonvoluntary_ctxt_switches",
+            )?,
+        };
+        if tasks.insert(tid, counters).is_some() {
+            return None;
+        }
     }
-    Some(sample)
+    (!tasks.is_empty()).then_some(SchedulerSnapshot { tasks })
 }
 
 fn percentile(sorted: &[u128], percentile: usize) -> u128 {
@@ -340,7 +412,11 @@ fn run_round(
 
     let mut streams = park_health_connections(gateway_address, parked_connections);
     thread::sleep(Duration::from_millis(pre_signal_jitter_ms as u64));
-    let scheduler_before = read_scheduler_sample(process.0.id());
+    let scheduler_before = read_scheduler_snapshot(process.0.id());
+    let mut scheduler_sample_incomplete = scheduler_before.is_none();
+    let mut scheduler_task_set_changed = false;
+    let mut scheduler_after = None;
+
     let signal_sent_at = Instant::now();
     let signal_status = Command::new("kill")
         .args(["-TERM", &process.0.id().to_string()])
@@ -350,7 +426,6 @@ fn run_round(
 
     let close_bound = Duration::from_millis(close_bound_ms as u64);
     let mut close_latencies_ms = vec![None; streams.len()];
-    let mut scheduler_after = None;
     let mut probe = [0_u8; 1];
     while signal_sent_at.elapsed() < close_bound {
         let mut open = 0_usize;
@@ -365,11 +440,23 @@ fn run_round(
                 Err(error) => panic!("parked connection {index} did not close cleanly: {error}"),
             }
         }
-        if let Some(sample) = read_scheduler_sample(process.0.id()) {
-            scheduler_after = Some(sample);
-        }
         if open == 0 {
             break;
+        }
+
+        match read_scheduler_snapshot(process.0.id()) {
+            Some(sample) => match scheduler_before.as_ref() {
+                Some(before) if sample.same_task_set(before) => scheduler_after = Some(sample),
+                Some(_) => {
+                    scheduler_task_set_changed = true;
+                    scheduler_after = None;
+                }
+                None => scheduler_sample_incomplete = true,
+            },
+            None => {
+                scheduler_sample_incomplete = true;
+                scheduler_after = None;
+            }
         }
         thread::sleep(Duration::from_millis(1));
     }
@@ -378,13 +465,21 @@ fn run_round(
         .iter()
         .filter(|value| value.is_none())
         .count();
-    if let Some(sample) = read_scheduler_sample(process.0.id()) {
-        scheduler_after = Some(sample);
+    if scheduler_after.is_none() {
+        scheduler_sample_incomplete = true;
     }
     let process_exit_ms = wait_for_process_exit(&mut process.0, signal_sent_at);
-    let scheduler_delta = scheduler_before
-        .zip(scheduler_after)
-        .map(|(before, after)| after.saturating_delta(before));
+    let mut scheduler_counter_regressed = false;
+    let scheduler_delta = if scheduler_sample_incomplete || scheduler_task_set_changed {
+        None
+    } else {
+        let delta = scheduler_before
+            .as_ref()
+            .zip(scheduler_after.as_ref())
+            .and_then(|(before, after)| after.checked_delta(before));
+        scheduler_counter_regressed = delta.is_none();
+        delta
+    };
     let observed = close_latencies_ms.into_iter().flatten().collect::<Vec<_>>();
 
     RoundEvidence {
@@ -392,7 +487,12 @@ fn run_round(
         survivors_at_close_bound,
         process_exit_ms,
         pre_signal_jitter_ms,
-        scheduler_delta,
+        scheduler: SchedulerEvidence {
+            delta: scheduler_delta,
+            sample_incomplete: scheduler_sample_incomplete,
+            task_set_changed: scheduler_task_set_changed,
+            counter_regressed: scheduler_counter_regressed,
+        },
     }
 }
 
@@ -402,8 +502,23 @@ fn current_git_sha() -> String {
         .to_owned()
 }
 
-fn append_scheduler_evidence(output: &mut String, round: usize, sample: Option<SchedulerSample>) {
-    match sample {
+fn append_scheduler_evidence(output: &mut String, round: usize, evidence: SchedulerEvidence) {
+    output.push_str(&format!(
+        "round_{round}_scheduler_sample_complete={}\n",
+        !evidence.sample_incomplete
+            && !evidence.task_set_changed
+            && !evidence.counter_regressed
+            && evidence.delta.is_some()
+    ));
+    output.push_str(&format!(
+        "round_{round}_scheduler_task_set_changed={}\n",
+        evidence.task_set_changed
+    ));
+    output.push_str(&format!(
+        "round_{round}_scheduler_counter_regressed={}\n",
+        evidence.counter_regressed
+    ));
+    match evidence.delta {
         Some(sample) => {
             output.push_str(&format!("round_{round}_scheduler_available=true\n"));
             output.push_str(&format!(
@@ -475,17 +590,17 @@ fn representative_numa_shutdown_profile() {
     let topology = detect_topology();
     assert!(
         topology.online_cpus >= min_online_cpus,
-        "runner has {} online CPUs but profile requires at least {min_online_cpus}",
+        "runner has {} process-allowed CPUs but profile requires at least {min_online_cpus}",
         topology.online_cpus
     );
     assert!(
         topology.numa_nodes >= min_numa_nodes,
-        "runner has {} NUMA nodes but profile requires at least {min_numa_nodes}",
+        "runner has {} process-allowed NUMA nodes but profile requires at least {min_numa_nodes}",
         topology.numa_nodes
     );
     assert!(
         service_threads <= topology.online_cpus,
-        "configured proxy workers must not exceed visible online CPUs for this profile"
+        "configured proxy workers must not exceed process-allowed CPUs for this profile"
     );
 
     let mut all_close_latencies = Vec::with_capacity(parked_connections * rounds);
@@ -504,7 +619,7 @@ fn representative_numa_shutdown_profile() {
         all_survivors += evidence.survivors_at_close_bound;
         max_process_exit_ms = max_process_exit_ms.max(evidence.process_exit_ms);
         all_close_latencies.extend(evidence.close_latencies_ms);
-        scheduler_rounds.push(evidence.scheduler_delta);
+        scheduler_rounds.push(evidence.scheduler);
         jitter_rounds.push(evidence.pre_signal_jitter_ms);
     }
 
