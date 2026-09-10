@@ -50,9 +50,26 @@ fn profile_workflow_fails_closed_before_measurement_on_nonrepresentative_topolog
 }
 
 #[test]
+fn representative_profile_runs_the_release_built_gateway_candidate() {
+    for required in [
+        "cargo build --release --locked --bin cwl-pingora-gateway",
+        "CWL_PROFILE_GATEWAY_BINARY",
+        "target/release/cwl-pingora-gateway",
+        "gateway_binary_sha256",
+    ] {
+        assert!(
+            WORKFLOW.contains(required),
+            "representative workflow must bind a release-built gateway candidate: {required}"
+        );
+    }
+    assert!(PROFILE.contains("CWL_PROFILE_GATEWAY_BINARY"));
+    assert!(PROFILE.contains("gateway_binary_sha256"));
+    assert!(!PROFILE.contains("CARGO_BIN_EXE_cwl-pingora-gateway"));
+}
+
+#[test]
 fn profile_fixture_preserves_external_shutdown_and_scheduler_evidence_invariants() {
     for required in [
-        "CARGO_BIN_EXE_cwl-pingora-gateway",
         "Connection: keep-alive",
         "/livez",
         "-TERM",
