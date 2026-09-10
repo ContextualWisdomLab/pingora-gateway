@@ -64,6 +64,19 @@ fn generic_admin_config_rejects_zero_service_threads() {
 }
 
 #[test]
+fn generic_admin_config_admits_exact_service_thread_ceiling() {
+    let config = GatewayConfig::from_yaml(&generic_yaml(Some(MAX_SERVICE_THREADS_PER_SERVICE)))
+        .expect("exact generic worker ceiling should remain admissible");
+
+    assert_eq!(
+        server_conf_for_gateway(&config)
+            .expect("exact generic worker ceiling should compose")
+            .threads,
+        MAX_SERVICE_THREADS_PER_SERVICE
+    );
+}
+
+#[test]
 fn generic_admin_config_rejects_service_threads_above_process_ceiling() {
     let actual = MAX_SERVICE_THREADS_PER_SERVICE + 1;
     assert_eq!(
@@ -149,6 +162,21 @@ fn pg_erd_admin_config_rejects_zero_service_threads() {
     assert_eq!(
         PgErdMigrationConfig::from_yaml(&pg_erd_yaml(Some(0))),
         Err(PgErdMigrationConfigError::InvalidServiceThreads)
+    );
+}
+
+#[test]
+fn pg_erd_admin_config_admits_exact_service_thread_ceiling() {
+    let config = PgErdMigrationConfig::from_yaml(&pg_erd_yaml(Some(
+        MAX_SERVICE_THREADS_PER_SERVICE,
+    )))
+    .expect("exact pg-erd worker ceiling should remain admissible");
+
+    assert_eq!(
+        server_conf_for_pg_erd(&config)
+            .expect("exact pg-erd worker ceiling should compose")
+            .threads,
+        MAX_SERVICE_THREADS_PER_SERVICE
     );
 }
 
