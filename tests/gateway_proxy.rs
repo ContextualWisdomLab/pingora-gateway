@@ -2,6 +2,7 @@ use cwl_pingora_gateway::{
     edge_contract::{GatewayConfig, GatewayConfigError, UpstreamConfig, UpstreamTimeouts},
     gateway_proxy::{GatewayProxy, GatewayProxyError},
     pingora_delivery::PeerBuildError,
+    runtime_policy::V1_DEFAULT_SERVICE_THREADS,
 };
 use pingora::upstreams::peer::{Peer, ALPN};
 use std::net::SocketAddr;
@@ -32,6 +33,7 @@ fn gateway_config(upstream: UpstreamConfig) -> GatewayConfig {
         metrics_listener: SocketAddr::from(([127, 0, 0, 1], 6192)),
         max_request_body_bytes: 1_048_576,
         max_in_flight_requests: 128,
+        service_threads: V1_DEFAULT_SERVICE_THREADS,
         upstream_keepalive_pool_size: 32,
         upstreams: vec![upstream],
     }
