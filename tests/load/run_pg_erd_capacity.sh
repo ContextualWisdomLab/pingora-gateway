@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SERVICE_THREADS=4
+
 # Wait for a synthetic origin without mistaking a crashed fixture for slow startup.
 wait_for_origin() {
   local url="$1"
@@ -138,12 +140,13 @@ trap cleanup EXIT
 wait_for_origin http://127.0.0.1:18281/ready "$backend_pid"
 wait_for_origin http://127.0.0.1:18283/ready "$frontend_pid"
 
-cat >/tmp/pg-erd-capacity.yaml <<'EOF'
+cat >/tmp/pg-erd-capacity.yaml <<EOF
 version: 1
 listener: 127.0.0.1:18280
 metrics_listener: 127.0.0.1:18282
 max_request_body_bytes: 1048576
 max_in_flight_requests: 128
+service_threads: ${SERVICE_THREADS}
 upstream_keepalive_pool_size: 32
 upstreams:
   - name: backend
@@ -166,8 +169,15 @@ upstreams:
       idle_ms: 5000
 EOF
 
+{
+  printf 'configured_service_threads=%s\n' "$SERVICE_THREADS"
+  printf 'online_cpus=%s\n' "$(nproc)"
+  printf '%s\n' 'cpu,node,socket'
+  lscpu -p=CPU,NODE,SOCKET | grep -v '^#'
+} >/tmp/pg-erd-capacity-gateway.log
+
 target/release/cwl-pingora-pg-erd-migration --config /tmp/pg-erd-capacity.yaml \
-  >/tmp/pg-erd-capacity-gateway.log 2>&1 &
+  >>/tmp/pg-erd-capacity-gateway.log 2>&1 &
 gateway_pid=$!
 
 for _ in $(seq 1 80); do
