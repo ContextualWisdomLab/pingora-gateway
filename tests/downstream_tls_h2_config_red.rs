@@ -72,14 +72,14 @@ fn shared_gateway_admits_only_the_opt_in_versioned_downstream_tls_h2_contract() 
         Err(GatewayConfigError::DownstreamTlsRequiresVersion2)
     );
 
-    let missing_tls = SHARED_TLS_H2_CONFIG.replacen(
+    let incomplete_v2 = SHARED_TLS_H2_CONFIG.replacen(
         "downstream_tls:\n  certificate_chain_file: /run/secrets/cwl-edge/tls.crt\n  private_key_file: /run/secrets/cwl-edge/tls.key\n  alpn: h2_http1\n",
         "",
         1,
     );
     assert_eq!(
-        GatewayConfig::from_yaml(&missing_tls),
-        Err(GatewayConfigError::MissingDownstreamTls)
+        GatewayConfig::from_yaml(&incomplete_v2),
+        Err(GatewayConfigError::UnsupportedVersion(2))
     );
 }
 
@@ -103,6 +103,16 @@ fn pg_erd_migration_admits_tls_only_after_the_response_lifetime_contract() {
     assert_eq!(
         PgErdMigrationConfig::from_yaml(&missing_lifetime),
         Err(PgErdMigrationConfigError::MissingUpstreamResponseBodyLifetime)
+    );
+
+    let incomplete_v3 = PG_ERD_TLS_H2_CONFIG.replacen(
+        "downstream_tls:\n  certificate_chain_file: /run/secrets/cwl-edge/tls.crt\n  private_key_file: /run/secrets/cwl-edge/tls.key\n  alpn: h2_http1\n",
+        "",
+        1,
+    );
+    assert_eq!(
+        PgErdMigrationConfig::from_yaml(&incomplete_v3),
+        Err(PgErdMigrationConfigError::UnsupportedVersion(3))
     );
 }
 
