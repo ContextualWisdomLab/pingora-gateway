@@ -29,7 +29,7 @@ This document maps material edge-runtime, protocol, toolchain, container, and su
 | WebSocket over HTTP/3 | RFC 9220 | Extended CONNECT/bootstrap path when H3 WebSocket support is in scope. |
 | Forwarded header | RFC 7239 | Forwarding grammar; request-supplied client identity remains untrusted until an explicit trust contract admits it. |
 | TLS 1.3 | RFC 9846 (July 2026) | Current TLS 1.3 protocol specification; it obsoletes RFC 8446 and leaves application identity verification to the application protocol profile. |
-| TLS service identity | RFC 9525 | Certificate/service identity verification guidance for TLS applications. |
+| TLS service identity | RFC 9525 | Certificate/service identity representation and verification for TLS applications. |
 | New-protocol TLS baseline | RFC 9852 / BCP 195 (July 2026) | New protocols using TLS must require TLS 1.3; existing gateway compatibility still requires explicit product/deployment evidence rather than silent policy widening. |
 
 ## Rust, Cargo, OCI, and supply-chain authority
@@ -74,7 +74,11 @@ Fette, I., & Melnikov, A. (2011). *The WebSocket protocol* (RFC 6455). RFC Edito
 
 Fielding, R., Nottingham, M., & Reschke, J. (2022). *HTTP semantics* (RFC 9110). RFC Editor. https://www.rfc-editor.org/rfc/rfc9110
 
+Hamilton, R. (2022). *Bootstrapping WebSockets with HTTP/3* (RFC 9220). RFC Editor. https://www.rfc-editor.org/rfc/rfc9220
+
 Internet Security Research Group. (n.d.). *RustSec advisory database: RUSTSEC-2024-0388*. https://rustsec.org/advisories/RUSTSEC-2024-0388.html
+
+Iyengar, J., & Thomson, M. (2021). *QUIC: A UDP-based multiplexed and secure transport* (RFC 9000). RFC Editor. https://www.rfc-editor.org/rfc/rfc9000
 
 McManus, P. (2018). *Bootstrapping WebSockets with HTTP/2* (RFC 8441). RFC Editor. https://www.rfc-editor.org/rfc/rfc8441
 
@@ -92,14 +96,10 @@ Rescorla, E. (2026). *The Transport Layer Security (TLS) Protocol Version 1.3* (
 
 Rust Release Team. (2026, September 3). *Announcing Rust 1.98.1*. Rust Blog. https://blog.rust-lang.org/2026/09/03/Rust-1.98.1/
 
-Salowey, J., Zhou, H., Eronen, P., & Tschofenig, H. (2022). *Bootstrapping WebSockets with HTTP/3* (RFC 9220). RFC Editor. https://www.rfc-editor.org/rfc/rfc9220
+Saint-Andre, P., & Salz, R. (2023). *Service identity in TLS* (RFC 9525). RFC Editor. https://www.rfc-editor.org/rfc/rfc9525
 
 Salz, R., & Aviram, N. (2026). *New protocols using TLS must require TLS 1.3* (RFC 9852, BCP 195). RFC Editor. https://www.rfc-editor.org/rfc/rfc9852
 
 Thomson, M., & Benfield, C. (2022). *HTTP/2* (RFC 9113). RFC Editor. https://www.rfc-editor.org/rfc/rfc9113
-
-Thomson, M., & Turner, S. (2024). *Recommendations for secure use of transport layer security (TLS) and datagram transport layer security (DTLS)* (RFC 9525). RFC Editor. https://www.rfc-editor.org/rfc/rfc9525
-
-Thomson, M., & Turner, S. (2021). *QUIC: A UDP-based multiplexed and secure transport* (RFC 9000). RFC Editor. https://www.rfc-editor.org/rfc/rfc9000
 
 The Cargo Project Developers. (n.d.). *Cargo Book*. https://doc.rust-lang.org/cargo/
