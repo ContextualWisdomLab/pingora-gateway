@@ -79,15 +79,15 @@ pub enum PgErdMigrationConfigError {
         /// Stable characterized upstream whose operator binding used port zero.
         upstream_name: String,
     },
-    /// A zero service-worker count would construct an invalid runtime topology.
+    /// A zero data-plane worker count would construct an invalid proxy runtime topology.
     #[error("service_threads must be greater than zero")]
     InvalidServiceThreads,
-    /// The declared worker topology exceeds the bounded per-service process contract.
-    #[error("service_threads {actual} exceeds the per-service maximum {max}")]
+    /// The declared global data-plane worker topology exceeds this contract's safety ceiling.
+    #[error("service_threads {actual} exceeds the data-plane maximum {max}")]
     ServiceThreadsExceedLimit {
-        /// Operator-requested worker count for each service runtime.
+        /// Operator-requested global worker count followed by the migration proxy service.
         actual: usize,
-        /// Maximum worker count admitted by this contract version.
+        /// Maximum global data-plane worker count admitted by this contract version.
         max: usize,
     },
     /// A zero keepalive pool would silently change upstream connection-capacity behavior.
@@ -154,7 +154,10 @@ impl PgErdMigrationConfig {
         self.max_upstream_response_body_ms
     }
 
-    /// Returns the validated worker count assigned independently to each Pingora service runtime.
+    /// Returns the validated global worker count followed by the migration proxy service.
+    ///
+    /// Production composition gives the Prometheus service its own one-worker override, so this
+    /// value is not a process-wide thread total and does not multiply every registered service.
     pub fn service_threads(&self) -> usize {
         self.service_threads
     }
