@@ -201,15 +201,21 @@ fn connect_http1(
 }
 
 fn read_request_headers(stream: &mut TcpStream) -> String {
-    stream
-        .set_read_timeout(Some(Duration::from_secs(5)))
-        .expect("upstream read timeout should be set");
+    let deadline = Instant::now() + Duration::from_secs(5);
     let mut request = Vec::new();
     let mut buffer = [0_u8; 1024];
     loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        assert!(
+            !remaining.is_zero(),
+            "upstream request headers exceeded the fixture deadline"
+        );
+        stream
+            .set_read_timeout(Some(remaining))
+            .expect("upstream read deadline should be set");
         let read = stream
             .read(&mut buffer)
-            .expect("upstream request should be readable");
+            .expect("upstream request should be readable before the fixture deadline");
         assert!(read > 0, "upstream closed before request headers completed");
         request.extend_from_slice(&buffer[..read]);
         assert!(
