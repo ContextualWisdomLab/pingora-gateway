@@ -13,7 +13,7 @@ use thiserror::Error;
 
 use crate::edge_contract::{
     socket_authorities_overlap, validate_upstream_authority_separation, GatewayConfigError,
-    UpstreamConfig,
+    UpstreamConfig, MAX_SERVICE_THREADS_PER_SERVICE,
 };
 use crate::edge_routing::{RouteMatch, RouteRule};
 use crate::http_policy::ResponseHeaderRule;
@@ -82,6 +82,14 @@ pub enum PgErdMigrationConfigError {
     /// A zero service-worker count would construct an invalid runtime topology.
     #[error("service_threads must be greater than zero")]
     InvalidServiceThreads,
+    /// The declared worker topology exceeds the bounded per-service process contract.
+    #[error("service_threads {actual} exceeds the per-service maximum {max}")]
+    ServiceThreadsExceedLimit {
+        /// Operator-requested worker count for each service runtime.
+        actual: usize,
+        /// Maximum worker count admitted by this contract version.
+        max: usize,
+    },
     /// A zero keepalive pool would silently change upstream connection-capacity behavior.
     #[error("upstream_keepalive_pool_size must be greater than zero")]
     InvalidUpstreamKeepalivePoolSize,
@@ -196,6 +204,12 @@ impl PgErdMigrationConfig {
         }
         if self.service_threads == 0 {
             return Err(PgErdMigrationConfigError::InvalidServiceThreads);
+        }
+        if self.service_threads > MAX_SERVICE_THREADS_PER_SERVICE {
+            return Err(PgErdMigrationConfigError::ServiceThreadsExceedLimit {
+                actual: self.service_threads,
+                max: MAX_SERVICE_THREADS_PER_SERVICE,
+            });
         }
         if self.upstream_keepalive_pool_size == 0 {
             return Err(PgErdMigrationConfigError::InvalidUpstreamKeepalivePoolSize);
