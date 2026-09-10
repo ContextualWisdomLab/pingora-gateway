@@ -13,6 +13,8 @@ use std::time::{Duration, Instant};
 use pingora::tls::ssl::{SslConnector, SslMethod, SslVerifyMode};
 use tempfile::{tempdir, NamedTempFile};
 
+const MAX_ORIGIN_REQUEST_HEADER_BYTES: usize = 64 * 1024;
+
 struct GatewayProcess(Child);
 
 impl Drop for GatewayProcess {
@@ -198,6 +200,28 @@ fn connect_http1(
     }
 }
 
+fn read_request_headers(stream: &mut TcpStream) -> String {
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .expect("upstream read timeout should be set");
+    let mut request = Vec::new();
+    let mut buffer = [0_u8; 1024];
+    loop {
+        let read = stream
+            .read(&mut buffer)
+            .expect("upstream request should be readable");
+        assert!(read > 0, "upstream closed before request headers completed");
+        request.extend_from_slice(&buffer[..read]);
+        assert!(
+            request.len() <= MAX_ORIGIN_REQUEST_HEADER_BYTES,
+            "upstream request headers exceeded the fixture bound"
+        );
+        if request.windows(4).any(|window| window == b"\r\n\r\n") {
+            return String::from_utf8_lossy(&request).into_owned();
+        }
+    }
+}
+
 #[test]
 fn h2_http1_policy_negotiates_verified_http1_fallback_and_proxies_real_traffic() {
     let certificates = issue_gateway_certificate();
@@ -207,14 +231,7 @@ fn h2_http1_policy_negotiates_verified_http1_fallback_and_proxies_real_traffic()
         let (mut stream, _) = upstream_listener
             .accept()
             .expect("gateway should connect upstream");
-        stream
-            .set_read_timeout(Some(Duration::from_secs(5)))
-            .expect("upstream read timeout should be set");
-        let mut request = [0_u8; 4096];
-        let read = stream
-            .read(&mut request)
-            .expect("upstream request should be readable");
-        let request = String::from_utf8_lossy(&request[..read]);
+        let request = read_request_headers(&mut stream);
         assert!(
             request.starts_with("GET /fallback HTTP/1.1\r\n"),
             "HTTP/1.1 fallback request must reach the cleartext upstream fixture: {request:?}"
@@ -262,14 +279,7 @@ fn h2_http1_policy_preserves_verified_http1_for_clients_without_alpn() {
         let (mut stream, _) = upstream_listener
             .accept()
             .expect("gateway should connect upstream");
-        stream
-            .set_read_timeout(Some(Duration::from_secs(5)))
-            .expect("upstream read timeout should be set");
-        let mut request = [0_u8; 4096];
-        let read = stream
-            .read(&mut request)
-            .expect("upstream request should be readable");
-        let request = String::from_utf8_lossy(&request[..read]);
+        let request = read_request_headers(&mut stream);
         assert!(
             request.starts_with("GET /no-alpn HTTP/1.1\r\n"),
             "no-ALPN TLS client must retain HTTP/1.1 compatibility through the gateway: {request:?}"
