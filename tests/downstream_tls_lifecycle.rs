@@ -116,8 +116,10 @@ fn write_pg_erd_config(
     let mut file = NamedTempFile::new().expect("pg-erd config should be writable");
     writeln!(file, "version: {version}").expect("version should be written");
     writeln!(file, "listener: {listener}").expect("listener should be written");
-    writeln!(file, "metrics_listener: {metrics_listener}").expect("metrics listener should be written");
-    writeln!(file, "max_request_body_bytes: 1048576").expect("request-body limit should be written");
+    writeln!(file, "metrics_listener: {metrics_listener}")
+        .expect("metrics listener should be written");
+    writeln!(file, "max_request_body_bytes: 1048576")
+        .expect("request-body limit should be written");
     writeln!(file, "max_in_flight_requests: 8").expect("concurrency limit should be written");
     if include_lifetime {
         writeln!(file, "max_upstream_response_body_ms: 5000")

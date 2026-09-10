@@ -103,7 +103,10 @@ mod tests {
     use super::*;
     use crate::tls_delivery::{build_downstream_tls_settings, DownstreamTlsDeliveryError};
 
-    fn direct_config(certificate_chain_file: PathBuf, private_key_file: PathBuf) -> DownstreamTlsConfig {
+    fn direct_config(
+        certificate_chain_file: PathBuf,
+        private_key_file: PathBuf,
+    ) -> DownstreamTlsConfig {
         DownstreamTlsConfig {
             certificate_chain_file,
             private_key_file,
@@ -157,7 +160,9 @@ mod tests {
         let (_directory, certificate, private_key) = issue_certificate();
         let config = direct_config(certificate.clone(), private_key.clone());
 
-        config.validate().expect("absolute material references are valid");
+        config
+            .validate()
+            .expect("absolute material references are valid");
         assert_eq!(config.certificate_chain_file(), certificate.as_path());
         assert_eq!(config.private_key_file(), private_key.as_path());
         assert_eq!(config.alpn(), DownstreamAlpnPolicy::H2Http1);
@@ -178,7 +183,8 @@ mod tests {
 
     #[test]
     fn delivery_rejects_non_utf8_material_references_without_lossy_rewrite() {
-        let non_utf8_certificate = PathBuf::from(OsString::from_vec(b"/tmp/cwl-cert-\xff".to_vec()));
+        let non_utf8_certificate =
+            PathBuf::from(OsString::from_vec(b"/tmp/cwl-cert-\xff".to_vec()));
         let certificate_config = direct_config(non_utf8_certificate, PathBuf::from("/tmp/key.pem"));
         assert!(matches!(
             delivery_error(&certificate_config),
