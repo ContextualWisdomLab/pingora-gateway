@@ -32,18 +32,36 @@ fn supply_chain_workflow_binds_evidence_to_exact_source() {
     }
 }
 
-/// Pingora git dependencies must carry both immutable revision and exact package-version assertions.
+/// Released Pingora dependencies must use exact registry versions and Cargo-recorded checksums.
 #[test]
-fn pinned_pingora_dependencies_are_not_wildcard_versions() {
+fn released_pingora_dependencies_are_exact_registry_packages() {
     let manifest = read_repository_file("Cargo.toml");
+    let lock = read_repository_file("Cargo.lock");
 
     for required in [
-        "pingora = { version = \"=0.8.0\", git = \"https://github.com/cloudflare/pingora.git\", rev = \"09696b51bc59315353d96686355861604d0bb48c\"",
-        "pingora-prometheus = { version = \"=0.8.0\", git = \"https://github.com/cloudflare/pingora.git\", rev = \"09696b51bc59315353d96686355861604d0bb48c\"",
+        "pingora = { version = \"=0.9.0\", features = [\"proxy\", \"openssl\"] }",
+        "pingora-prometheus = \"=0.9.0\"",
     ] {
         assert!(
             manifest.contains(required),
-            "Pingora dependencies must be exact-version and exact-revision pinned: {required}"
+            "released Pingora dependencies must remain exact registry versions: {required}"
+        );
+    }
+
+    for forbidden in ["github.com/cloudflare/pingora.git", "rev = "] {
+        assert!(
+            !manifest.contains(forbidden),
+            "released Pingora dependencies must not fall back to mutable git-source consumption: {forbidden}"
+        );
+    }
+
+    for required in [
+        "fc02712a3847828d6b798ecf31f0ac64e138df26b9513e20d52319cf3cecd11e",
+        "56fc7764cf4a5ff68aae5e373a4e8e2cbff077dd9dea975cc04ca9aa863abb2c",
+    ] {
+        assert!(
+            lock.contains(required),
+            "Cargo.lock must preserve the reviewed Pingora 0.9.0 registry checksum: {required}"
         );
     }
 }
