@@ -2,9 +2,8 @@ use cwl_pingora_gateway::edge_contract::{
     GatewayConfig, GatewayConfigError, MAX_SERVICE_THREADS_PER_SERVICE,
 };
 use cwl_pingora_gateway::migration_admin::{PgErdMigrationConfig, PgErdMigrationConfigError};
-use cwl_pingora_gateway::runtime_policy::{
-    build_server_conf_with_service_threads, V1_DEFAULT_SERVICE_THREADS,
-};
+use cwl_pingora_gateway::runtime_composition::{server_conf_for_gateway, server_conf_for_pg_erd};
+use cwl_pingora_gateway::runtime_policy::V1_DEFAULT_SERVICE_THREADS;
 
 fn generic_yaml(service_threads: Option<usize>) -> String {
     let topology = service_threads
@@ -28,10 +27,7 @@ fn pg_erd_yaml(service_threads: Option<usize>) -> String {
 fn generic_admin_config_propagates_explicit_service_threads() {
     let config = GatewayConfig::from_yaml(&generic_yaml(Some(8)))
         .expect("explicit generic worker topology should validate");
-    let server_conf = build_server_conf_with_service_threads(
-        config.upstream_keepalive_pool_size,
-        config.service_threads,
-    );
+    let server_conf = server_conf_for_gateway(&config);
 
     assert_eq!(config.service_threads, 8);
     assert_eq!(server_conf.threads, 8);
@@ -43,6 +39,10 @@ fn generic_admin_config_preserves_one_worker_compatibility_default() {
         .expect("legacy generic config should retain its historical worker topology");
 
     assert_eq!(config.service_threads, V1_DEFAULT_SERVICE_THREADS);
+    assert_eq!(
+        server_conf_for_gateway(&config).threads,
+        V1_DEFAULT_SERVICE_THREADS
+    );
 }
 
 #[test]
@@ -69,10 +69,7 @@ fn generic_admin_config_rejects_service_threads_above_process_ceiling() {
 fn pg_erd_admin_config_propagates_explicit_service_threads() {
     let config = PgErdMigrationConfig::from_yaml(&pg_erd_yaml(Some(8)))
         .expect("explicit pg-erd worker topology should validate");
-    let server_conf = build_server_conf_with_service_threads(
-        config.upstream_keepalive_pool_size(),
-        config.service_threads(),
-    );
+    let server_conf = server_conf_for_pg_erd(&config);
 
     assert_eq!(config.service_threads(), 8);
     assert_eq!(server_conf.threads, 8);
@@ -84,6 +81,10 @@ fn pg_erd_admin_config_preserves_one_worker_compatibility_default() {
         .expect("legacy pg-erd config should retain its historical worker topology");
 
     assert_eq!(config.service_threads(), V1_DEFAULT_SERVICE_THREADS);
+    assert_eq!(
+        server_conf_for_pg_erd(&config).threads,
+        V1_DEFAULT_SERVICE_THREADS
+    );
 }
 
 #[test]
