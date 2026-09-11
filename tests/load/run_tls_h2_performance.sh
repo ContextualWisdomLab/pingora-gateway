@@ -2,6 +2,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "${repo_root}"
 gateway_bin="${GATEWAY_BIN:-${repo_root}/target/release/cwl-pingora-gateway}"
 origin_bin="${LOAD_ORIGIN_BIN:-/tmp/load_origin}"
 k6_script="${repo_root}/tests/load/gateway_tls_h2_performance.js"
@@ -94,7 +95,8 @@ wait_for_gateway() {
   return 1
 }
 
-run_mode() {
+run_mode() (
+  set -euo pipefail
   local mode="$1"
   local traffic_port="$2"
   local origin_port="$3"
@@ -107,14 +109,9 @@ run_mode() {
   local gateway_pid=""
   mkdir -p "${mode_dir}"
 
-  UPSTREAM_PORT="${origin_port}" \
-    UPSTREAM_WORKERS=32 \
-    UPSTREAM_CONNECTION_MODE=keep-alive \
-    "${origin_bin}" >"${origin_log}" 2>&1 &
-  origin_pid=$!
-
   stop_mode() {
     local status=$?
+    trap - EXIT
     if [ -n "${gateway_pid}" ]; then
       kill "${gateway_pid}" >/dev/null 2>&1 || true
       wait "${gateway_pid}" >/dev/null 2>&1 || true
@@ -129,10 +126,15 @@ run_mode() {
       echo "--- ${mode} origin log ---"
       cat "${origin_log}" || true
     fi
-    return "${status}"
+    exit "${status}"
   }
-  trap stop_mode RETURN
+  trap stop_mode EXIT
 
+  UPSTREAM_PORT="${origin_port}" \
+    UPSTREAM_WORKERS=32 \
+    UPSTREAM_CONNECTION_MODE=keep-alive \
+    "${origin_bin}" >"${origin_log}" 2>&1 &
+  origin_pid=$!
   wait_for_origin "${origin_port}" "${origin_pid}"
 
   cat >"${gateway_config}" <<EOF
@@ -171,9 +173,7 @@ EOF
     k6 run --quiet "${k6_script}"
 
   test -s "k6-tls-h2-${mode}-summary.json"
-  trap - RETURN
-  stop_mode
-}
+)
 
 run_mode fresh 18280 18281 18282
 run_mode reuse 18380 18381 18382
