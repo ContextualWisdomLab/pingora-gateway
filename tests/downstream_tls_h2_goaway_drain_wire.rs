@@ -17,9 +17,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use cwl_pingora_gateway::runtime_policy::{
-    V1_GRACE_PERIOD_SECONDS, V1_TERMINATION_BUDGET_SECONDS,
-};
+use cwl_pingora_gateway::runtime_policy::{V1_GRACE_PERIOD_SECONDS, V1_TERMINATION_BUDGET_SECONDS};
 use pingora::tls::ssl::{SslConnector, SslMethod, SslVerifyMode};
 use tempfile::{tempdir, NamedTempFile};
 
@@ -247,7 +245,8 @@ fn read_h2_frame(stream: &mut impl Read) -> (u8, u8, u32, Vec<u8>) {
         .read_exact(&mut header)
         .expect("H2 frame header should be readable");
     let length = ((header[0] as usize) << 16) | ((header[1] as usize) << 8) | header[2] as usize;
-    let stream_id = u32::from_be_bytes([header[5], header[6], header[7], header[8]]) & H2_MAX_STREAM_ID;
+    let stream_id =
+        u32::from_be_bytes([header[5], header[6], header[7], header[8]]) & H2_MAX_STREAM_ID;
     let mut payload = vec![0_u8; length];
     stream
         .read_exact(&mut payload)
@@ -260,8 +259,8 @@ fn parse_goaway(payload: &[u8]) -> (u32, u32) {
         payload.len() >= 8,
         "GOAWAY payload must contain last_stream_id and error code"
     );
-    let last_stream_id = u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]])
-        & H2_MAX_STREAM_ID;
+    let last_stream_id =
+        u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]) & H2_MAX_STREAM_ID;
     let error_code = u32::from_be_bytes([payload[4], payload[5], payload[6], payload[7]]);
     (last_stream_id, error_code)
 }
@@ -531,7 +530,10 @@ fn sigterm_h2_goaway_drains_admitted_streams_and_bounds_new_work() {
     }
 
     assert!(first_ended, "stream 1 must finish during graceful H2 drain");
-    assert!(second_ended, "stream 3 must finish during graceful H2 drain");
+    assert!(
+        second_ended,
+        "stream 3 must finish during graceful H2 drain"
+    );
     assert_eq!(first_body, b"first-ok");
     assert_eq!(second_body, b"second-ok");
     assert_eq!(
