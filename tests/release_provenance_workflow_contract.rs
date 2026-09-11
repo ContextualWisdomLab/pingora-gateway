@@ -32,9 +32,8 @@ fn release_candidate_requires_oidc_signed_provenance_for_both_binaries() {
         .expect("reproducibility evidence upload must remain present");
 
     assert!(compare < attest && attest < verify && verify < upload);
-    assert!(RELEASE_REPRODUCIBILITY_WORKFLOW.contains(&format!(
-        "uses: actions/attest@{ATTEST_ACTION_SHA}"
-    )));
+    assert!(RELEASE_REPRODUCIBILITY_WORKFLOW
+        .contains(&format!("uses: actions/attest@{ATTEST_ACTION_SHA}")));
 
     for binary in ["cwl-pingora-gateway", "cwl-pingora-pg-erd-migration"] {
         let path = format!("release-binaries/{binary}");
@@ -42,22 +41,17 @@ fn release_candidate_requires_oidc_signed_provenance_for_both_binaries() {
             RELEASE_REPRODUCIBILITY_WORKFLOW.contains(&path),
             "attestation subject must include {binary}"
         );
-        let verification = format!(
-            "gh attestation verify {path} --repo \"$GITHUB_REPOSITORY\""
-        );
+        let verification = format!("gh attestation verify {path} --repo \"$GITHUB_REPOSITORY\"");
         assert!(
             RELEASE_REPRODUCIBILITY_WORKFLOW.contains(&verification),
             "release lane must verify provenance for {binary}"
         );
     }
 
-    assert!(RELEASE_REPRODUCIBILITY_WORKFLOW.contains(&format!(
-        "--signer-workflow \"{SIGNER_WORKFLOW}\""
-    )));
     assert!(RELEASE_REPRODUCIBILITY_WORKFLOW
-        .contains("--source-digest \"$EXPECTED_SHA\""));
-    assert!(RELEASE_REPRODUCIBILITY_WORKFLOW
-        .contains("--signer-digest \"$EXPECTED_SHA\""));
+        .contains(&format!("--signer-workflow \"{SIGNER_WORKFLOW}\"")));
+    assert!(RELEASE_REPRODUCIBILITY_WORKFLOW.contains("--source-digest \"$EXPECTED_SHA\""));
+    assert!(RELEASE_REPRODUCIBILITY_WORKFLOW.contains("--signer-digest \"$EXPECTED_SHA\""));
     assert!(RELEASE_REPRODUCIBILITY_WORKFLOW.contains("--deny-self-hosted-runners"));
 }
 
