@@ -8,6 +8,9 @@ on:
 
 permissions:
   contents: read
+  id-token: write
+  attestations: write
+  artifact-metadata: write
 
 concurrency:
   group: release-reproducibility-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -196,6 +199,30 @@ jobs:
           path: release-reproducibility-diagnostics/
           if-no-files-found: warn
           retention-days: 7
+
+      - name: Attest exact release binaries
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+        with:
+          subject-path: |
+            release-binaries/cwl-pingora-gateway
+            release-binaries/cwl-pingora-pg-erd-migration
+
+      - name: Verify exact release binary provenance
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh attestation verify release-binaries/cwl-pingora-gateway --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "ContextualWisdomLab/pingora-gateway/.github/workflows/release-reproducibility.yml" \
+            --source-digest "$EXPECTED_SHA" \
+            --signer-digest "$EXPECTED_SHA" \
+            --deny-self-hosted-runners
+          gh attestation verify release-binaries/cwl-pingora-pg-erd-migration --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "ContextualWisdomLab/pingora-gateway/.github/workflows/release-reproducibility.yml" \
+            --source-digest "$EXPECTED_SHA" \
+            --signer-digest "$EXPECTED_SHA" \
+            --deny-self-hosted-runners
 
       - name: Upload exact reproducibility evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
