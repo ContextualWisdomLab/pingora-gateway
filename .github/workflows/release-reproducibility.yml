@@ -1,0 +1,209 @@
+name: Release Reproducibility
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-reproducibility-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+
+jobs:
+  release-binary-reproducibility:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          ref: ${{ env.EXPECTED_SHA }}
+          persist-credentials: false
+
+      - name: Verify checkout identity
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+
+      - name: Install and select release compiler
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.98.1 --profile minimal
+          rustup default 1.98.1
+          rustc --version --verbose | grep -Fx 'release: 1.98.1'
+          cargo --version
+
+      - name: Fail closed on alternate compiler authority
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -z "${RUSTC:-}"
+          test -z "${CARGO_BUILD_RUSTC:-}"
+          test -z "${RUSTC_WRAPPER:-}"
+          test -z "${CARGO_BUILD_RUSTC_WRAPPER:-}"
+          test -z "${RUSTC_WORKSPACE_WRAPPER:-}"
+          test -z "${CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER:-}"
+          test -z "${RUSTUP_TOOLCHAIN:-}"
+          test -z "${RUSTFLAGS:-}"
+          test -z "${CARGO_BUILD_RUSTFLAGS:-}"
+          test -z "${CARGO_ENCODED_RUSTFLAGS:-}"
+          test ! -e .cargo/config
+          test ! -e .cargo/config.toml
+          test ! -e rust-toolchain
+          test ! -e rust-toolchain.toml
+          test -z "${CARGO_HOME:-}"
+
+          cargo_config_dir="$PWD"
+          while true; do
+            test ! -e "$cargo_config_dir/.cargo/config"
+            test ! -e "$cargo_config_dir/.cargo/config.toml"
+            [[ "$cargo_config_dir" == "/" ]] && break
+            cargo_config_dir="$(dirname "$cargo_config_dir")"
+          done
+
+          controlled_cargo_home="$RUNNER_TEMP/cwl-cargo-home-$EXPECTED_SHA"
+          rm -rf "$controlled_cargo_home"
+          mkdir -p "$controlled_cargo_home"
+          printf 'CARGO_HOME=%s\n' "$controlled_cargo_home" >> "$GITHUB_ENV"
+
+      - name: Fetch locked dependencies once
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fetch --locked
+          git diff --exit-code -- Cargo.lock
+
+      - name: Bind reproducible build environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_date_epoch="$(git show -s --format=%ct "$EXPECTED_SHA")"
+          [[ "$source_date_epoch" =~ ^[1-9][0-9]*$ ]]
+          printf 'SOURCE_DATE_EPOCH=%s\n' "$source_date_epoch" >> "$GITHUB_ENV"
+          printf 'REPRO_TARGET_DIR=/tmp/cwl-pingora-repro-%s\n' "$EXPECTED_SHA" >> "$GITHUB_ENV"
+
+      - name: Build isolated release candidate A
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "$REPRO_TARGET_DIR"
+          mkdir -p release-reproducibility-candidates/a
+          CARGO_NET_OFFLINE=true \
+          CARGO_INCREMENTAL=0 \
+          CARGO_TARGET_DIR="$REPRO_TARGET_DIR" \
+          cargo build --release --locked \
+            --bin cwl-pingora-gateway \
+            --bin cwl-pingora-pg-erd-migration
+          cp "$REPRO_TARGET_DIR/release/cwl-pingora-gateway" \
+            release-reproducibility-candidates/a/cwl-pingora-gateway
+          cp "$REPRO_TARGET_DIR/release/cwl-pingora-pg-erd-migration" \
+            release-reproducibility-candidates/a/cwl-pingora-pg-erd-migration
+
+      - name: Build isolated release candidate B
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "$REPRO_TARGET_DIR"
+          mkdir -p release-reproducibility-candidates/b
+          CARGO_NET_OFFLINE=true \
+          CARGO_INCREMENTAL=0 \
+          CARGO_TARGET_DIR="$REPRO_TARGET_DIR" \
+          cargo build --release --locked \
+            --bin cwl-pingora-gateway \
+            --bin cwl-pingora-pg-erd-migration
+          cp "$REPRO_TARGET_DIR/release/cwl-pingora-gateway" \
+            release-reproducibility-candidates/b/cwl-pingora-gateway
+          cp "$REPRO_TARGET_DIR/release/cwl-pingora-pg-erd-migration" \
+            release-reproducibility-candidates/b/cwl-pingora-pg-erd-migration
+
+      - name: Compare release binaries byte for byte
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-binaries release-reproducibility-diagnostics
+          : > release-reproducibility.txt
+          {
+            printf 'evidence_kind=unreleased-same-platform-release-binary-reproducibility\n'
+            printf 'source_sha=%s\n' "$EXPECTED_SHA"
+            printf 'source_date_epoch=%s\n' "$SOURCE_DATE_EPOCH"
+            printf 'canonical_target_dir=%s\n' "$REPRO_TARGET_DIR"
+            rustc --version --verbose
+          } >> release-reproducibility.txt
+
+          mismatch=0
+          for binary in cwl-pingora-gateway cwl-pingora-pg-erd-migration; do
+            candidate_a="release-reproducibility-candidates/a/${binary}"
+            candidate_b="release-reproducibility-candidates/b/${binary}"
+            test -x "$candidate_a"
+            test -x "$candidate_b"
+            digest_a="$(sha256sum "$candidate_a" | awk '{print $1}')"
+            digest_b="$(sha256sum "$candidate_b" | awk '{print $1}')"
+            {
+              printf 'candidate_a_sha256=%s %s\n' "$binary" "$digest_a"
+              printf 'candidate_b_sha256=%s %s\n' "$binary" "$digest_b"
+            } >> release-reproducibility.txt
+
+            if [[ "$digest_a" != "$digest_b" ]] || ! cmp --silent "$candidate_a" "$candidate_b"; then
+              mismatch=1
+              mkdir -p "release-reproducibility-diagnostics/${binary}"
+              cp "$candidate_a" "release-reproducibility-diagnostics/${binary}/candidate-a"
+              cp "$candidate_b" "release-reproducibility-diagnostics/${binary}/candidate-b"
+              cmp -l "$candidate_a" "$candidate_b" \
+                | head -n 256 \
+                > "release-reproducibility-diagnostics/${binary}/cmp-first-256.txt" || true
+              readelf -n "$candidate_a" \
+                > "release-reproducibility-diagnostics/${binary}/candidate-a-notes.txt"
+              readelf -n "$candidate_b" \
+                > "release-reproducibility-diagnostics/${binary}/candidate-b-notes.txt"
+              strings -a "$candidate_a" \
+                > "release-reproducibility-diagnostics/${binary}/candidate-a-strings.txt"
+              strings -a "$candidate_b" \
+                > "release-reproducibility-diagnostics/${binary}/candidate-b-strings.txt"
+              diff -u \
+                "release-reproducibility-diagnostics/${binary}/candidate-a-strings.txt" \
+                "release-reproducibility-diagnostics/${binary}/candidate-b-strings.txt" \
+                | head -n 512 \
+                > "release-reproducibility-diagnostics/${binary}/strings-first-512.diff" || true
+              continue
+            fi
+
+            cp "$candidate_a" "release-binaries/${binary}"
+            printf 'binary_sha256=%s %s\n' "$binary" "$digest_a" >> release-reproducibility.txt
+          done
+
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          if [[ "$mismatch" -ne 0 ]]; then
+            printf 'result=byte-mismatch\n' >> release-reproducibility.txt
+            cp release-reproducibility.txt release-reproducibility-diagnostics/receipt.txt
+            exit 1
+          fi
+
+          printf 'result=byte-identical\n' >> release-reproducibility.txt
+          sha256sum release-binaries/cwl-pingora-gateway \
+            release-binaries/cwl-pingora-pg-erd-migration \
+            >> release-reproducibility.txt
+
+      - name: Upload byte-mismatch diagnostics
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: release-reproducibility-diagnostics-${{ env.EXPECTED_SHA }}
+          path: release-reproducibility-diagnostics/
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload exact reproducibility evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: release-reproducibility-${{ env.EXPECTED_SHA }}
+          path: |
+            release-binaries/cwl-pingora-gateway
+            release-binaries/cwl-pingora-pg-erd-migration
+            release-reproducibility.txt
+          if-no-files-found: error
+          retention-days: 7
