@@ -157,11 +157,7 @@ fn config(
     file
 }
 
-fn spawn_gateway(
-    config: &NamedTempFile,
-    traffic: TcpListener,
-    metrics: TcpListener,
-) -> Child {
+fn spawn_gateway(config: &NamedTempFile, traffic: TcpListener, metrics: TcpListener) -> Child {
     drop(traffic);
     drop(metrics);
     Command::new(env!("CARGO_BIN_EXE_cwl-pingora-gateway"))
@@ -219,13 +215,7 @@ fn connect_h2(
     }
 }
 
-fn write_frame(
-    stream: &mut impl Write,
-    frame_type: u8,
-    flags: u8,
-    stream_id: u32,
-    payload: &[u8],
-) {
+fn write_frame(stream: &mut impl Write, frame_type: u8, flags: u8, stream_id: u32, payload: &[u8]) {
     assert!(payload.len() <= 0x00ff_ffff);
     let length = payload.len() as u32;
     let mut header = [0_u8; 9];
@@ -437,7 +427,9 @@ fn read_headers(stream: &mut TcpStream) -> String {
         stream
             .set_read_timeout(Some(remaining))
             .expect("origin read deadline should be set");
-        let read = stream.read(&mut buffer).expect("origin headers should read");
+        let read = stream
+            .read(&mut buffer)
+            .expect("origin headers should read");
         assert!(read > 0, "gateway closed before origin headers completed");
         raw.extend_from_slice(&buffer[..read]);
         assert!(raw.len() <= MAX_ORIGIN_BYTES);
@@ -486,7 +478,9 @@ fn partial_body_limit_releases_upstream_before_end_stream_and_preserves_sibling(
     let origin = thread::spawn(move || {
         let mut partial = accept_within(&origin_listener, "partial streamed request");
         let raw = read_admitted_prefix(&mut partial);
-        prefix_tx.send(()).expect("prefix channel should remain open");
+        prefix_tx
+            .send(())
+            .expect("prefix channel should remain open");
         observe_rx
             .recv_timeout(IO_BUDGET)
             .expect("release observation must start within I/O budget");
@@ -544,13 +538,7 @@ fn partial_body_limit_releases_upstream_before_end_stream_and_preserves_sibling(
         .recv_timeout(IO_BUDGET)
         .expect("partial H1 state must release before client-side H2 cleanup");
 
-    write_frame(
-        &mut tls,
-        H2_RST_STREAM,
-        0,
-        1,
-        &H2_CANCEL.to_be_bytes(),
-    );
+    write_frame(&mut tls, H2_RST_STREAM, 0, 1, &H2_CANCEL.to_be_bytes());
     tls.flush().expect("client cleanup reset should flush");
 
     write_frame(
@@ -588,7 +576,10 @@ fn partial_body_limit_releases_upstream_before_end_stream_and_preserves_sibling(
     }
 
     assert!(sibling_headers, "sibling must receive response headers");
-    assert!(sibling_ended, "sibling must complete on the same connection");
+    assert!(
+        sibling_ended,
+        "sibling must complete on the same connection"
+    );
     assert_eq!(sibling_body, b"sibling-ok");
     origin.join().expect("origin fixture should complete");
 }
