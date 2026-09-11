@@ -441,8 +441,14 @@ fn cancelling_one_h2_stream_releases_its_origin_and_preserves_the_live_sibling()
         sibling_response_started,
         "origin fixture must prove both streams were dispatched before cancellation"
     );
-    assert!(reset_sent, "stream 1 must be cancelled after sibling response starts");
-    assert!(sibling_ended, "stream 3 must complete after stream 1 cancellation");
+    assert!(
+        reset_sent,
+        "stream 1 must be cancelled after sibling response starts"
+    );
+    assert!(
+        sibling_ended,
+        "stream 3 must complete after stream 1 cancellation"
+    );
     assert_eq!(sibling_body, b"sibling-ok");
 
     upstream_fixture
