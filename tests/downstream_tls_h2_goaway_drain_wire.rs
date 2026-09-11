@@ -372,7 +372,7 @@ fn sigterm_h2_goaway_drains_admitted_streams_and_bounds_new_work() {
             "stream 3 should reach the expected origin path: {second_request:?}"
         );
         second_seen_tx
-            .send(())
+            .send(Instant::now())
             .expect("test controller should observe stream 3 admission");
 
         release_rx
@@ -423,9 +423,6 @@ fn sigterm_h2_goaway_drains_admitted_streams_and_bounds_new_work() {
     write_h2_frame(&mut tls, H2_FRAME_HEADERS, 0x5, 3, &hpack_get(0x85));
     tls.flush()
         .expect("stream 3 should be sent during the configured grace period");
-    second_seen_rx
-        .recv_timeout(Duration::from_secs(3))
-        .expect("stream 3 should be admitted before H2 drain begins");
 
     let mut initial_goaway = None;
     for _ in 0..64 {
@@ -441,12 +438,12 @@ fn sigterm_h2_goaway_drains_admitted_streams_and_bounds_new_work() {
         );
         if frame_type == H2_FRAME_GOAWAY {
             assert_eq!(stream_id, 0, "GOAWAY is a connection-level frame");
-            initial_goaway = Some(parse_goaway(&payload));
+            initial_goaway = Some((Instant::now(), parse_goaway(&payload)));
             break;
         }
     }
 
-    let (initial_last_stream_id, initial_error_code) =
+    let (initial_goaway_seen_at, (initial_last_stream_id, initial_error_code)) =
         initial_goaway.expect("SIGTERM must initiate HTTP/2 drain with GOAWAY");
     assert_eq!(
         initial_last_stream_id, H2_MAX_STREAM_ID,
@@ -456,9 +453,29 @@ fn sigterm_h2_goaway_drains_admitted_streams_and_bounds_new_work() {
         initial_error_code, H2_ERROR_NO_ERROR,
         "administrative graceful shutdown should use GOAWAY(NO_ERROR)"
     );
+
+    let grace_period = Duration::from_secs(V1_GRACE_PERIOD_SECONDS);
+    let initial_goaway_after_signal = initial_goaway_seen_at
+        .checked_duration_since(signal_sent_at)
+        .expect("initial GOAWAY observation must follow SIGTERM");
     assert!(
-        signal_sent_at.elapsed() >= Duration::from_secs(V1_GRACE_PERIOD_SECONDS),
-        "GOAWAY must not bypass the configured pre-shutdown grace period"
+        initial_goaway_after_signal >= grace_period,
+        "GOAWAY must not bypass the configured pre-shutdown grace period: observed after {initial_goaway_after_signal:?}"
+    );
+
+    let second_seen_at = second_seen_rx
+        .recv_timeout(Duration::from_millis(100))
+        .expect("stream 3 should reach origin before H2 drain begins");
+    let second_after_signal = second_seen_at
+        .checked_duration_since(signal_sent_at)
+        .expect("stream 3 origin observation must follow SIGTERM");
+    assert!(
+        second_seen_at < initial_goaway_seen_at,
+        "stream 3 must reach origin before the initial GOAWAY is observed"
+    );
+    assert!(
+        second_after_signal < grace_period,
+        "stream 3 must be admitted during the configured grace period: observed after {second_after_signal:?}"
     );
 
     release_tx
