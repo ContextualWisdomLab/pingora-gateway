@@ -77,10 +77,13 @@ fn bundle_requires_protected_source_identity_and_binary_provenance() {
 #[test]
 fn bundle_is_digest_bound_executable_and_explicitly_unpublished() {
     for required in [
+        "chmod 0755 \"$bundle_dir\"",
         "chmod 0755",
+        "chmod 0644",
         "evidence_kind=protected-source-release-evidence-bundle",
         "publication_state=unpublished",
         "SHA256SUMS",
+        "--format=gnu",
         "--sort=name",
         "--mtime=\"@${source_date_epoch}\"",
         "--owner=0",
