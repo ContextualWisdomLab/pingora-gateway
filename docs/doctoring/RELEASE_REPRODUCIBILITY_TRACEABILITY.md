@@ -14,7 +14,7 @@ Foundation PR #56 establishes Rust 1.98.1 as the release compiler because Rust 1
 
 The acceptance must not weaken `Cargo.lock`, select a mutable supplier branch, hide compiler overrides, retain build outputs between candidates, strip differing sections, or compare only semantic metadata. Cargo `--locked` requires the committed lock file to remain unchanged. Dependencies are fetched once under the locked graph and both candidate builds run offline with incremental compilation disabled, so network movement cannot alter either build after input acquisition.
 
-The verified `rustup default` alone is not sufficient compiler authority. Cargo can select a compiler or wrapper through `RUSTC`, `CARGO_BUILD_RUSTC`, `RUSTC_WRAPPER`, `CARGO_BUILD_RUSTC_WRAPPER`, `RUSTC_WORKSPACE_WRAPPER`, `CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER`, repository `.cargo/config` or `.cargo/config.toml`. Build flags can likewise enter through `RUSTFLAGS`, `CARGO_BUILD_RUSTFLAGS` or `CARGO_ENCODED_RUSTFLAGS`. A same-platform reproducibility receipt that leaves those authorities unconstrained could compare two byte-identical binaries produced by an unintended compiler or wrapper and therefore prove the wrong build identity.
+The verified `rustup default` alone is not sufficient compiler authority. Cargo can select a compiler or wrapper through `RUSTC`, `CARGO_BUILD_RUSTC`, `RUSTC_WRAPPER`, `CARGO_BUILD_RUSTC_WRAPPER`, `RUSTC_WORKSPACE_WRAPPER`, `CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER`, repository or ancestor `.cargo/config` / `.cargo/config.toml`, and the Cargo home configuration. Build flags can likewise enter through `RUSTFLAGS`, `CARGO_BUILD_RUSTFLAGS` or `CARGO_ENCODED_RUSTFLAGS`. A same-platform reproducibility receipt that leaves those authorities unconstrained could compare two byte-identical binaries produced by an unintended compiler or wrapper and therefore prove the wrong build identity.
 
 Pingora 0.9.0 enables `pingora-openssl`, whose `openssl` dependency enables the `vendored` feature. The resolved graph therefore builds and statically links OpenSSL through `openssl-src`. `openssl-src` configures vendored OpenSSL with `--prefix` pointing inside Cargo `OUT_DIR`; consequently, deliberately using different Cargo target roots changes a supplier-owned build path that OpenSSL can embed in build metadata. OpenSSL also exposes build-date metadata unless a reproducible build environment supplies stable time input. Treating two intentionally different target roots as the same build environment would test path independence rather than clean rebuild reproducibility and would make the gateway lane own a supplier build-system property it does not control.
 
@@ -39,13 +39,15 @@ A later independent review of the exact GREEN workflow found that its compiler-a
 
 The second causal repair extends the existing fail-closed step rather than changing the compiler, equality oracle or build topology. It rejects `RUSTC`, `CARGO_BUILD_RUSTC`, both Cargo and ordinary rustc wrapper authorities, workspace wrappers, `RUSTUP_TOOLCHAIN`, the three supported build-flag authorities, repository `.cargo/config` and `.cargo/config.toml`, plus the existing rust-toolchain files. The hostile-case contract enumerates the same authorities, so future relaxation is a test failure rather than silent release-evidence drift.
 
+A further current-head audit found that repository-root checks alone still did not match Cargo's configuration hierarchy. Cargo searches `.cargo/config.toml` or `.cargo/config` from the invocation directory through its ancestors and also uses Cargo-home configuration. Exact `da504f42ac4f8f77ea943609e10f1c26102c49cd` encoded that missing boundary in the structural contract, but its CI `34623637928` stopped at Rust 1.98.0 formatting before the semantic assertion executed. The finding is nevertheless valid from Cargo's documented lookup rules. The causal workflow repair now rejects externally supplied `CARGO_HOME`, walks from `$PWD` to `/` and rejects either Cargo configuration filename at every level, then creates a clean exact-SHA-scoped Cargo home under `$RUNNER_TEMP` and exports it before dependency fetch and both offline release builds. The equality oracle, compiler version, target-path strategy, and binary contents are not normalized or weakened by this repair.
+
 ## Selected acceptance
 
 `.github/workflows/release-reproducibility.yml` executes on pull requests and protected `main` pushes. It:
 
 1. checks out and verifies the exact source SHA;
 2. installs, selects and verifies Rust 1.98.1 before Cargo;
-3. fails closed on environment, Cargo-configuration and toolchain-file authorities that can alter the release compiler, wrapper or build flags;
+3. fails closed on environment, ancestor/repository Cargo configuration, Cargo-home, build-flag and toolchain-file authorities that can alter the release compiler, wrapper or flags, then establishes one clean exact-SHA-scoped Cargo home;
 4. fetches the committed locked dependency graph once and verifies that `Cargo.lock` did not move;
 5. derives a non-zero `SOURCE_DATE_EPOCH` from the exact source commit and binds one exact-SHA canonical target path;
 6. removes the canonical target tree, builds both release binaries offline/non-incrementally, and stages candidate A outside the target tree;
@@ -57,7 +59,7 @@ The second causal repair extends the existing fail-closed step rather than chang
 
 ## Risk and interpretation
 
-A GREEN result means that the exact candidate produced identical binary bytes in two clean builds on the same GitHub-hosted Ubuntu 24.04 runner using verified Rust 1.98.1, the committed dependency lock, the exact source timestamp, the same canonical target path, and no admitted alternate Cargo compiler/wrapper/build-flag authority. It does not prove that different build roots, build platforms, container bases, linkers/toolchain images, or later protected heads produce the same bytes. It also does not establish OCI-layer reproducibility.
+A GREEN result means that the exact candidate produced identical binary bytes in two clean builds on the same GitHub-hosted Ubuntu 24.04 runner using verified Rust 1.98.1, the committed dependency lock, the exact source timestamp, the same canonical target path, an isolated Cargo home, and no admitted alternate Cargo compiler/wrapper/build-flag or ancestor configuration authority. It does not prove that different build roots, build platforms, container bases, linkers/toolchain images, or later protected heads produce the same bytes. It also does not establish OCI-layer reproducibility.
 
 A RED result is a release-evidence defect. The response is to identify the nondeterministic or uncontrolled input and repair it; reducing the comparison to semantic equivalence, excluding changed bytes, normalizing binaries after the build, or weakening the digest requirement is not acceptable.
 
@@ -70,7 +72,7 @@ This lane may become release evidence only on its unchanged exact head together 
 ## Primary-source traceability
 
 - Cargo documents `--locked` as asserting that the exact dependencies and versions from the existing lock file are used, and `--offline` as preventing network access during the build. The workflow fetches the locked graph before using offline release builds.
-- Cargo configuration documents `build.rustc`, `build.rustc-wrapper`, `build.rustc-workspace-wrapper` and `build.rustflags`, together with their environment-variable authorities, and loads repository `.cargo/config.toml` or `.cargo/config`. The release lane rejects those competing authorities instead of relying on `rustup default` alone.
+- Cargo configuration documents `build.rustc`, `build.rustc-wrapper`, `build.rustc-workspace-wrapper` and `build.rustflags`, together with their environment-variable authorities. Cargo also searches `.cargo/config.toml` or `.cargo/config` from the current directory through ancestor directories and consults Cargo-home configuration. The release lane rejects inherited ancestor configuration and supplies its own empty exact-SHA-scoped Cargo home instead of relying on runner state.
 - Pingora 0.9.0's OpenSSL feature reaches `pingora-openssl`, which selects rust-openssl's vendored OpenSSL build. The resolved gateway lock contains `openssl-src 300.6.1+3.6.3` and `openssl-sys 0.9.117`.
 - `openssl-src` constructs its install prefix inside Cargo `OUT_DIR` and passes that path as OpenSSL `--prefix`; changing Cargo target roots therefore changes supplier build-path input.
 - OpenSSL documents `OPENSSL_BUILT_ON` as build-date metadata and notes that the date may be unavailable in a reproducible build. The OpenSSL build system recognizes `SOURCE_DATE_EPOCH` as reproducible-build time input; this lane supplies the exact commit timestamp rather than wall-clock time.
