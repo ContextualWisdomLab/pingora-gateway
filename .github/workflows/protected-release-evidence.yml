@@ -162,12 +162,10 @@ jobs:
           bundle_dir=protected-release-evidence
           rm -rf "$bundle_dir"
           mkdir -p "$bundle_dir"
+          chmod 0755 "$bundle_dir"
 
           cp evidence/reproducibility/release-binaries/cwl-pingora-gateway "$bundle_dir/"
           cp evidence/reproducibility/release-binaries/cwl-pingora-pg-erd-migration "$bundle_dir/"
-          chmod 0755 \
-            "$bundle_dir/cwl-pingora-gateway" \
-            "$bundle_dir/cwl-pingora-pg-erd-migration"
           cp evidence/reproducibility/release-reproducibility.txt "$bundle_dir/"
           cp evidence/supply-chain/Cargo.lock "$bundle_dir/"
           cp evidence/supply-chain/deny.toml "$bundle_dir/"
@@ -175,6 +173,18 @@ jobs:
           cp evidence/supply-chain/trivy-image.json "$bundle_dir/"
           cp evidence/supply-chain/trivy-pg-erd-image.json "$bundle_dir/"
           cp evidence/supply-chain/candidate-evidence.txt "$bundle_dir/"
+
+          chmod 0755 \
+            "$bundle_dir/cwl-pingora-gateway" \
+            "$bundle_dir/cwl-pingora-pg-erd-migration"
+          chmod 0644 \
+            "$bundle_dir/release-reproducibility.txt" \
+            "$bundle_dir/Cargo.lock" \
+            "$bundle_dir/deny.toml" \
+            "$bundle_dir/candidate.spdx.json" \
+            "$bundle_dir/trivy-image.json" \
+            "$bundle_dir/trivy-pg-erd-image.json" \
+            "$bundle_dir/candidate-evidence.txt"
 
           {
             printf 'evidence_kind=protected-source-release-evidence-bundle\n'
@@ -184,6 +194,7 @@ jobs:
             printf 'certificate_identity=%s\n' "$CERT_IDENTITY"
             printf 'publication_state=unpublished\n'
           } > "$bundle_dir/protected-release-evidence.txt"
+          chmod 0644 "$bundle_dir/protected-release-evidence.txt"
 
           (
             cd "$bundle_dir"
@@ -191,12 +202,14 @@ jobs:
               | sort \
               | xargs sha256sum \
               > SHA256SUMS
+            chmod 0644 SHA256SUMS
           )
 
           source_date_epoch="$(git show -s --format=%ct "$SOURCE_SHA")"
           [[ "$source_date_epoch" =~ ^[1-9][0-9]*$ ]]
           archive="cwl-pingora-gateway-release-evidence-${SOURCE_SHA}.tar.gz"
           tar \
+            --format=gnu \
             --sort=name \
             --mtime="@${source_date_epoch}" \
             --owner=0 \
