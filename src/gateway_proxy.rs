@@ -62,6 +62,7 @@ pub struct GatewayProxy {
     upstream_peer: HttpPeer,
     limits: RuntimeIsolationLimits,
     admission_budget: RequestAdmissionBudget,
+    forwarded_header_value: &'static str,
 }
 
 impl GatewayProxy {
@@ -82,6 +83,7 @@ impl GatewayProxy {
             upstream_peer: build_peer_from_validated(upstream)?,
             limits,
             admission_budget: RequestAdmissionBudget::new(limits),
+            forwarded_header_value: forwarded_header_value(config.downstream_tls.is_some()),
         })
     }
 
@@ -160,11 +162,28 @@ fn body_rejection_to_pingora(rejection: BodyLimitExceeded) -> Box<Error> {
     )
 }
 
-/// Removes request-controlled proxy identity and emits only the generic-v1 scheme claim.
+/// Returns the only `Forwarded` scheme value the validated listener transport can prove.
 ///
-/// Generic v1 intentionally makes no client-IP or trusted-proxy provenance claim; those semantics
-/// require a separately characterized and versioned edge contract.
-fn sanitize_forwarding_headers(upstream_request: &mut RequestHeader) -> pingora::Result<()> {
+/// The generic gateway deliberately emits no client-IP or trusted-hop provenance. Downstream TLS
+/// presence is a versioned Admin Config invariant, so request-controlled fields cannot influence
+/// this value.
+const fn forwarded_header_value(downstream_tls: bool) -> &'static str {
+    if downstream_tls {
+        "proto=https"
+    } else {
+        "proto=http"
+    }
+}
+
+/// Removes request-controlled proxy identity and emits only gateway-owned transport truth.
+///
+/// The caller supplies a value derived once from validated Admin Config. Generic delivery still
+/// makes no client-IP or trusted-proxy provenance claim; those semantics require a separately
+/// characterized and versioned edge contract.
+fn sanitize_forwarding_headers(
+    upstream_request: &mut RequestHeader,
+    forwarded_header_value: &'static str,
+) -> pingora::Result<()> {
     for header in [
         "Forwarded",
         "X-Forwarded-For",
@@ -177,8 +196,8 @@ fn sanitize_forwarding_headers(upstream_request: &mut RequestHeader) -> pingora:
         upstream_request.remove_header(header);
     }
     upstream_request
-        .insert_header("Forwarded", "proto=http")
-        .expect("literal gateway-owned Forwarded header must be valid");
+        .insert_header("Forwarded", forwarded_header_value)
+        .expect("validated gateway-owned Forwarded header must be valid");
     Ok(())
 }
 
@@ -245,7 +264,7 @@ impl ProxyHttp for GatewayProxy {
     where
         Self::CTX: Send + Sync,
     {
-        sanitize_forwarding_headers(upstream_request)
+        sanitize_forwarding_headers(upstream_request, self.forwarded_header_value)
     }
 
     async fn logging(&self, session: &mut Session, error: Option<&Error>, ctx: &mut Self::CTX)
@@ -258,7 +277,10 @@ impl ProxyHttp for GatewayProxy {
 
 #[cfg(test)]
 mod tests {
-    use super::{body_rejection_to_pingora, sanitize_forwarding_headers, RequestContext};
+    use super::{
+        body_rejection_to_pingora, forwarded_header_value, sanitize_forwarding_headers,
+        RequestContext,
+    };
     use crate::runtime_isolation::{
         BodyLimitExceeded, RequestAdmissionBudget, RuntimeIsolationLimits,
     };
@@ -282,7 +304,7 @@ mod tests {
                 .expect("fixture forwarding header must be valid");
         }
 
-        sanitize_forwarding_headers(&mut request)
+        sanitize_forwarding_headers(&mut request, forwarded_header_value(false))
             .expect("gateway-owned forwarding metadata must remain valid");
 
         assert_eq!(request.headers["forwarded"].to_str().unwrap(), "proto=http");
@@ -299,6 +321,12 @@ mod tests {
                 "{name} must not retain client-controlled identity"
             );
         }
+    }
+
+    #[test]
+    fn forwarded_scheme_tracks_validated_downstream_transport() {
+        assert_eq!(forwarded_header_value(false), "proto=http");
+        assert_eq!(forwarded_header_value(true), "proto=https");
     }
 
     #[test]
