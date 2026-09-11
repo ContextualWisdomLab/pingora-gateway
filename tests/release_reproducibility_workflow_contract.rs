@@ -110,11 +110,34 @@ fn release_reproducibility_lane_rebuilds_cleanly_with_one_canonical_environment(
 fn release_reproducibility_lane_fails_closed_on_compiler_or_artifact_drift() {
     assert!(RELEASE_REPRODUCIBILITY_WORKFLOW
         .contains("test \"$(git rev-parse HEAD)\" = \"$EXPECTED_SHA\""));
-    assert!(RELEASE_REPRODUCIBILITY_WORKFLOW.contains("test -z \"${RUSTUP_TOOLCHAIN:-}\""));
-    assert!(RELEASE_REPRODUCIBILITY_WORKFLOW.contains("test -z \"${RUSTFLAGS:-}\""));
-    assert!(RELEASE_REPRODUCIBILITY_WORKFLOW.contains("test -z \"${CARGO_ENCODED_RUSTFLAGS:-}\""));
-    assert!(RELEASE_REPRODUCIBILITY_WORKFLOW.contains("test -z \"${RUSTC_WRAPPER:-}\""));
-    assert!(RELEASE_REPRODUCIBILITY_WORKFLOW.contains("test -z \"${RUSTC_WORKSPACE_WRAPPER:-}\""));
+
+    for forbidden in [
+        "RUSTC",
+        "CARGO_BUILD_RUSTC",
+        "RUSTC_WRAPPER",
+        "CARGO_BUILD_RUSTC_WRAPPER",
+        "RUSTC_WORKSPACE_WRAPPER",
+        "CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER",
+        "RUSTUP_TOOLCHAIN",
+        "RUSTFLAGS",
+        "CARGO_BUILD_RUSTFLAGS",
+        "CARGO_ENCODED_RUSTFLAGS",
+    ] {
+        let guard = format!("test -z \"${{{forbidden}:-}}\"");
+        assert!(
+            RELEASE_REPRODUCIBILITY_WORKFLOW.contains(&guard),
+            "release reproducibility workflow must reject compiler/build authority {forbidden}"
+        );
+    }
+
+    for path in [".cargo/config", ".cargo/config.toml"] {
+        let guard = format!("test ! -e {path}");
+        assert!(
+            RELEASE_REPRODUCIBILITY_WORKFLOW.contains(&guard),
+            "release reproducibility workflow must reject repository Cargo compiler config {path}"
+        );
+    }
+
     assert!(RELEASE_REPRODUCIBILITY_WORKFLOW.contains("test ! -e rust-toolchain"));
     assert!(RELEASE_REPRODUCIBILITY_WORKFLOW.contains("test ! -e rust-toolchain.toml"));
     assert!(!RELEASE_REPRODUCIBILITY_WORKFLOW.contains("1.98.0"));
