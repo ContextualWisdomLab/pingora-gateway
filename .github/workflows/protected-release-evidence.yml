@@ -113,8 +113,8 @@ jobs:
           grep -Fx "source_sha=${SOURCE_SHA}" "$supply_receipt"
 
           for evidence in \
-            evidence/reproducibility/cwl-pingora-gateway \
-            evidence/reproducibility/cwl-pingora-pg-erd-migration \
+            evidence/reproducibility/release-binaries/cwl-pingora-gateway \
+            evidence/reproducibility/release-binaries/cwl-pingora-pg-erd-migration \
             evidence/supply-chain/Cargo.lock \
             evidence/supply-chain/deny.toml \
             evidence/supply-chain/candidate.spdx.json \
@@ -123,6 +123,23 @@ jobs:
             test -s "$evidence"
           done
 
+          (
+            cd evidence/reproducibility
+            grep -E \
+              '^[0-9a-f]{64}  release-binaries/(cwl-pingora-gateway|cwl-pingora-pg-erd-migration)$' \
+              release-reproducibility.txt \
+              | sha256sum --check --strict -
+          )
+          (
+            cd evidence/supply-chain
+            grep -E \
+              '^[0-9a-f]{64}  (Cargo.lock|deny.toml|candidate.spdx.json|trivy-image.json|trivy-pg-erd-image.json)$' \
+              candidate-evidence.txt \
+              | sha256sum --check --strict -
+          )
+          cmp --silent Cargo.lock evidence/supply-chain/Cargo.lock
+          cmp --silent deny.toml evidence/supply-chain/deny.toml
+
       - name: Verify protected-source binary provenance
         shell: bash
         env:
@@ -130,7 +147,7 @@ jobs:
         run: |
           set -euo pipefail
           for binary in cwl-pingora-gateway cwl-pingora-pg-erd-migration; do
-            gh attestation verify "evidence/reproducibility/${binary}" \
+            gh attestation verify "evidence/reproducibility/release-binaries/${binary}" \
               --repo "$GITHUB_REPOSITORY" \
               --cert-identity "$CERT_IDENTITY" \
               --source-digest "$SOURCE_SHA" \
@@ -146,8 +163,8 @@ jobs:
           rm -rf "$bundle_dir"
           mkdir -p "$bundle_dir"
 
-          cp evidence/reproducibility/cwl-pingora-gateway "$bundle_dir/"
-          cp evidence/reproducibility/cwl-pingora-pg-erd-migration "$bundle_dir/"
+          cp evidence/reproducibility/release-binaries/cwl-pingora-gateway "$bundle_dir/"
+          cp evidence/reproducibility/release-binaries/cwl-pingora-pg-erd-migration "$bundle_dir/"
           chmod 0755 \
             "$bundle_dir/cwl-pingora-gateway" \
             "$bundle_dir/cwl-pingora-pg-erd-migration"
