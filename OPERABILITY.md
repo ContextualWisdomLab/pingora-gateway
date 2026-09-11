@@ -32,7 +32,7 @@ Hostile `Forwarded`, `X-Forwarded-*`, `X-Real-IP` and legacy proxy identity are 
 
 HTTP/1 Upgrade remains denied before origin selection and at Pingora peer construction. WebSocket, HTTP/2 Extended CONNECT, h2c and HTTP/3 are not enabled by the TLS increment. Any future protocol transition requires an explicit versioned contract and traffic/drain/backpressure evidence.
 
-Basic H2 traffic is not complete H2 operability. Before a production TLS/H2 cutover, issue #51 still requires concurrent-stream behavior, reset/cancellation, GOAWAY/graceful drain, header/body admission, flow control/backpressure, origin failure/recovery, forwarding trust and cutover telemetry. H2→H1 Cookie and zero-length body-framing paths remain supplier-gated by `cloudflare/pingora#901` and `#936` until release-qualified.
+The current downstream TLS/H2 stack has real-wire coverage for concurrent streams, reset/cancellation, GOAWAY/graceful drain, decoded header and request-body admission, stream- and connection-window flow control, bounded upstream read-ahead under exhausted connection credit, partial-request cleanup, origin failure before and after downstream response commitment, forwarding-scheme trust, and finite cutover transport telemetry. These source/runtime capabilities do not imply protected integration or production cutover. Generic client-IP/trusted-hop provenance is deliberately not synthesized without a separately admitted trust contract. H2→H1 Cookie/body-framing behavior remains supplier-gated until the applicable Pingora fixes have maintainer-integrated, release-qualified identities.
 
 ## Header/parser and shutdown residuals
 
@@ -56,9 +56,11 @@ OCI source acceptance starts both admitted profiles under those restrictions and
 
 ## Performance operation
 
-Controlled local k6 gates are regression bounds. For TLS/H2, record new-connection/handshake latency separately from reused-connection traffic and keep actual routing/TLS I/O in the measured path. Do not hide handshake cost by reporting only warm reuse. Applicable buyer paths retain the declared p95 `<20 ms` threshold without reducing samples or concurrency.
+Controlled local k6 gates are regression bounds. The dedicated downstream TLS/H2 performance lane runs release-built gateway and bounded Rust origin candidates in two isolated process runs while preserving the generic load floor of 4 VUs and 400 iterations. Only health/readiness endpoints are touched before measurement; the application route is not warmed.
 
-Worker performance reporting must include configured proxy worker count, registered service overrides and CPU/socket/NUMA topology. `service_threads` is not total OS process threads. Representative NUMA shutdown/contention profiling remains issue #46 work even after ordinary load gates pass.
+Fresh mode disables downstream connection reuse, requires every measured response to negotiate HTTP/2 and pay a non-zero TLS handshake, and records `connecting + tls_handshaking + duration` separately from TLS-handshake time. Reuse mode accepts only observations whose connection and TLS setup timings are both zero, so warm H2 requests cannot hide handshake cost. Both applicable p95 metrics retain the `<20 ms` gate, certificate verification stays enabled through the local CA, and exact-SHA JSON receipts are preserved. A hosted GREEN is a controlled loopback regression bound, not representative CPU/socket/NUMA, WAN, production shadow/canary or session-resumption evidence.
+
+Worker performance reporting must include configured proxy worker count, registered service overrides and CPU/socket/NUMA topology. `service_threads` is not total OS process threads. Representative NUMA shutdown/contention profiling remains issue #46 work even after ordinary load and downstream TLS/H2 performance gates pass.
 
 ## Cutover and rollback
 
@@ -68,4 +70,4 @@ During parity, shadow and canary stages, compare the bounded transport counter b
 
 Rollback restores the exact prior protected deployment revision; do not edit a live container. Certificate lifecycle, identity, product authorization/business policy and Wardnet/EgressWeave security-verdict ownership remain with their canonical owners during both cutover and rollback.
 
-No consumer may rely on a PR head as its gateway dependency. A deployable release requires version/CHANGELOG/tag/package, immutable artifact digest, SBOM/provenance/reproducibility and rehearsed rollback. Downstream TLS/H2 source capability does not waive supplier #901/#936 or the remaining issue #51 acceptance matrix.
+No consumer may rely on a PR head as its gateway dependency. A deployable release requires version/CHANGELOG/tag/package, immutable artifact digest, SBOM/provenance/reproducibility and rehearsed rollback. Downstream TLS/H2 source capability and hosted performance evidence do not waive release-qualified supplier framing, representative NUMA evidence, governance, immutable release, shadow/canary or consumer cutover requirements.
