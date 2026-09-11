@@ -46,6 +46,8 @@ SIGTERM continues through Pingora graceful termination. The gateway's request-dr
 
 Both production roots install the shared payload-safe logger before activation. `RUST_LOG` may change levels/targets, but Pingora-family message bodies pass through the repository redaction policy. Routine logs and Prometheus metrics are low-cardinality transport facts only. Authorization, cookies, tokens, request/response bodies, arbitrary product routes, customer payloads, trust-bundle contents and TLS private-key material are excluded.
 
+The cutover counter `cwl_pingora_gateway_requests_by_transport_total` partitions completed requests only by the finite labels `outcome={ok,error}`, `protocol={h1,h2}`, and `transport={cleartext,tls}`. Protocol comes from the accepted Pingora session; TLS presence comes from its transport digest. These eight possible series are suitable for parity/shadow/canary comparisons without adding routes, hosts, client addresses, certificate paths, customer/product identifiers, deployment revisions, or any other unbounded label. The existing aggregate counters remain available for compatibility.
+
 ## Container operation
 
 The Docker build selector admits only `cwl-pingora-gateway` and `cwl-pingora-pg-erd-migration`. Final candidates run as uid/gid `65532`, with read-only root filesystem, capabilities dropped and `no-new-privileges`. Mount config, upstream CA bundles and downstream certificate/key material read-only. The application has no intentional writable state.
@@ -61,6 +63,8 @@ Worker performance reporting must include configured proxy worker count, registe
 ## Cutover and rollback
 
 Keep the last known-good protected deployment manifest/image digest and executable legacy characterization until the migrated edge is verified. Promotion order is protected integration → immutable release identity → concrete parity → shadow/canary → observed rollback → cutover → verified legacy removal.
+
+During parity, shadow and canary stages, compare the bounded transport counter by protocol/transport/outcome against the intended traffic mix. A nonzero H2/TLS sample proves that the new edge path is actually carrying completed requests; an error-rate shift can then be separated from unrelated H1/cleartext traffic. This metric does not by itself prove latency, handshake cost, deployment identity, rollback success or product correctness, so those evidence streams remain independently required.
 
 Rollback restores the exact prior protected deployment revision; do not edit a live container. Certificate lifecycle, identity, product authorization/business policy and Wardnet/EgressWeave security-verdict ownership remain with their canonical owners during both cutover and rollback.
 

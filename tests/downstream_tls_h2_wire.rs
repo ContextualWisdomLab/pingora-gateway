@@ -107,19 +107,14 @@ fn issue_gateway_certificate() -> LocalCertificates {
     }
 }
 
-fn reserve_distinct_loopback_addresses() -> (SocketAddr, SocketAddr) {
+fn reserve_distinct_loopback_listeners() -> (TcpListener, TcpListener) {
     let traffic = TcpListener::bind("127.0.0.1:0").expect("traffic port should be available");
     let metrics = TcpListener::bind("127.0.0.1:0").expect("metrics port should be available");
-    let addresses = (
-        traffic
-            .local_addr()
-            .expect("traffic reservation has an address"),
-        metrics
-            .local_addr()
-            .expect("metrics reservation has an address"),
+    assert_ne!(
+        traffic.local_addr().expect("traffic reservation address"),
+        metrics.local_addr().expect("metrics reservation address")
     );
-    assert_ne!(addresses.0, addresses.1);
-    addresses
+    (traffic, metrics)
 }
 
 fn write_gateway_config(
@@ -139,7 +134,13 @@ fn write_gateway_config(
     file
 }
 
-fn spawn_gateway(config: &NamedTempFile) -> Child {
+fn spawn_gateway(
+    config: &NamedTempFile,
+    traffic_reservation: TcpListener,
+    metrics_reservation: TcpListener,
+) -> Child {
+    drop(traffic_reservation);
+    drop(metrics_reservation);
     Command::new(env!("CARGO_BIN_EXE_cwl-pingora-gateway"))
         .args([
             "--config",
@@ -233,6 +234,27 @@ fn read_h2_frame(stream: &mut impl Read) -> (u8, u8, u32, Vec<u8>) {
     (header[3], header[4], stream_id, payload)
 }
 
+fn scrape_metrics(address: SocketAddr) -> String {
+    let mut stream = TcpStream::connect(address).expect("metrics listener should accept traffic");
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .expect("metrics read timeout should be set");
+    stream
+        .write_all(b"GET /metrics HTTP/1.1\r\nHost: metrics\r\nConnection: close\r\n\r\n")
+        .expect("metrics request should write");
+    let mut response = String::new();
+    stream
+        .read_to_string(&mut response)
+        .expect("metrics response should be readable");
+    response
+}
+
+fn contains_exact_metric_sample(metrics: &str, sample: &str) -> bool {
+    metrics
+        .lines()
+        .any(|line| line.trim_end_matches('\r') == sample)
+}
+
 #[test]
 fn generic_gateway_negotiates_h2_over_verified_downstream_tls_and_proxies_real_traffic() {
     let certificates = issue_gateway_certificate();
@@ -261,9 +283,19 @@ fn generic_gateway_negotiates_h2_over_verified_downstream_tls_and_proxies_real_t
             .expect("upstream response should be writable");
     });
 
-    let (listener, metrics_listener) = reserve_distinct_loopback_addresses();
+    let (listener_reservation, metrics_reservation) = reserve_distinct_loopback_listeners();
+    let listener = listener_reservation
+        .local_addr()
+        .expect("traffic reservation address");
+    let metrics_listener = metrics_reservation
+        .local_addr()
+        .expect("metrics reservation address");
     let config = write_gateway_config(listener, metrics_listener, upstream, &certificates);
-    let mut process = GatewayProcess(spawn_gateway(&config));
+    let mut process = GatewayProcess(spawn_gateway(
+        &config,
+        listener_reservation,
+        metrics_reservation,
+    ));
     let mut tls = connect_h2(listener, &certificates, &mut process.0);
 
     assert_eq!(
@@ -312,6 +344,15 @@ fn generic_gateway_negotiates_h2_over_verified_downstream_tls_and_proxies_real_t
     upstream_fixture
         .join()
         .expect("cleartext upstream fixture should complete");
+
+    let metrics = scrape_metrics(metrics_listener);
+    assert!(
+        contains_exact_metric_sample(
+            &metrics,
+            "cwl_pingora_gateway_requests_by_transport_total{outcome=\"ok\",protocol=\"h2\",transport=\"tls\"} 1"
+        ),
+        "cutover telemetry must distinguish successful TLS/H2 traffic from aggregate request totals: {metrics:?}"
+    );
 }
 
 #[test]
@@ -319,9 +360,19 @@ fn generic_gateway_rejects_a_client_that_offers_only_an_unsupported_alpn_protoco
     let certificates = issue_gateway_certificate();
     let upstream_listener = TcpListener::bind("127.0.0.1:0").expect("upstream should bind");
     let upstream = upstream_listener.local_addr().expect("upstream address");
-    let (listener, metrics_listener) = reserve_distinct_loopback_addresses();
+    let (listener_reservation, metrics_reservation) = reserve_distinct_loopback_listeners();
+    let listener = listener_reservation
+        .local_addr()
+        .expect("traffic reservation address");
+    let metrics_listener = metrics_reservation
+        .local_addr()
+        .expect("metrics reservation address");
     let config = write_gateway_config(listener, metrics_listener, upstream, &certificates);
-    let mut process = GatewayProcess(spawn_gateway(&config));
+    let mut process = GatewayProcess(spawn_gateway(
+        &config,
+        listener_reservation,
+        metrics_reservation,
+    ));
 
     // Establish one verified supported handshake first so a later failure cannot be attributed to
     // startup timing, certificate identity, or CA materialization.

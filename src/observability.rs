@@ -8,7 +8,9 @@ use std::sync::LazyLock;
 
 use log::info;
 use pingora::prelude::{Error, Session};
-use pingora_prometheus::prometheus::{register_int_counter, IntCounter};
+use pingora_prometheus::prometheus::{
+    register_int_counter, register_int_counter_vec, IntCounter, IntCounterVec,
+};
 
 /// Stable low-cardinality outcome for one completed downstream request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,10 +65,7 @@ impl RequestObservation {
             REQUEST_ERRORS_TOTAL.inc();
         }
 
-        let outcome = match self.outcome {
-            RequestOutcome::Ok => "ok",
-            RequestOutcome::Error => "error",
-        };
+        let outcome = outcome_label(self.outcome);
         info!(
             "gateway_request status={} outcome={outcome} request_body_bytes={}",
             self.status, self.request_body_bytes
@@ -74,8 +73,30 @@ impl RequestObservation {
     }
 }
 
+fn outcome_label(outcome: RequestOutcome) -> &'static str {
+    match outcome {
+        RequestOutcome::Ok => "ok",
+        RequestOutcome::Error => "error",
+    }
+}
+
+fn transport_labels(is_http2: bool, has_tls: bool, outcome: RequestOutcome) -> [&'static str; 3] {
+    let protocol = if is_http2 { "h2" } else { "h1" };
+    let transport = if has_tls { "tls" } else { "cleartext" };
+    [outcome_label(outcome), protocol, transport]
+}
+
 fn register_counter(name: &'static str, help: &'static str) -> IntCounter {
     register_int_counter!(name, help)
+        .unwrap_or_else(|error| panic!("gateway metric {name} must register exactly once: {error}"))
+}
+
+fn register_counter_vec(
+    name: &'static str,
+    help: &'static str,
+    labels: &'static [&'static str],
+) -> IntCounterVec {
+    register_int_counter_vec!(name, help, labels)
         .unwrap_or_else(|error| panic!("gateway metric {name} must register exactly once: {error}"))
 }
 
@@ -107,11 +128,35 @@ static BACKPRESSURE_REJECTIONS_TOTAL: LazyLock<IntCounter> = LazyLock::new(|| {
     )
 });
 
+static REQUESTS_BY_TRANSPORT_TOTAL: LazyLock<IntCounterVec> = LazyLock::new(|| {
+    let metric = register_counter_vec(
+        "cwl_pingora_gateway_requests_by_transport_total",
+        "Completed downstream requests partitioned by bounded transport facts",
+        &["outcome", "protocol", "transport"],
+    );
+
+    for outcome in ["ok", "error"] {
+        for protocol in ["h1", "h2"] {
+            for transport in ["cleartext", "tls"] {
+                metric.with_label_values(&[outcome, protocol, transport]);
+            }
+        }
+    }
+    metric
+});
+
 pub(crate) fn record_request(session: &Session, error: Option<&Error>, request_body_bytes: u64) {
     let status = session
         .response_written()
         .map_or(0, |response| response.status.as_u16());
-    RequestObservation::from_parts(status, error.is_some(), request_body_bytes).record();
+    let observation = RequestObservation::from_parts(status, error.is_some(), request_body_bytes);
+    let has_tls = session
+        .digest()
+        .and_then(|digest| digest.ssl_digest.as_ref())
+        .is_some();
+    let labels = transport_labels(session.is_http2(), has_tls, observation.outcome());
+    REQUESTS_BY_TRANSPORT_TOTAL.with_label_values(&labels).inc();
+    observation.record();
 }
 
 pub(crate) fn record_backpressure_rejection() {
@@ -122,7 +167,10 @@ pub(crate) fn record_backpressure_rejection() {
 mod tests {
     use std::panic;
 
-    use super::{register_counter, RequestObservation, RequestOutcome};
+    use super::{
+        outcome_label, register_counter, register_counter_vec, transport_labels,
+        RequestObservation, RequestOutcome,
+    };
 
     #[test]
     fn request_observation_maps_error_state_without_payload_fields() {
@@ -141,12 +189,46 @@ mod tests {
     }
 
     #[test]
+    fn transport_labels_are_finite_transport_facts_only() {
+        assert_eq!(outcome_label(RequestOutcome::Ok), "ok");
+        assert_eq!(outcome_label(RequestOutcome::Error), "error");
+        assert_eq!(
+            transport_labels(false, false, RequestOutcome::Ok),
+            ["ok", "h1", "cleartext"]
+        );
+        assert_eq!(
+            transport_labels(false, true, RequestOutcome::Error),
+            ["error", "h1", "tls"]
+        );
+        assert_eq!(
+            transport_labels(true, false, RequestOutcome::Error),
+            ["error", "h2", "cleartext"]
+        );
+        assert_eq!(
+            transport_labels(true, true, RequestOutcome::Ok),
+            ["ok", "h2", "tls"]
+        );
+    }
+
+    #[test]
     fn duplicate_metric_registration_fails_closed() {
         let name = "cwl_pingora_gateway_test_duplicate_registration_total";
         let help = "Coverage-only counter proving duplicate registration fails closed";
         let _first = register_counter(name, help);
 
         let duplicate = panic::catch_unwind(|| register_counter(name, help));
+
+        assert!(duplicate.is_err());
+    }
+
+    #[test]
+    fn duplicate_metric_vector_registration_fails_closed() {
+        let name = "cwl_pingora_gateway_test_duplicate_registration_by_transport_total";
+        let help = "Coverage-only vector proving duplicate registration fails closed";
+        let labels = &["outcome", "protocol", "transport"];
+        let _first = register_counter_vec(name, help, labels);
+
+        let duplicate = panic::catch_unwind(|| register_counter_vec(name, help, labels));
 
         assert!(duplicate.is_err());
     }
