@@ -233,6 +233,27 @@ fn read_h2_frame(stream: &mut impl Read) -> (u8, u8, u32, Vec<u8>) {
     (header[3], header[4], stream_id, payload)
 }
 
+fn scrape_metrics(address: SocketAddr) -> String {
+    let mut stream = TcpStream::connect(address).expect("metrics listener should accept traffic");
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .expect("metrics read timeout should be set");
+    stream
+        .write_all(b"GET /metrics HTTP/1.1\r\nHost: metrics\r\nConnection: close\r\n\r\n")
+        .expect("metrics request should write");
+    let mut response = String::new();
+    stream
+        .read_to_string(&mut response)
+        .expect("metrics response should be readable");
+    response
+}
+
+fn contains_exact_metric_sample(metrics: &str, sample: &str) -> bool {
+    metrics
+        .lines()
+        .any(|line| line.trim_end_matches('\r') == sample)
+}
+
 #[test]
 fn generic_gateway_negotiates_h2_over_verified_downstream_tls_and_proxies_real_traffic() {
     let certificates = issue_gateway_certificate();
@@ -312,6 +333,15 @@ fn generic_gateway_negotiates_h2_over_verified_downstream_tls_and_proxies_real_t
     upstream_fixture
         .join()
         .expect("cleartext upstream fixture should complete");
+
+    let metrics = scrape_metrics(metrics_listener);
+    assert!(
+        contains_exact_metric_sample(
+            &metrics,
+            "cwl_pingora_gateway_requests_by_transport_total{outcome=\"ok\",protocol=\"h2\",transport=\"tls\"} 1"
+        ),
+        "cutover telemetry must distinguish successful TLS/H2 traffic from aggregate request totals: {metrics:?}"
+    );
 }
 
 #[test]
