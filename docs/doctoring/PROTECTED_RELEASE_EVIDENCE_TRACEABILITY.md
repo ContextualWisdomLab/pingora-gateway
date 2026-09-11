@@ -8,7 +8,7 @@ This document describes an unreleased, post-integration evidence-assembly lane. 
 
 The release-quality contract requires the exact protected source revision to carry reproducible binaries, SBOM/security evidence, authenticated provenance, immutable publication, and rollback/cutover evidence. Pull-request evidence is necessary but insufficient: on a pull-request run the explicitly checked-out head and GitHub's synthetic merge signer/source identity are intentionally different. After protected integration, the existing `Release Reproducibility` push lane can re-establish one protected commit as checkout, attested source, and signer identity.
 
-A second risk appears at packaging time. Rebuilding binaries or images while preparing a release would create another compiler/build authority after reproducibility and provenance have already been established. Copying arbitrary artifacts by run number without binding their repository, workflow, event, branch, source SHA, conclusion, receipt, and attestation could likewise assemble a plausible-looking release bundle from unrelated evidence.
+A second risk appears at packaging time. Rebuilding binaries or images while preparing a release would create another compiler/build authority after reproducibility and provenance have already been established. Copying arbitrary artifacts by run number without binding their repository, workflow, event, branch, source SHA, conclusion, receipt, and attestation could likewise assemble a plausible-looking release bundle from unrelated evidence. GitHub's artifact-attestation guidance treats provenance as useful only when the attestation and signer identity are actually verified, rather than merely generated (GitHub, n.d.-a).
 
 ## Selected boundary
 
@@ -20,7 +20,7 @@ A second risk appears at packaging time. Rebuilding binaries or images while pre
 - has `head_branch=main` and `event=push`; and
 - has the expected workflow name and path.
 
-The downloaded reproducibility receipt must identify the same protected commit as `checkout_sha`, `attested_source_sha`, and `signer_sha`, must record the exact protected-main workflow certificate identity, and must report `result=byte-identical`. The supply-chain receipt must identify the same `source_sha`. Both binaries are then independently re-verified with `gh attestation verify` against the exact repository, protected-main workflow certificate identity, source/signer SHA, and hosted-runner requirement.
+The downloaded reproducibility receipt must identify the same protected commit as `checkout_sha`, `attested_source_sha`, and `signer_sha`, must record the exact protected-main workflow certificate identity, and must report `result=byte-identical`. The supply-chain receipt must identify the same `source_sha`. Both binaries are then independently re-verified with `gh attestation verify` against the exact repository, protected-main workflow certificate identity, source/signer SHA, and hosted-runner requirement. This follows GitHub's primary guidance to generate provenance for release binaries and verify the resulting attestations with GitHub CLI (GitHub, n.d.-b).
 
 The assembler also verifies the content digests already written into both upstream receipts before copying anything. The reproducibility artifact retains its `release-binaries/` directory, so the lane consumes that real uploaded layout rather than assuming that `actions/upload-artifact` flattens paths. Downloaded `Cargo.lock` and `deny.toml` must additionally compare byte-for-byte with the protected checkout.
 
@@ -36,12 +36,24 @@ The first archive implementation also used `tar -czf` directly and copied downlo
 
 ## Immutable-release boundary
 
-GitHub immutable releases are the publication authority for the planned first release. Publication must fail closed unless repository or organization release immutability is actually enabled. The safe publication sequence is draft release, attach every exact asset, publish, then verify the release and each asset. The current connector/runtime cannot read or change the repository Administration endpoint that controls immutable releases, so this lane does not infer that policy from ordinary repository write access and does not create a release.
+GitHub immutable releases are the publication authority for the planned first release. Once enabled and published, they lock the associated tag and release assets and automatically generate a release attestation. GitHub recommends creating the release as a draft, attaching every asset, and publishing only after the asset set is complete (GitHub, n.d.-c). Publication therefore fails closed unless repository or organization release immutability is actually enabled. The current connector/runtime cannot read or change the repository Administration endpoint that controls immutable releases; GitHub's repository API requires `Administration` read permission to check that setting and `Administration` write permission to change it (GitHub, n.d.-d). This lane does not infer the setting from ordinary repository write access and does not create a release.
 
-After that administrative prerequisite is verified, the publication implementation must consume this protected-source evidence bundle rather than rebuild it, bind the intended version and changelog to the same protected source, publish all assets before making the release immutable, and verify the resulting release/asset attestations. A published release remains downstream of independent governance, supplier release qualification, and the remaining representative NUMA evidence.
+After that administrative prerequisite is verified, the publication implementation must consume this protected-source evidence bundle rather than rebuild it, bind the intended version and changelog to the same protected source, publish all assets before making the release immutable, and verify the resulting release and each local asset with `gh release verify` and `gh release verify-asset` (GitHub, n.d.-e). A published release remains downstream of independent governance, supplier release qualification, and the remaining representative NUMA evidence.
 
 ## Evidence and follow-up
 
 PR evidence for this lane consists of the normal exact-head repository gates plus the executable structural contract in `tests/protected_release_evidence_workflow_contract.rs`. The actual bundle is post-integration evidence because `workflow_dispatch` is intentionally required to run from protected `main` and must consume successful same-SHA push artifacts.
 
 The next release sequence is: independent governance and dependency-ordered protected integration; exact protected-main reproducibility/provenance and supply-chain push runs; this protected-source bundle; verified immutable-release administration; version/changelog/tag/package publication from the same evidence; release and asset verification; representative deployment evidence; shadow/canary; observed rollback; cutover; then verified legacy proxy removal.
+
+## References
+
+GitHub. (n.d.-a). *Artifact attestations*. GitHub Docs. Retrieved September 12, 2026, from https://docs.github.com/en/actions/concepts/security/artifact-attestations
+
+GitHub. (n.d.-b). *Using artifact attestations to establish provenance for builds*. GitHub Docs. Retrieved September 12, 2026, from https://docs.github.com/en/actions/how-tos/secure-your-work/use-artifact-attestations/use-artifact-attestations
+
+GitHub. (n.d.-c). *Immutable releases*. GitHub Docs. Retrieved September 12, 2026, from https://docs.github.com/en/code-security/concepts/supply-chain-security/immutable-releases
+
+GitHub. (n.d.-d). *REST API endpoints for repositories*. GitHub Docs. Retrieved September 12, 2026, from https://docs.github.com/en/rest/repos/repos
+
+GitHub. (n.d.-e). *Verifying the integrity of a release*. GitHub Docs. Retrieved September 12, 2026, from https://docs.github.com/en/code-security/how-tos/secure-your-supply-chain/secure-your-dependencies/verify-release-integrity
