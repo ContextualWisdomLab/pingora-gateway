@@ -11,6 +11,7 @@ use std::process::ExitCode;
 use cwl_pingora_gateway::logging_policy::init_runtime_logging;
 use cwl_pingora_gateway::runtime_composition::compose_gateway_runtime;
 use cwl_pingora_gateway::startup::GatewayCommand;
+use cwl_pingora_gateway::tls_delivery::build_downstream_tls_settings;
 use pingora::prelude::{http_proxy_service, Server};
 use pingora::server::RunArgs;
 
@@ -31,6 +32,13 @@ fn main() -> ExitCode {
         Ok(runtime) => runtime,
         Err(error) => return exit_with_error(error),
     };
+    let downstream_tls = match config.downstream_tls() {
+        Some(tls) => match build_downstream_tls_settings(tls) {
+            Ok(settings) => Some(settings),
+            Err(error) => return exit_with_error(error),
+        },
+        None => None,
+    };
     let listener = config.listener.to_string();
     let metrics_listener = config.metrics_listener.to_string();
 
@@ -38,7 +46,11 @@ fn main() -> ExitCode {
     server.bootstrap();
 
     let mut proxy_service = http_proxy_service(&server.configuration, proxy);
-    proxy_service.add_tcp(&listener);
+    if let Some(settings) = downstream_tls {
+        proxy_service.add_tls_with_settings(&listener, None, settings);
+    } else {
+        proxy_service.add_tcp(&listener);
+    }
     server.add_service(proxy_service);
 
     let mut metrics_service = pingora_prometheus::prometheus_http_service();

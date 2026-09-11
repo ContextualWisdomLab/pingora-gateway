@@ -5,6 +5,7 @@
 
 #![deny(missing_docs)]
 
+pub mod downstream_tls;
 pub mod edge_contract;
 pub mod edge_routing;
 pub mod forwarding_policy;
@@ -23,3 +24,4 @@ pub mod runtime_composition;
 pub mod runtime_isolation;
 pub mod runtime_policy;
 pub mod startup;
+pub mod tls_delivery;
