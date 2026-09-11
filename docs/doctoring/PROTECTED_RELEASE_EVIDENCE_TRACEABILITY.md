@@ -24,11 +24,13 @@ The downloaded reproducibility receipt must identify the same protected commit a
 
 Only those already-built binaries and already-generated supply-chain artifacts are copied into the bundle. The assembler does not run Cargo, Rustup, Docker builds, dependency resolution, or another SBOM generator. It therefore remains downstream of the release compiler and evidence-producing workflows instead of becoming a second build authority.
 
-The bundle contains both release binaries, the reproducibility receipt, committed lock and dependency policy, SPDX dependency SBOM, both image scan reports, the supply-chain receipt, a sorted SHA-256 manifest, and a bundle receipt. The tar archive uses the protected commit timestamp plus stable ordering and numeric ownership metadata. The receipt deliberately states `publication_state=unpublished`.
+The bundle contains both release binaries, the reproducibility receipt, committed lock and dependency policy, SPDX dependency SBOM, both image scan reports, the supply-chain receipt, a sorted SHA-256 manifest, and a bundle receipt. GitHub artifact download does not preserve executable mode, so the two previously attested binary byte streams are explicitly restored to mode `0755` before packaging; mode restoration does not alter their contents or digests. The tar stream uses the protected commit timestamp, stable ordering, and numeric ownership metadata, and `gzip -n` suppresses gzip header name/time variability instead of relying on `tar -z` defaults. The receipt deliberately states `publication_state=unpublished`.
 
 ## Rejected alternatives
 
 Rebuilding during packaging was rejected because a later toolchain, dependency resolver, environment, or source movement could produce artifacts different from the proven candidate. Accepting arbitrary successful run IDs was rejected because success alone does not establish source or workflow identity. Automatically running the assembler on every push was rejected because evidence-producing workflows can complete in either order and a release bundle is a deliberate promotion action rather than a general CI side effect. Publishing a normal GitHub Release from this lane was rejected because repository release immutability is an administrative policy outside this workflow's current authority.
+
+The first archive implementation also used `tar -czf` directly and copied downloaded binaries without restoring executable mode. Review rejected both choices before promotion: artifact transport can erase the executable bit, and deterministic tar metadata alone does not explicitly suppress gzip-header variability. The current lane restores only filesystem mode and uses a deterministic tar stream piped through `gzip -n`; neither repair changes the attested binary bytes or any release evidence oracle.
 
 ## Immutable-release boundary
 
