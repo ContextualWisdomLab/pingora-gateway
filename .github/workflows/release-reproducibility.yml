@@ -42,11 +42,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          test -z "${RUSTC:-}"
+          test -z "${CARGO_BUILD_RUSTC:-}"
+          test -z "${RUSTC_WRAPPER:-}"
+          test -z "${CARGO_BUILD_RUSTC_WRAPPER:-}"
+          test -z "${RUSTC_WORKSPACE_WRAPPER:-}"
+          test -z "${CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER:-}"
           test -z "${RUSTUP_TOOLCHAIN:-}"
           test -z "${RUSTFLAGS:-}"
+          test -z "${CARGO_BUILD_RUSTFLAGS:-}"
           test -z "${CARGO_ENCODED_RUSTFLAGS:-}"
-          test -z "${RUSTC_WRAPPER:-}"
-          test -z "${RUSTC_WORKSPACE_WRAPPER:-}"
+          test ! -e .cargo/config
+          test ! -e .cargo/config.toml
           test ! -e rust-toolchain
           test ! -e rust-toolchain.toml
 
