@@ -21,6 +21,14 @@ fn contains_cargo_toolchain_selector(source: &str) -> bool {
     })
 }
 
+fn candidate_step_has_clean_build_stage_order(step: &str, staging_path: &str) -> bool {
+    let clean = step.find("rm -rf \"$REPRO_TARGET_DIR\"");
+    let build = step.find("cargo build --release --locked");
+    let stage = step.find(staging_path);
+
+    matches!((clean, build, stage), (Some(clean), Some(build), Some(stage)) if clean < build && build < stage)
+}
+
 #[test]
 fn release_reproducibility_lane_rebuilds_cleanly_with_one_canonical_environment() {
     let install = RELEASE_REPRODUCIBILITY_WORKFLOW
@@ -49,10 +57,25 @@ fn release_reproducibility_lane_rebuilds_cleanly_with_one_canonical_environment(
     let second_build = RELEASE_REPRODUCIBILITY_WORKFLOW
         .find("name: Build isolated release candidate B")
         .expect("second clean release build must exist");
+    let compare = RELEASE_REPRODUCIBILITY_WORKFLOW
+        .find("name: Compare release binaries byte for byte")
+        .expect("release binary comparison must exist");
 
     assert!(install < select && select < verify && verify < fetch);
     assert!(fetch < source_date && source_date < canonical_target);
-    assert!(canonical_target < first_build && first_build < second_build);
+    assert!(canonical_target < first_build && first_build < second_build && second_build < compare);
+
+    let candidate_a = &RELEASE_REPRODUCIBILITY_WORKFLOW[first_build..second_build];
+    let candidate_b = &RELEASE_REPRODUCIBILITY_WORKFLOW[second_build..compare];
+    assert!(candidate_step_has_clean_build_stage_order(
+        candidate_a,
+        "release-reproducibility-candidates/a/cwl-pingora-gateway"
+    ));
+    assert!(candidate_step_has_clean_build_stage_order(
+        candidate_b,
+        "release-reproducibility-candidates/b/cwl-pingora-gateway"
+    ));
+
     assert_eq!(
         RELEASE_REPRODUCIBILITY_WORKFLOW
             .matches("cargo build --release --locked")
@@ -100,10 +123,25 @@ fn release_reproducibility_lane_rebuilds_cleanly_with_one_canonical_environment(
     );
     assert!(RELEASE_REPRODUCIBILITY_WORKFLOW
         .contains("printf 'SOURCE_DATE_EPOCH=%s\\n' \"$source_date_epoch\" >> \"$GITHUB_ENV\""));
-    assert!(RELEASE_REPRODUCIBILITY_WORKFLOW
-        .contains("release-reproducibility-candidates/a/cwl-pingora-gateway"));
-    assert!(RELEASE_REPRODUCIBILITY_WORKFLOW
-        .contains("release-reproducibility-candidates/b/cwl-pingora-gateway"));
+}
+
+#[test]
+fn clean_rebuild_order_contract_rejects_misplaced_cleanup() {
+    let malformed_candidate = r#"
+      rm -rf "$REPRO_TARGET_DIR"
+      rm -rf "$REPRO_TARGET_DIR"
+      cargo build --release --locked
+      cp "$REPRO_TARGET_DIR/release/cwl-pingora-gateway" release-reproducibility-candidates/a/cwl-pingora-gateway
+    "#;
+
+    assert!(candidate_step_has_clean_build_stage_order(
+        malformed_candidate,
+        "release-reproducibility-candidates/a/cwl-pingora-gateway"
+    ));
+    assert!(!candidate_step_has_clean_build_stage_order(
+        "cargo build --release --locked\nrm -rf \"$REPRO_TARGET_DIR\"\nrelease-reproducibility-candidates/b/cwl-pingora-gateway",
+        "release-reproducibility-candidates/b/cwl-pingora-gateway"
+    ));
 }
 
 #[test]
