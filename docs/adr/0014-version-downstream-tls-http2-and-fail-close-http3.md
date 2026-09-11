@@ -3,7 +3,7 @@
 - Status: Proposed
 - Date: 2026-09-11
 - Owners: Ingress / TLS / HTTP Policy / Admin Config
-- Related: #51, #58, PR #75, PR #76, supplier `cloudflare/pingora#901`, `cloudflare/pingora#936`, `cloudflare/pingora#976`
+- Related: #51, #58, PR #75, PR #76, PR #77, supplier `cloudflare/pingora#901`, `cloudflare/pingora#936`, `cloudflare/pingora#976`, `cloudflare/pingora#1000`
 
 ## Problem
 
@@ -21,7 +21,7 @@ HTTP/2 over TLS uses ALPN `h2`; h2c is not admitted. RFC 7301 requires fatal `no
 
 This migration serves existing HTTPS/HTTP/2 consumers rather than defining a new TLS application protocol. TLS 1.2 is therefore retained as an explicit compatibility floor while TLS 1.0/1.1 are rejected. RFC 10015's obsolete TLS 1.2 key exchanges are not admitted: no static RSA, static ECDH or finite-field DH suites. TLS 1.3 is the explicit ceiling.
 
-Two supplier correctness roots remain material for HTTP/2 downstream to HTTP/1 upstream translation: `cloudflare/pingora#901` for Cookie coalescing and the zero-length body termination work represented by open contributor candidates #936/#976. Mutable contributor branches are not dependency authority.
+Supplier correctness remains material for HTTP/2 downstream to HTTP/1 upstream translation. `cloudflare/pingora#901` covers RFC 9113 Cookie coalescing; #936/#976 represent open zero-length body-termination repair candidates; #1000 is a mutable parser-admission candidate. Contributor branches are evidence only, not dependency authority.
 
 ## Alternatives considered
 
@@ -73,19 +73,23 @@ Introduce opt-in versioned downstream TLS configuration and a code-owned securit
 - a client that omits ALPN may retain verified HTTP/1 compatibility; no synthetic protocol is assigned;
 - production composition uses `add_tls_with_settings` only when the new versioned contract is active and preserves the existing TCP listener otherwise;
 - h2c and HTTP/3 remain absent;
-- supplier #901 and release-qualified zero-length-body disposition continue to gate complete mixed-protocol parity.
+- supplier #901 and a release-qualified zero-length-body disposition continue to gate complete mixed-protocol parity.
 
 This is source/runtime capability, not deployment authority. Protected release, consumer pin, shadow/canary, rollback rehearsal, cutover and legacy removal remain separate promotion stages.
 
-## Acceptance and evidence
+## Acceptance and exact evidence
 
 The increment must preserve strict YAML version admission and fail before listener activation for relative/empty material references, unreadable material and certificate/private-key mismatch. Real-wire tests must use an ephemeral CA, verify service identity, assert negotiated ALPN, exercise an actual H2 request through the production composition boundary, retain deliberate HTTP/1.1 fallback and fail an ALPN-bearing unsupported client.
 
 The security-profile child additionally must force exact TLS 1.2 and TLS 1.3 clients through the compiled generic production root, assert that each negotiated cipher is in the code-owned allowlist, and require a TLS-1.1-only client to fail the handshake. Structural regressions must prevent accidental removal of the explicit version/cipher setters or reintroduction of deprecated TLS 1.2 key exchange.
 
-PR #75 predecessor exact `4b4aa3bf6e2a2ae1b5823fa435d9eba7edb1856b` compiled and ran all tests in CI `34536286899` but failed the Rust 1.98.0 Clippy gate for an elidable lifetime on `select_h2_http1`; ordinary-forward exact `723ec4fbc3f58f42408caca87cc986a94354164b` is the minimal lifetime-only repair and must reacquire exact-head gates.
+PR #75 current source exact `df70de9cc0c77cfc1dabc51de039ac46af47df08` has terminal GREEN CI `34547405414`, Supply Chain `34547405418`, and PgErd bounded-origin capacity `34547405428`; it is Ready but still requires independent governance before protected integration.
 
-PR #76 test-only exact `2a0f2c2575ed13225b54a808c0e94e69a561641e` defines the explicit TLS security-profile RED. Exact `7bda5a356eb0aad9912345bf7ad076b3fab807c2` applies the protocol/cipher policy. Exact `d2aabfe6d281312b4fcb7f50002228544d410324` adds real-wire TLS 1.2/TLS 1.3 acceptance and TLS 1.1 rejection. Exact `7ba84028d25e5f511860af4579e46145766aeafd` adopts the parent's lifetime-only Clippy repair. Descendant documentation commits do not transfer predecessor GREEN; every new exact head must reacquire its own checks.
+For PR #76, predecessor exact `a1a1a5dc7a05c5b14de0cf98d2e1cff8fe80be5a` completed Supply Chain `34554449121` and capacity `34554449107`. CI `34554449075` passed formatting, locked compile/test, Clippy, warnings-denied rustdoc, the coverage workload/export, load-contract and OCI runtime, then failed only final 100% owned-production region enforcement. Exact coverage artifact `coverage-a1a1a5dc...` has digest `sha256:54afe3d9afc0d66e8a4b4464e8194f8cbf18c65bfc5a07b76cec50b3739de7c3`; owned-production line/function coverage was 100%, and the two remaining zero-count regions were the local `?` continuation after `apply_downstream_tls_security_profile` plus an `assert!(matches!(...))` macro branch in the missing-identity test.
+
+Immediate source/test repair exact `7a5f5e04016e93a7fd515517051430d853dd3b45` removes those two instrumentation/testability regions without reducing coverage thresholds or changing TLS versions, cipher suites, ALPN, routing or authority: profile errors propagate via `Result::map`, and the missing-material test extracts the error before comparing its enum discriminant. At this ADR update, capacity `34558229725` is terminal GREEN while CI `34558229685` and Supply Chain `34558229694` remain nonterminal. This ADR update itself creates a descendant exact and therefore cannot self-reference its post-commit SHA; #58 is the canonical live exact-head/run receipt. No predecessor GREEN is transferable across that movement.
+
+PR #77 owns only the concurrent H2 stream acceptance file. Its current lineage also repairs a fixture-only listener-reservation TOCTOU by retaining traffic/metrics `TcpListener`s until immediately before process spawn; that does not change H2 frame/origin/concurrency semantics. #58 remains canonical for the child's exact head because it must be non-force restacked whenever this parent moves.
 
 ## Risks and follow-up
 
@@ -93,9 +97,9 @@ TLS 1.2 remains a deliberate compatibility exposure. Consumer telemetry and secu
 
 The current cipher profile intentionally favors a small interoperable AEAD set. It does not yet prove relative handshake CPU cost, resumed-session behavior or a need for Pingora's downstream TLS offload thread pools. Issue #51 remains authoritative for new-handshake versus reused-connection latency/CPU, representative CPU/NUMA profiling, concurrent H2 streams, reset/cancellation, GOAWAY/drain, decoded-header/body limits, flow-control/backpressure, failure/recovery, forwarding trust and rollback/cutover observability.
 
-Supplier #901 plus a maintainer-integrated/release-qualified zero-length-body repair must close, or deployment must make the affected downgrade path unreachable, before complete H2-downstream/H1-upstream parity is claimed.
+Supplier #901 plus a maintainer-integrated/release-qualified zero-length-body repair must close, or deployment must make the affected downgrade path unreachable, before complete H2-downstream/H1-upstream parity is claimed. Supplier #1000 must likewise become maintainer-integrated and release-qualified before any parser-admission capability is treated as dependency truth.
 
-HTTP/3 remains unsupported until a maintainer-supported release-qualified server integration exists and a separate decision covers UDP/Kubernetes exposure, QUIC transport, QPACK/header limits, connection/stream flow control, path migration, loss/congestion, amplification defenses, 0-RTT replay, drain and rollback.
+HTTP/3 remains unsupported until a maintainer-supported release-qualified server integration exists and a separate decision covers UDP/Kubernetes exposure, QUIC transport, QPACK/header limits, connection and stream flow control, path migration, loss/congestion, amplification defenses, 0-RTT replay, drain and rollback.
 
 ## Primary references
 
