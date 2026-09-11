@@ -91,14 +91,32 @@ fn release_reproducibility_lane_fails_closed_on_compiler_or_artifact_drift() {
     assert!(!contains_cargo_toolchain_selector(
         RELEASE_REPRODUCIBILITY_WORKFLOW
     ));
-    assert!(RELEASE_REPRODUCIBILITY_WORKFLOW.contains("test \"$digest_a\" = \"$digest_b\""));
-    assert!(
-        RELEASE_REPRODUCIBILITY_WORKFLOW.contains("cmp --silent \"$candidate_a\" \"$candidate_b\"")
-    );
+    assert!(RELEASE_REPRODUCIBILITY_WORKFLOW.contains(
+        "if [[ \"$digest_a\" != \"$digest_b\" ]] || ! cmp --silent \"$candidate_a\" \"$candidate_b\"; then"
+    ));
+    assert!(RELEASE_REPRODUCIBILITY_WORKFLOW.contains("printf 'result=byte-mismatch\\n'"));
+    assert!(RELEASE_REPRODUCIBILITY_WORKFLOW.contains("exit 1"));
+    assert!(RELEASE_REPRODUCIBILITY_WORKFLOW.contains("printf 'result=byte-identical\\n'"));
     assert!(RELEASE_REPRODUCIBILITY_WORKFLOW
         .contains("evidence_kind=unreleased-same-platform-release-binary-reproducibility"));
     assert!(RELEASE_REPRODUCIBILITY_WORKFLOW
         .contains("name: release-reproducibility-${{ env.EXPECTED_SHA }}"));
+}
+
+#[test]
+fn byte_mismatch_keeps_bounded_root_cause_evidence_without_weakening_the_gate() {
+    assert!(RELEASE_REPRODUCIBILITY_WORKFLOW.contains("cmp -l \"$candidate_a\" \"$candidate_b\""));
+    assert!(RELEASE_REPRODUCIBILITY_WORKFLOW.contains("head -n 256"));
+    assert!(RELEASE_REPRODUCIBILITY_WORKFLOW.contains("readelf -n \"$candidate_a\""));
+    assert!(RELEASE_REPRODUCIBILITY_WORKFLOW.contains("readelf -n \"$candidate_b\""));
+    assert!(RELEASE_REPRODUCIBILITY_WORKFLOW.contains("strings -a \"$candidate_a\""));
+    assert!(RELEASE_REPRODUCIBILITY_WORKFLOW.contains("strings -a \"$candidate_b\""));
+    assert!(RELEASE_REPRODUCIBILITY_WORKFLOW.contains("head -n 512"));
+    assert!(RELEASE_REPRODUCIBILITY_WORKFLOW.contains("if: ${{ failure() }}"));
+    assert!(RELEASE_REPRODUCIBILITY_WORKFLOW.contains(
+        "name: release-reproducibility-diagnostics-${{ env.EXPECTED_SHA }}"
+    ));
+    assert!(RELEASE_REPRODUCIBILITY_WORKFLOW.contains("retention-days: 7"));
 }
 
 #[test]
