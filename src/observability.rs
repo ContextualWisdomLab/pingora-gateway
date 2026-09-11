@@ -80,11 +80,7 @@ fn outcome_label(outcome: RequestOutcome) -> &'static str {
     }
 }
 
-fn transport_labels(
-    is_http2: bool,
-    has_tls: bool,
-    outcome: RequestOutcome,
-) -> [&'static str; 3] {
+fn transport_labels(is_http2: bool, has_tls: bool, outcome: RequestOutcome) -> [&'static str; 3] {
     let protocol = if is_http2 { "h2" } else { "h1" };
     let transport = if has_tls { "tls" } else { "cleartext" };
     [outcome_label(outcome), protocol, transport]
@@ -153,9 +149,7 @@ pub(crate) fn record_request(session: &Session, error: Option<&Error>, request_b
         .and_then(|digest| digest.ssl_digest.as_ref())
         .is_some();
     let labels = transport_labels(session.is_http2(), has_tls, observation.outcome());
-    REQUESTS_BY_TRANSPORT_TOTAL
-        .with_label_values(&labels)
-        .inc();
+    REQUESTS_BY_TRANSPORT_TOTAL.with_label_values(&labels).inc();
     observation.record();
 }
 
