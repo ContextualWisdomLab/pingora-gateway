@@ -53,10 +53,15 @@ fn bundle_reuses_exact_successful_push_evidence_without_rebuilding() {
 #[test]
 fn bundle_requires_protected_source_identity_and_binary_provenance() {
     for required in [
-        "grep -Fx \"checkout_sha=${SOURCE_SHA}\"",
-        "grep -Fx \"attested_source_sha=${SOURCE_SHA}\"",
-        "grep -Fx \"signer_sha=${SOURCE_SHA}\"",
-        "grep -Fx \"source_sha=${SOURCE_SHA}\"",
+        "verify_receipt_field()",
+        "mapfile -t field_lines",
+        "test \"${#field_lines[@]}\" -eq 1",
+        "verify_receipt_field \"$repro_receipt\" \"checkout_sha\" \"$SOURCE_SHA\"",
+        "verify_receipt_field \"$repro_receipt\" \"attested_source_sha\" \"$SOURCE_SHA\"",
+        "verify_receipt_field \"$repro_receipt\" \"signer_sha\" \"$SOURCE_SHA\"",
+        "verify_receipt_field \"$repro_receipt\" \"certificate_identity\" \"$CERT_IDENTITY\"",
+        "verify_receipt_field \"$repro_receipt\" \"result\" \"byte-identical\"",
+        "verify_receipt_field \"$supply_receipt\" \"source_sha\" \"$SOURCE_SHA\"",
         "evidence/reproducibility/release-binaries/cwl-pingora-gateway",
         "evidence/reproducibility/release-binaries/cwl-pingora-pg-erd-migration",
         "sha256sum --check --strict -",
