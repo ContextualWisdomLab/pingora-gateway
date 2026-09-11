@@ -134,7 +134,8 @@ jobs:
           : > release-reproducibility.txt
           {
             printf 'evidence_kind=unreleased-same-platform-release-binary-reproducibility\n'
-            printf 'source_sha=%s\n' "$EXPECTED_SHA"
+            printf 'checkout_sha=%s\n' "$EXPECTED_SHA"
+            printf 'attested_source_sha=%s\n' "$SIGNER_SHA"
             printf 'signer_sha=%s\n' "$SIGNER_SHA"
             printf 'certificate_identity=%s\n' "$CERT_IDENTITY"
             printf 'source_date_epoch=%s\n' "$SOURCE_DATE_EPOCH"
@@ -219,12 +220,12 @@ jobs:
           set -euo pipefail
           gh attestation verify release-binaries/cwl-pingora-gateway --repo "$GITHUB_REPOSITORY" \
             --cert-identity "$CERT_IDENTITY" \
-            --source-digest "$EXPECTED_SHA" \
+            --source-digest "$SIGNER_SHA" \
             --signer-digest "$SIGNER_SHA" \
             --deny-self-hosted-runners
           gh attestation verify release-binaries/cwl-pingora-pg-erd-migration --repo "$GITHUB_REPOSITORY" \
             --cert-identity "$CERT_IDENTITY" \
-            --source-digest "$EXPECTED_SHA" \
+            --source-digest "$SIGNER_SHA" \
             --signer-digest "$SIGNER_SHA" \
             --deny-self-hosted-runners
 
