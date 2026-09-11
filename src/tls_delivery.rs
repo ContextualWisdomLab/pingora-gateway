@@ -148,7 +148,29 @@ pub fn build_downstream_tls_settings(
 
 #[cfg(test)]
 mod tests {
-    use super::{security_profile_error, select_h2_http1, H2_ALPN, HTTP1_ALPN};
+    use std::net::{TcpListener, TcpStream};
+    use std::process::{Command, Stdio};
+    use std::thread;
+
+    use pingora::tls::ssl::{SslAcceptor, SslConnector, SslMethod, SslVerifyMode};
+    use tempfile::tempdir;
+
+    use super::{
+        build_downstream_tls_settings, security_profile_error, select_h2_http1, H2_ALPN,
+        HTTP1_ALPN,
+    };
+    use crate::downstream_tls::DownstreamTlsConfig;
+
+    fn run_openssl(args: &[&str]) {
+        let status = Command::new("openssl")
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .expect("CI must provide the explicitly installed openssl CLI");
+        assert!(status.success(), "openssl command failed: {args:?}");
+    }
 
     #[test]
     fn security_profile_errors_preserve_backend_diagnostics() {
@@ -186,5 +208,70 @@ mod tests {
         assert!(select_h2_http1(b"\x08http").is_err());
         assert!(select_h2_http1(b"\x02h2\x08http").is_err());
         assert!(select_h2_http1(b"\x08http/1.1\x00").is_err());
+    }
+
+    #[test]
+    fn configured_alpn_callback_is_exercised_in_process() {
+        let directory = tempdir().expect("certificate workspace should be available");
+        let certificate = directory.path().join("server.crt");
+        let private_key = directory.path().join("server.key");
+        run_openssl(&[
+            "req",
+            "-x509",
+            "-newkey",
+            "rsa:2048",
+            "-nodes",
+            "-keyout",
+            private_key.to_str().expect("UTF-8 private-key path"),
+            "-out",
+            certificate.to_str().expect("UTF-8 certificate path"),
+            "-subj",
+            "/CN=gateway.test",
+            "-days",
+            "1",
+            "-sha256",
+        ]);
+
+        let yaml = format!(
+            "certificate_chain_file: {}\nprivate_key_file: {}\nalpn: h2_http1\n",
+            certificate.display(),
+            private_key.display()
+        );
+        let config: DownstreamTlsConfig =
+            serde_yaml::from_str(&yaml).expect("test TLS config should deserialize");
+        let mut settings = build_downstream_tls_settings(&config)
+            .expect("matching certificate/key material should produce TLS settings");
+
+        // Pingora keeps its acceptor construction crate-private. Replacing the dereferenced
+        // builder lets this unit test exercise the exact configured callback in process without
+        // changing production visibility or relying on child-process profile flushing.
+        let replacement = SslAcceptor::mozilla_intermediate_v5(SslMethod::tls())
+            .expect("replacement TLS builder should construct");
+        let configured_builder = std::mem::replace(&mut *settings, replacement);
+        let acceptor = configured_builder.build();
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("TLS test listener should bind");
+        let address = listener.local_addr().expect("TLS test listener address");
+        let server = thread::spawn(move || {
+            let (stream, _) = listener.accept().expect("TLS client should connect");
+            let tls = acceptor.accept(stream).expect("TLS server handshake should succeed");
+            assert_eq!(tls.ssl().selected_alpn_protocol(), Some(H2_ALPN));
+        });
+
+        let mut client_builder =
+            SslConnector::builder(SslMethod::tls_client()).expect("TLS client should build");
+        client_builder.set_verify(SslVerifyMode::NONE);
+        client_builder
+            .set_alpn_protos(b"\x02h2")
+            .expect("h2 ALPN wire list should be valid");
+        let connector = client_builder.build();
+        let stream = TcpStream::connect(address).expect("TLS test client should connect");
+        let tls = connector
+            .connect("gateway.test", stream)
+            .expect("TLS client handshake should succeed");
+        assert_eq!(tls.ssl().selected_alpn_protocol(), Some(H2_ALPN));
+        drop(tls);
+
+        server.join().expect("TLS server thread should complete");
     }
 }
