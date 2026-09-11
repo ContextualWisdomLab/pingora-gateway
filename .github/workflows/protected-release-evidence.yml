@@ -103,6 +103,26 @@ jobs:
           repro_receipt=evidence/reproducibility/release-reproducibility.txt
           supply_receipt=evidence/supply-chain/candidate-evidence.txt
 
+          verify_receipt_digest() {
+            local receipt="$1"
+            local root="$2"
+            local relative_path="$3"
+            local -a digest_lines
+
+            mapfile -t digest_lines < <(
+              awk -v expected_path="$relative_path" '
+                length($1) == 64 && $1 ~ /^[0-9a-f]+$/ && NF == 2 && $2 == expected_path {
+                  print $0
+                }
+              ' "$receipt"
+            )
+            test "${#digest_lines[@]}" -eq 1
+            (
+              cd "$root"
+              printf '%s\n' "${digest_lines[0]}" | sha256sum --check --strict -
+            )
+          }
+
           test -s "$repro_receipt"
           test -s "$supply_receipt"
           grep -Fx "checkout_sha=${SOURCE_SHA}" "$repro_receipt"
@@ -123,20 +143,13 @@ jobs:
             test -s "$evidence"
           done
 
-          (
-            cd evidence/reproducibility
-            grep -E \
-              '^[0-9a-f]{64}  release-binaries/(cwl-pingora-gateway|cwl-pingora-pg-erd-migration)$' \
-              release-reproducibility.txt \
-              | sha256sum --check --strict -
-          )
-          (
-            cd evidence/supply-chain
-            grep -E \
-              '^[0-9a-f]{64}  (Cargo.lock|deny.toml|candidate.spdx.json|trivy-image.json|trivy-pg-erd-image.json)$' \
-              candidate-evidence.txt \
-              | sha256sum --check --strict -
-          )
+          verify_receipt_digest "$repro_receipt" "evidence/reproducibility" "release-binaries/cwl-pingora-gateway"
+          verify_receipt_digest "$repro_receipt" "evidence/reproducibility" "release-binaries/cwl-pingora-pg-erd-migration"
+          verify_receipt_digest "$supply_receipt" "evidence/supply-chain" "Cargo.lock"
+          verify_receipt_digest "$supply_receipt" "evidence/supply-chain" "deny.toml"
+          verify_receipt_digest "$supply_receipt" "evidence/supply-chain" "candidate.spdx.json"
+          verify_receipt_digest "$supply_receipt" "evidence/supply-chain" "trivy-image.json"
+          verify_receipt_digest "$supply_receipt" "evidence/supply-chain" "trivy-pg-erd-image.json"
           cmp --silent Cargo.lock evidence/supply-chain/Cargo.lock
           cmp --silent deny.toml evidence/supply-chain/deny.toml
 
