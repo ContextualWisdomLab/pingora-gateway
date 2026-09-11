@@ -102,6 +102,28 @@ fn bundle_requires_exactly_one_digest_record_for_every_packaged_upstream_file() 
 }
 
 #[test]
+fn bundle_binds_trivy_reports_to_receipted_candidate_images() {
+    for required in [
+        "verify_trivy_image_binding()",
+        "generic_local_image_id",
+        "pg_erd_local_image_id",
+        "[[ \"$image_id\" =~ ^sha256:[0-9a-f]{64}$ ]] || return 1",
+        "test \"$(jq -r '.ArtifactType' \"$report\")\" = \"container_image\" || return 1",
+        "test \"$(jq -r '.ArtifactName' \"$report\")\" = \"$expected_ref\" || return 1",
+        "test \"$(jq -r '.Metadata.Reference' \"$report\")\" = \"$expected_ref\" || return 1",
+        "test \"$(jq -r '.Metadata.ImageID' \"$report\")\" = \"$image_id\" || return 1",
+        "(.Metadata.RepoTags | type) == \"array\" and (.Metadata.RepoTags | index($expected_ref)) != null",
+        "cwl-pingora-gateway:${SOURCE_SHA}",
+        "cwl-pingora-pg-erd-migration:${SOURCE_SHA}",
+    ] {
+        assert!(
+            PROTECTED_RELEASE_EVIDENCE_WORKFLOW.contains(required),
+            "Trivy evidence must be bound to the exact receipt image identity: {required}"
+        );
+    }
+}
+
+#[test]
 fn bundle_is_digest_bound_executable_and_explicitly_unpublished() {
     for required in [
         "chmod 0755 \"$bundle_dir\"",
