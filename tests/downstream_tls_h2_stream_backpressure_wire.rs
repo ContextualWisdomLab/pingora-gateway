@@ -281,7 +281,11 @@ fn handle_control_frame(
         return true;
     }
     if frame_type == H2_FRAME_PING && stream_id == 0 && flags & H2_FLAG_ACK == 0 {
-        assert_eq!(payload.len(), 8, "PING payload must be exactly eight octets");
+        assert_eq!(
+            payload.len(),
+            8,
+            "PING payload must be exactly eight octets"
+        );
         write_h2_frame(stream, H2_FRAME_PING, H2_FLAG_ACK, 0, payload);
         stream.flush().expect("PING acknowledgement should flush");
         return true;
@@ -307,7 +311,10 @@ fn finish_settings_handshake(stream: &mut impl ReadWrite) {
         );
         if frame_type == H2_FRAME_SETTINGS && stream_id == 0 {
             if flags & H2_FLAG_ACK != 0 {
-                assert!(payload.is_empty(), "SETTINGS ACK must have an empty payload");
+                assert!(
+                    payload.is_empty(),
+                    "SETTINGS ACK must have an empty payload"
+                );
                 client_settings_acked = true;
             } else {
                 server_settings_seen = true;
@@ -480,7 +487,10 @@ fn exhausted_stream_window_backpressures_only_that_stream_and_recovers() {
             stream1_headers_seen = true;
         }
         if stream_id == 1 && frame_type == H2_FRAME_DATA {
-            assert!(stream1_headers_seen, "response DATA requires preceding headers");
+            assert!(
+                stream1_headers_seen,
+                "response DATA requires preceding headers"
+            );
             assert!(
                 flags & H2_FLAG_END_STREAM == 0,
                 "large response must not complete inside the constrained stream window"
@@ -488,8 +498,7 @@ fn exhausted_stream_window_backpressures_only_that_stream_and_recovers() {
             stream1_body.extend_from_slice(&payload);
             if !payload.is_empty() {
                 write_window_update(&mut tls, 0, payload.len());
-                tls.flush()
-                    .expect("connection WINDOW_UPDATE should flush");
+                tls.flush().expect("connection WINDOW_UPDATE should flush");
             }
             assert!(
                 stream1_body.len() <= CLIENT_STREAM_WINDOW_BYTES,
@@ -500,7 +509,10 @@ fn exhausted_stream_window_backpressures_only_that_stream_and_recovers() {
             }
         }
     }
-    assert!(stream1_headers_seen, "stream 1 response headers must be observed");
+    assert!(
+        stream1_headers_seen,
+        "stream 1 response headers must be observed"
+    );
     assert_eq!(
         stream1_body.len(),
         CLIENT_STREAM_WINDOW_BYTES,
@@ -543,7 +555,10 @@ fn exhausted_stream_window_backpressures_only_that_stream_and_recovers() {
             sibling_headers_seen = true;
         }
         if stream_id == 3 && frame_type == H2_FRAME_DATA {
-            assert!(sibling_headers_seen, "sibling DATA requires preceding headers");
+            assert!(
+                sibling_headers_seen,
+                "sibling DATA requires preceding headers"
+            );
             sibling_body.extend_from_slice(&payload);
             if !payload.is_empty() {
                 write_window_update(&mut tls, 0, payload.len());
@@ -594,7 +609,10 @@ fn exhausted_stream_window_backpressures_only_that_stream_and_recovers() {
             break;
         }
     }
-    assert!(stream1_ended, "stream 1 must finish after restoring its flow-control credit");
+    assert!(
+        stream1_ended,
+        "stream 1 must finish after restoring its flow-control credit"
+    );
     assert_eq!(stream1_body.len(), LARGE_BODY_BYTES);
     assert!(
         stream1_body.iter().all(|byte| *byte == b'x'),
