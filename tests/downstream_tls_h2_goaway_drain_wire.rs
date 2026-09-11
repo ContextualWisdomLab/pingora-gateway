@@ -1,10 +1,9 @@
 //! Real-wire HTTP/2 graceful-shutdown acceptance for the generic downstream TLS root.
 //!
-//! The fixture holds two admitted HTTP/2 streams open across the configured SIGTERM grace period,
-//! requires the server to begin HTTP/2 drain with GOAWAY(NO_ERROR, 2^31-1), then releases both
-//! origins and requires both admitted streams to complete before process exit. A second request is
-//! sent after SIGTERM but before the client observes GOAWAY, proving the configured grace period
-//! still admits work while the later GOAWAY boundary remains explicit.
+//! The fixture holds stream 1 open, sends stream 3 immediately after SIGTERM but before the client
+//! observes GOAWAY, requires the initial GOAWAY(NO_ERROR, 2^31-1) while Pingora's process-level
+//! grace interval is still active, and proves the racing stream can still be admitted during that
+//! interval. Both admitted streams must then complete before bounded process exit.
 
 #![cfg(unix)]
 
@@ -333,6 +332,7 @@ fn sigterm_h2_goaway_drains_admitted_streams_and_bounds_new_work() {
     let upstream = upstream_listener.local_addr().expect("upstream address");
 
     let (first_seen_tx, first_seen_rx) = mpsc::channel();
+    let (signal_tx, signal_rx) = mpsc::channel();
     let (second_seen_tx, second_seen_rx) = mpsc::channel();
     let (release_tx, release_rx) = mpsc::channel();
     let upstream_fixture = thread::spawn(move || {
@@ -348,17 +348,20 @@ fn sigterm_h2_goaway_drains_admitted_streams_and_bounds_new_work() {
             .send(())
             .expect("test controller should observe stream 1 admission");
 
+        let signal_sent_at = signal_rx
+            .recv_timeout(Duration::from_secs(V1_GRACE_PERIOD_SECONDS))
+            .expect("controller should publish the SIGTERM timestamp within the configured grace interval");
         upstream_listener
             .set_nonblocking(true)
             .expect("second origin acceptance must be bounded");
-        let second_deadline = Instant::now() + Duration::from_secs(3);
+        let second_deadline = signal_sent_at + Duration::from_secs(V1_GRACE_PERIOD_SECONDS);
         let mut second = loop {
             match upstream_listener.accept() {
                 Ok((stream, _)) => break stream,
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                     assert!(
                         Instant::now() < second_deadline,
-                        "stream 3 was not admitted during the configured SIGTERM grace period"
+                        "stream 3 was not admitted during the configured runtime grace interval"
                     );
                     thread::sleep(Duration::from_millis(10));
                 }
@@ -418,10 +421,13 @@ fn sigterm_h2_goaway_drains_admitted_streams_and_bounds_new_work() {
         .status()
         .expect("system kill command should send SIGTERM");
     assert!(signal_status.success(), "SIGTERM delivery should succeed");
+    signal_tx
+        .send(signal_sent_at)
+        .expect("origin fixture should receive the SIGTERM timestamp");
 
     write_h2_frame(&mut tls, H2_FRAME_HEADERS, 0x5, 3, &hpack_get(0x85));
     tls.flush()
-        .expect("stream 3 should be sent during the configured grace period");
+        .expect("stream 3 should be sent before the client observes GOAWAY");
 
     let mut initial_goaway = None;
     for _ in 0..64 {
@@ -433,7 +439,7 @@ fn sigterm_h2_goaway_drains_admitted_streams_and_bounds_new_work() {
         }
         assert!(
             frame_type != H2_FRAME_RST_STREAM || (stream_id != 1 && stream_id != 3),
-            "graceful shutdown must not reset either admitted stream"
+            "graceful shutdown must not reset either admitted or racing stream"
         );
         if frame_type == H2_FRAME_GOAWAY {
             assert_eq!(stream_id, 0, "GOAWAY is a connection-level frame");
@@ -458,28 +464,24 @@ fn sigterm_h2_goaway_drains_admitted_streams_and_bounds_new_work() {
         .checked_duration_since(signal_sent_at)
         .expect("initial GOAWAY observation must follow SIGTERM");
     assert!(
-        initial_goaway_after_signal >= grace_period,
-        "GOAWAY must not bypass the configured pre-shutdown grace period: observed after {initial_goaway_after_signal:?}"
+        initial_goaway_after_signal < grace_period,
+        "initial GOAWAY must begin while the configured runtime grace interval is active: observed after {initial_goaway_after_signal:?}"
     );
 
     let second_seen_at = second_seen_rx
         .recv_timeout(grace_period)
-        .expect("stream 3 should reach origin before H2 drain begins");
+        .expect("stream 3 should reach origin while the runtime grace interval is active");
     let second_after_signal = second_seen_at
         .checked_duration_since(signal_sent_at)
         .expect("stream 3 origin observation must follow SIGTERM");
     assert!(
-        second_seen_at < initial_goaway_seen_at,
-        "stream 3 must reach origin before the initial GOAWAY is observed"
-    );
-    assert!(
         second_after_signal < grace_period,
-        "stream 3 must be admitted during the configured grace period: observed after {second_after_signal:?}"
+        "stream 3 sent before the client observed GOAWAY must be admitted during the runtime grace interval: observed after {second_after_signal:?}"
     );
 
     release_tx
         .send(())
-        .expect("admitted origins should be released after initial GOAWAY evidence");
+        .expect("admitted origins should be released after GOAWAY and race-window evidence");
 
     let mut first_body = Vec::new();
     let mut second_body = Vec::new();
