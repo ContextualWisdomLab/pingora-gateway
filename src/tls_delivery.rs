@@ -254,7 +254,9 @@ mod tests {
         let address = listener.local_addr().expect("TLS test listener address");
         let server = thread::spawn(move || {
             let (stream, _) = listener.accept().expect("TLS client should connect");
-            let tls = acceptor.accept(stream).expect("TLS server handshake should succeed");
+            let tls = acceptor
+                .accept(stream)
+                .expect("TLS server handshake should succeed");
             assert_eq!(tls.ssl().selected_alpn_protocol(), Some(H2_ALPN));
         });
 
