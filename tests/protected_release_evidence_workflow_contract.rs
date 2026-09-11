@@ -75,6 +75,27 @@ fn bundle_requires_protected_source_identity_and_binary_provenance() {
 }
 
 #[test]
+fn bundle_requires_exactly_one_digest_record_for_every_packaged_upstream_file() {
+    for required in [
+        "verify_receipt_digest()",
+        "mapfile -t digest_lines",
+        "test \"${#digest_lines[@]}\" -eq 1",
+        "verify_receipt_digest \"$repro_receipt\" \"evidence/reproducibility\" \"release-binaries/cwl-pingora-gateway\"",
+        "verify_receipt_digest \"$repro_receipt\" \"evidence/reproducibility\" \"release-binaries/cwl-pingora-pg-erd-migration\"",
+        "verify_receipt_digest \"$supply_receipt\" \"evidence/supply-chain\" \"Cargo.lock\"",
+        "verify_receipt_digest \"$supply_receipt\" \"evidence/supply-chain\" \"deny.toml\"",
+        "verify_receipt_digest \"$supply_receipt\" \"evidence/supply-chain\" \"candidate.spdx.json\"",
+        "verify_receipt_digest \"$supply_receipt\" \"evidence/supply-chain\" \"trivy-image.json\"",
+        "verify_receipt_digest \"$supply_receipt\" \"evidence/supply-chain\" \"trivy-pg-erd-image.json\"",
+    ] {
+        assert!(
+            PROTECTED_RELEASE_EVIDENCE_WORKFLOW.contains(required),
+            "every packaged upstream file must have one receipt digest record: {required}"
+        );
+    }
+}
+
+#[test]
 fn bundle_is_digest_bound_executable_and_explicitly_unpublished() {
     for required in [
         "chmod 0755 \"$bundle_dir\"",
