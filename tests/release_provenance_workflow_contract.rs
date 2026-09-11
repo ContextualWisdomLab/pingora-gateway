@@ -51,8 +51,17 @@ fn release_candidate_requires_oidc_signed_provenance_for_both_binaries() {
     assert!(RELEASE_REPRODUCIBILITY_WORKFLOW
         .contains(&format!("--signer-workflow \"{SIGNER_WORKFLOW}\"")));
     assert!(RELEASE_REPRODUCIBILITY_WORKFLOW.contains("--source-digest \"$EXPECTED_SHA\""));
-    assert!(RELEASE_REPRODUCIBILITY_WORKFLOW.contains("--signer-digest \"$EXPECTED_SHA\""));
+    assert!(RELEASE_REPRODUCIBILITY_WORKFLOW.contains("--signer-digest \"$SIGNER_SHA\""));
     assert!(RELEASE_REPRODUCIBILITY_WORKFLOW.contains("--deny-self-hosted-runners"));
+}
+
+#[test]
+fn pull_request_provenance_separates_exact_source_from_workflow_signer_commit() {
+    assert!(RELEASE_REPRODUCIBILITY_WORKFLOW
+        .contains("EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}"));
+    assert!(RELEASE_REPRODUCIBILITY_WORKFLOW.contains("SIGNER_SHA: ${{ github.sha }}"));
+    assert!(RELEASE_REPRODUCIBILITY_WORKFLOW.contains("signer_sha=%s"));
+    assert!(!RELEASE_REPRODUCIBILITY_WORKFLOW.contains("--signer-digest \"$EXPECTED_SHA\""));
 }
 
 #[test]
