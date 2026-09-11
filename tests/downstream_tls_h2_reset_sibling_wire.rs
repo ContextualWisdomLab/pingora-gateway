@@ -12,6 +12,7 @@ use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
+use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -315,6 +316,7 @@ fn cancelling_one_h2_stream_releases_its_origin_and_preserves_the_live_sibling()
     let certificates = issue_gateway_certificate();
     let upstream_listener = TcpListener::bind("127.0.0.1:0").expect("upstream should bind");
     let upstream = upstream_listener.local_addr().expect("upstream address");
+    let (reset_flushed_tx, reset_flushed_rx) = mpsc::channel();
 
     let upstream_fixture = thread::spawn(move || {
         let (mut first, _) = upstream_listener
@@ -356,9 +358,15 @@ fn cancelling_one_h2_stream_releases_its_origin_and_preserves_the_live_sibling()
 
         if first_is_cancelled {
             write_origin_response(&mut second, "sibling-ok");
-            require_cancelled_origin_release(&mut first);
         } else {
             write_origin_response(&mut first, "sibling-ok");
+        }
+        reset_flushed_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("release evidence must start only after RST_STREAM(CANCEL) flush completes");
+        if first_is_cancelled {
+            require_cancelled_origin_release(&mut first);
+        } else {
             require_cancelled_origin_release(&mut second);
         }
     });
@@ -411,7 +419,9 @@ fn cancelling_one_h2_stream_releases_its_origin_and_preserves_the_live_sibling()
         );
 
         if stream_id == 3 {
-            sibling_response_started = true;
+            if frame_type == H2_FRAME_HEADERS {
+                sibling_response_started = true;
+            }
             if frame_type == H2_FRAME_DATA {
                 sibling_body.extend_from_slice(&payload);
             }
@@ -429,6 +439,9 @@ fn cancelling_one_h2_stream_releases_its_origin_and_preserves_the_live_sibling()
                 &H2_ERROR_CANCEL.to_be_bytes(),
             );
             tls.flush().expect("RST_STREAM CANCEL should flush");
+            reset_flushed_tx
+                .send(())
+                .expect("origin fixture should observe completed reset flush");
             reset_sent = true;
         }
 
