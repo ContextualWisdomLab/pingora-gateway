@@ -199,6 +199,27 @@ fn release_reproducibility_lane_fails_closed_on_compiler_or_artifact_drift() {
 }
 
 #[test]
+fn release_reproducibility_lane_isolates_cargo_configuration_hierarchy() {
+    assert!(RELEASE_REPRODUCIBILITY_WORKFLOW.contains("test -z \"${CARGO_HOME:-}\""));
+    assert!(RELEASE_REPRODUCIBILITY_WORKFLOW.contains("cargo_config_dir=\"$PWD\""));
+    assert!(RELEASE_REPRODUCIBILITY_WORKFLOW
+        .contains("test ! -e \"$cargo_config_dir/.cargo/config\""));
+    assert!(RELEASE_REPRODUCIBILITY_WORKFLOW
+        .contains("test ! -e \"$cargo_config_dir/.cargo/config.toml\""));
+    assert!(RELEASE_REPRODUCIBILITY_WORKFLOW
+        .contains("cargo_config_dir=\"$(dirname \"$cargo_config_dir\")\""));
+    assert!(RELEASE_REPRODUCIBILITY_WORKFLOW
+        .contains("[[ \"$cargo_config_dir\" == \"/\" ]] && break"));
+    assert!(RELEASE_REPRODUCIBILITY_WORKFLOW
+        .contains("controlled_cargo_home=\"$RUNNER_TEMP/cwl-cargo-home-$EXPECTED_SHA\""));
+    assert!(RELEASE_REPRODUCIBILITY_WORKFLOW.contains("rm -rf \"$controlled_cargo_home\""));
+    assert!(RELEASE_REPRODUCIBILITY_WORKFLOW.contains("mkdir -p \"$controlled_cargo_home\""));
+    assert!(RELEASE_REPRODUCIBILITY_WORKFLOW.contains(
+        "printf 'CARGO_HOME=%s\\n' \"$controlled_cargo_home\" >> \"$GITHUB_ENV\""
+    ));
+}
+
+#[test]
 fn byte_mismatch_keeps_bounded_root_cause_evidence_without_weakening_the_gate() {
     assert!(RELEASE_REPRODUCIBILITY_WORKFLOW.contains("cmp -l \"$candidate_a\" \"$candidate_b\""));
     assert!(RELEASE_REPRODUCIBILITY_WORKFLOW.contains("head -n 256"));
