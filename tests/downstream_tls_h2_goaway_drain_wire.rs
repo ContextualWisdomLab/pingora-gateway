@@ -263,7 +263,9 @@ fn acknowledge_peer_control_frame(
 ) -> bool {
     if frame_type == H2_FRAME_SETTINGS && stream_id == 0 && flags & H2_FLAG_ACK == 0 {
         write_h2_frame(stream, H2_FRAME_SETTINGS, H2_FLAG_ACK, 0, &[]);
-        stream.flush().expect("SETTINGS acknowledgement should flush");
+        stream
+            .flush()
+            .expect("SETTINGS acknowledgement should flush");
         return true;
     }
     if frame_type == H2_FRAME_PING && stream_id == 0 && flags & H2_FLAG_ACK == 0 {
