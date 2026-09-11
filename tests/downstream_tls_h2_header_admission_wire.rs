@@ -247,7 +247,8 @@ fn read_h2_frame(stream: &mut impl Read) -> (u8, u8, u32, Vec<u8>) {
         .read_exact(&mut header)
         .expect("H2 frame header should be readable");
     let length = ((header[0] as usize) << 16) | ((header[1] as usize) << 8) | header[2] as usize;
-    let stream_id = u32::from_be_bytes([header[5], header[6], header[7], header[8]]) & H2_MAX_STREAM_ID;
+    let stream_id =
+        u32::from_be_bytes([header[5], header[6], header[7], header[8]]) & H2_MAX_STREAM_ID;
     let mut payload = vec![0_u8; length];
     stream
         .read_exact(&mut payload)
@@ -281,7 +282,9 @@ fn acknowledge_server_settings_and_require_header_limit(stream: &mut impl ReadWr
                 "gateway must advertise Pingora's bounded 64 KiB decoded header-list limit"
             );
             write_h2_frame(stream, H2_FRAME_SETTINGS, H2_FLAG_ACK, 0, &[]);
-            stream.flush().expect("SETTINGS acknowledgement should flush");
+            stream
+                .flush()
+                .expect("SETTINGS acknowledgement should flush");
             return;
         }
     }
@@ -408,7 +411,9 @@ fn decoded_header_limit_rejects_before_origin_and_preserves_connection() {
                 Err(mpsc::TryRecvError::Empty) => {}
             }
             match upstream_listener.accept() {
-                Ok(_) => panic!("oversized decoded header list must be rejected before origin contact"),
+                Ok(_) => {
+                    panic!("oversized decoded header list must be rejected before origin contact")
+                }
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
                 Err(error) => panic!("unexpected origin accept failure: {error}"),
             }
@@ -480,7 +485,8 @@ fn decoded_header_limit_rejects_before_origin_and_preserves_connection() {
         );
         if frame_type == H2_FRAME_SETTINGS && stream_id == 0 && flags & H2_FLAG_ACK == 0 {
             write_h2_frame(&mut tls, H2_FRAME_SETTINGS, H2_FLAG_ACK, 0, &[]);
-            tls.flush().expect("late SETTINGS acknowledgement should flush");
+            tls.flush()
+                .expect("late SETTINGS acknowledgement should flush");
             continue;
         }
         if stream_id == 1 && frame_type == H2_FRAME_HEADERS {
