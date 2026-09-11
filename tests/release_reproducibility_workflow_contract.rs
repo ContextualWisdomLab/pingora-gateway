@@ -37,7 +37,9 @@ fn release_reproducibility_lane_rebuilds_cleanly_with_one_canonical_environment(
         .expect("release reproducibility workflow must fetch the locked graph once");
     let source_date = RELEASE_REPRODUCIBILITY_WORKFLOW
         .find("source_date_epoch=\"$(git show -s --format=%ct \"$EXPECTED_SHA\")\"")
-        .expect("release reproducibility workflow must derive SOURCE_DATE_EPOCH from the exact source");
+        .expect(
+            "release reproducibility workflow must derive SOURCE_DATE_EPOCH from the exact source",
+        );
     let canonical_target = RELEASE_REPRODUCIBILITY_WORKFLOW
         .find("REPRO_TARGET_DIR=/tmp/cwl-pingora-repro-%s")
         .expect("release reproducibility workflow must bind one canonical target path");
@@ -93,8 +95,9 @@ fn release_reproducibility_lane_rebuilds_cleanly_with_one_canonical_environment(
             .count(),
         2
     );
-    assert!(RELEASE_REPRODUCIBILITY_WORKFLOW
-        .contains("[[ \"$source_date_epoch\" =~ ^[1-9][0-9]*$ ]]"));
+    assert!(
+        RELEASE_REPRODUCIBILITY_WORKFLOW.contains("[[ \"$source_date_epoch\" =~ ^[1-9][0-9]*$ ]]")
+    );
     assert!(RELEASE_REPRODUCIBILITY_WORKFLOW
         .contains("printf 'SOURCE_DATE_EPOCH=%s\\n' \"$source_date_epoch\" >> \"$GITHUB_ENV\""));
     assert!(RELEASE_REPRODUCIBILITY_WORKFLOW
