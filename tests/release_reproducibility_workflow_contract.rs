@@ -22,7 +22,7 @@ fn contains_cargo_toolchain_selector(source: &str) -> bool {
 }
 
 #[test]
-fn release_reproducibility_lane_builds_twice_with_the_release_compiler() {
+fn release_reproducibility_lane_rebuilds_cleanly_with_one_canonical_environment() {
     let install = RELEASE_REPRODUCIBILITY_WORKFLOW
         .find("rustup toolchain install 1.98.1 --profile minimal")
         .expect("release reproducibility workflow must install Rust 1.98.1");
@@ -35,15 +35,22 @@ fn release_reproducibility_lane_builds_twice_with_the_release_compiler() {
     let fetch = RELEASE_REPRODUCIBILITY_WORKFLOW
         .find("cargo fetch --locked")
         .expect("release reproducibility workflow must fetch the locked graph once");
+    let source_date = RELEASE_REPRODUCIBILITY_WORKFLOW
+        .find("source_date_epoch=\"$(git show -s --format=%ct \"$EXPECTED_SHA\")\"")
+        .expect("release reproducibility workflow must derive SOURCE_DATE_EPOCH from the exact source");
+    let canonical_target = RELEASE_REPRODUCIBILITY_WORKFLOW
+        .find("REPRO_TARGET_DIR=/tmp/cwl-pingora-repro-%s")
+        .expect("release reproducibility workflow must bind one canonical target path");
     let first_build = RELEASE_REPRODUCIBILITY_WORKFLOW
-        .find("CARGO_TARGET_DIR=\"/tmp/cwl-pingora-repro-a-${EXPECTED_SHA}\"")
-        .expect("first release build must use an isolated target directory");
+        .find("name: Build isolated release candidate A")
+        .expect("first clean release build must exist");
     let second_build = RELEASE_REPRODUCIBILITY_WORKFLOW
-        .find("CARGO_TARGET_DIR=\"/tmp/cwl-pingora-repro-b-${EXPECTED_SHA}\"")
-        .expect("second release build must use a distinct isolated target directory");
+        .find("name: Build isolated release candidate B")
+        .expect("second clean release build must exist");
 
     assert!(install < select && select < verify && verify < fetch);
-    assert!(fetch < first_build && first_build < second_build);
+    assert!(fetch < source_date && source_date < canonical_target);
+    assert!(canonical_target < first_build && first_build < second_build);
     assert_eq!(
         RELEASE_REPRODUCIBILITY_WORKFLOW
             .matches("cargo build --release --locked")
@@ -74,6 +81,26 @@ fn release_reproducibility_lane_builds_twice_with_the_release_compiler() {
             .count(),
         2
     );
+    assert_eq!(
+        RELEASE_REPRODUCIBILITY_WORKFLOW
+            .matches("CARGO_TARGET_DIR=\"$REPRO_TARGET_DIR\"")
+            .count(),
+        2
+    );
+    assert_eq!(
+        RELEASE_REPRODUCIBILITY_WORKFLOW
+            .matches("rm -rf \"$REPRO_TARGET_DIR\"")
+            .count(),
+        2
+    );
+    assert!(RELEASE_REPRODUCIBILITY_WORKFLOW
+        .contains("[[ \"$source_date_epoch\" =~ ^[1-9][0-9]*$ ]]"));
+    assert!(RELEASE_REPRODUCIBILITY_WORKFLOW
+        .contains("printf 'SOURCE_DATE_EPOCH=%s\\n' \"$source_date_epoch\" >> \"$GITHUB_ENV\""));
+    assert!(RELEASE_REPRODUCIBILITY_WORKFLOW
+        .contains("release-reproducibility-candidates/a/cwl-pingora-gateway"));
+    assert!(RELEASE_REPRODUCIBILITY_WORKFLOW
+        .contains("release-reproducibility-candidates/b/cwl-pingora-gateway"));
 }
 
 #[test]
@@ -101,6 +128,10 @@ fn release_reproducibility_lane_fails_closed_on_compiler_or_artifact_drift() {
         .contains("evidence_kind=unreleased-same-platform-release-binary-reproducibility"));
     assert!(RELEASE_REPRODUCIBILITY_WORKFLOW
         .contains("name: release-reproducibility-${{ env.EXPECTED_SHA }}"));
+    assert!(RELEASE_REPRODUCIBILITY_WORKFLOW
+        .contains("printf 'source_date_epoch=%s\\n' \"$SOURCE_DATE_EPOCH\""));
+    assert!(RELEASE_REPRODUCIBILITY_WORKFLOW
+        .contains("printf 'canonical_target_dir=%s\\n' \"$REPRO_TARGET_DIR\""));
 }
 
 #[test]
