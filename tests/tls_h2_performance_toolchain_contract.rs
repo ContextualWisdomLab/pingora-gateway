@@ -44,7 +44,9 @@ fn tls_h2_performance_lane_uses_release_compiler_before_building_candidate() {
         1
     );
     assert_eq!(
-        TLS_H2_PERFORMANCE_WORKFLOW.matches("rustup default ").count(),
+        TLS_H2_PERFORMANCE_WORKFLOW
+            .matches("rustup default ")
+            .count(),
         1
     );
     assert!(!TLS_H2_PERFORMANCE_WORKFLOW.contains("rustup override"));
