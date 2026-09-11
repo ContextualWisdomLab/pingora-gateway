@@ -114,19 +114,14 @@ fn issue_gateway_certificate() -> LocalCertificates {
     }
 }
 
-fn reserve_distinct_loopback_addresses() -> (SocketAddr, SocketAddr) {
+fn reserve_distinct_loopback_listeners() -> (TcpListener, TcpListener) {
     let traffic = TcpListener::bind("127.0.0.1:0").expect("traffic port should be available");
     let metrics = TcpListener::bind("127.0.0.1:0").expect("metrics port should be available");
-    let addresses = (
-        traffic
-            .local_addr()
-            .expect("traffic reservation has an address"),
-        metrics
-            .local_addr()
-            .expect("metrics reservation has an address"),
+    assert_ne!(
+        traffic.local_addr().expect("traffic reservation address"),
+        metrics.local_addr().expect("metrics reservation address")
     );
-    assert_ne!(addresses.0, addresses.1);
-    addresses
+    (traffic, metrics)
 }
 
 fn write_gateway_config(
@@ -146,7 +141,13 @@ fn write_gateway_config(
     file
 }
 
-fn spawn_gateway(config: &NamedTempFile) -> Child {
+fn spawn_gateway(
+    config: &NamedTempFile,
+    traffic_reservation: TcpListener,
+    metrics_reservation: TcpListener,
+) -> Child {
+    drop(traffic_reservation);
+    drop(metrics_reservation);
     Command::new(env!("CARGO_BIN_EXE_cwl-pingora-gateway"))
         .args([
             "--config",
@@ -341,9 +342,19 @@ fn one_verified_h2_connection_dispatches_two_live_streams_before_either_origin_r
         }
     });
 
-    let (listener, metrics_listener) = reserve_distinct_loopback_addresses();
+    let (listener_reservation, metrics_reservation) = reserve_distinct_loopback_listeners();
+    let listener = listener_reservation
+        .local_addr()
+        .expect("traffic reservation address");
+    let metrics_listener = metrics_reservation
+        .local_addr()
+        .expect("metrics reservation address");
     let config = write_gateway_config(listener, metrics_listener, upstream, &certificates);
-    let mut process = GatewayProcess(spawn_gateway(&config));
+    let mut process = GatewayProcess(spawn_gateway(
+        &config,
+        listener_reservation,
+        metrics_reservation,
+    ));
     let mut tls = connect_h2(listener, &certificates, &mut process.0);
 
     assert_eq!(
