@@ -55,7 +55,8 @@ fn bundle_requires_protected_source_identity_and_binary_provenance() {
     for required in [
         "verify_receipt_field()",
         "mapfile -t field_lines",
-        "test \"${#field_lines[@]}\" -eq 1",
+        "test \"${#field_lines[@]}\" -eq 1 || return 1",
+        "test \"${field_lines[0]}\" = \"${key}=${expected_value}\" || return 1",
         "verify_receipt_field \"$repro_receipt\" \"checkout_sha\" \"$SOURCE_SHA\"",
         "verify_receipt_field \"$repro_receipt\" \"attested_source_sha\" \"$SOURCE_SHA\"",
         "verify_receipt_field \"$repro_receipt\" \"signer_sha\" \"$SOURCE_SHA\"",
@@ -84,7 +85,7 @@ fn bundle_requires_exactly_one_digest_record_for_every_packaged_upstream_file() 
     for required in [
         "verify_receipt_digest()",
         "mapfile -t digest_lines",
-        "test \"${#digest_lines[@]}\" -eq 1",
+        "test \"${#digest_lines[@]}\" -eq 1 || return 1",
         "verify_receipt_digest \"$repro_receipt\" \"evidence/reproducibility\" \"release-binaries/cwl-pingora-gateway\"",
         "verify_receipt_digest \"$repro_receipt\" \"evidence/reproducibility\" \"release-binaries/cwl-pingora-pg-erd-migration\"",
         "verify_receipt_digest \"$supply_receipt\" \"evidence/supply-chain\" \"Cargo.lock\"",
