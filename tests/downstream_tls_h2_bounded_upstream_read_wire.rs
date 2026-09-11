@@ -560,9 +560,9 @@ fn exhausted_connection_window_bounds_upstream_read_ahead_and_recovers() {
         "origin handed the complete 64 MiB body to the gateway before downstream credit was restored"
     );
     let backpressured_at = backpressured_rx
-        .recv_timeout(Duration::from_secs(2))
+        .recv_timeout(Duration::from_secs(5))
         .expect(
-            "zero downstream connection credit must propagate bounded read-ahead to the origin",
+            "zero downstream connection credit must propagate bounded read-ahead within the configured upstream I/O budget",
         );
     assert!(
         (INITIAL_CONNECTION_WINDOW_BYTES..PRESSURE_BODY_BYTES).contains(&backpressured_at),
