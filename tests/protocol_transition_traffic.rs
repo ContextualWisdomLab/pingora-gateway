@@ -7,6 +7,7 @@
 use std::io::{Error, ErrorKind, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::process::{Child, Command, Stdio};
+use std::sync::{Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -15,6 +16,11 @@ use tempfile::NamedTempFile;
 const MAX_RESPONSE_HEADER_BYTES: usize = 64 * 1024;
 const ORIGIN_CONTACT_OBSERVATION_WINDOW: Duration = Duration::from_millis(500);
 
+// Each real-listener case must release an ephemeral reservation before its child process can bind
+// that exact address. Serializing those handoffs prevents sibling tests in this binary from
+// reclaiming a just-released port while preserving the production process boundary under test.
+static REAL_LISTENER_TEST_LOCK: Mutex<()> = Mutex::new(());
+
 struct GatewayProcess(Child);
 
 impl Drop for GatewayProcess {
@@ -22,6 +28,12 @@ impl Drop for GatewayProcess {
         let _ = self.0.kill();
         let _ = self.0.wait();
     }
+}
+
+fn serialize_real_listener_test() -> MutexGuard<'static, ()> {
+    REAL_LISTENER_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 /// Holds both ephemeral gateway listeners at once so the OS cannot reuse one reservation for both.
@@ -93,7 +105,8 @@ fn try_response_headers(
     request: &[u8],
     timeout: Duration,
 ) -> std::io::Result<String> {
-    let mut downstream = TcpStream::connect_timeout(&address, timeout.min(Duration::from_millis(250)))?;
+    let mut downstream =
+        TcpStream::connect_timeout(&address, timeout.min(Duration::from_millis(250)))?;
     downstream.set_write_timeout(Some(timeout))?;
     downstream.write_all(request)?;
 
@@ -250,6 +263,7 @@ fn status_parser_rejects_numeric_prefix_and_protocol_case_lookalikes() {
 
 #[test]
 fn generic_binary_rejects_websocket_upgrade_before_origin_contact() {
+    let _listener_test_guard = serialize_real_listener_test();
     let origin = TcpListener::bind("127.0.0.1:0").expect("origin fixture should bind");
     let origin_address = origin.local_addr().expect("origin address should exist");
     let (listener_reservation, metrics_reservation) = reserve_gateway_listeners();
@@ -279,6 +293,7 @@ fn generic_binary_rejects_websocket_upgrade_before_origin_contact() {
 
 #[test]
 fn pg_erd_binary_rejects_websocket_upgrade_before_route_origin_contact() {
+    let _listener_test_guard = serialize_real_listener_test();
     let backend = TcpListener::bind("127.0.0.1:0").expect("backend fixture should bind");
     let frontend = TcpListener::bind("127.0.0.1:0").expect("frontend fixture should bind");
     let backend_address = backend.local_addr().expect("backend address should exist");
