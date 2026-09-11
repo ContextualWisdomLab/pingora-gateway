@@ -129,14 +129,15 @@ pub fn build_downstream_tls_settings(
     settings
         .check_private_key()
         .map_err(|error| DownstreamTlsDeliveryError::Materialization(error.to_string()))?;
-    apply_downstream_tls_security_profile(&mut settings)?;
 
-    match config.alpn() {
-        DownstreamAlpnPolicy::H2Http1 => {
-            settings.set_alpn_select_callback(|_, alpn_in| select_h2_http1(alpn_in));
+    apply_downstream_tls_security_profile(&mut settings).map(|()| {
+        match config.alpn() {
+            DownstreamAlpnPolicy::H2Http1 => {
+                settings.set_alpn_select_callback(|_, alpn_in| select_h2_http1(alpn_in));
+            }
         }
-    }
-    Ok(settings)
+        settings
+    })
 }
 
 #[cfg(test)]
@@ -185,11 +186,14 @@ mod tests {
         );
         let config: DownstreamTlsConfig =
             serde_yaml::from_str(&yaml).expect("test TLS config should deserialize");
+        let error = build_downstream_tls_settings(&config)
+            .err()
+            .expect("missing identity material must fail closed");
 
-        assert!(matches!(
-            build_downstream_tls_settings(&config),
-            Err(DownstreamTlsDeliveryError::Materialization(_))
-        ));
+        assert_eq!(
+            std::mem::discriminant(&error),
+            std::mem::discriminant(&DownstreamTlsDeliveryError::Materialization(String::new()))
+        );
     }
 
     #[test]
