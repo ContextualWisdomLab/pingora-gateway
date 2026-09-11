@@ -262,7 +262,7 @@ fn settings_value(payload: &[u8], identifier: u16) -> Option<u32> {
         0,
         "SETTINGS payload must contain complete six-byte entries"
     );
-    payload.chunks_exact(6).find_map(|entry| {
+    payload.as_chunks::<6>().0.iter().find_map(|entry| {
         let id = u16::from_be_bytes([entry[0], entry[1]]);
         (id == identifier).then(|| u32::from_be_bytes([entry[2], entry[3], entry[4], entry[5]]))
     })
