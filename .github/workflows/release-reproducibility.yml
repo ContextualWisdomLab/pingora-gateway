@@ -56,6 +56,20 @@ jobs:
           test ! -e .cargo/config.toml
           test ! -e rust-toolchain
           test ! -e rust-toolchain.toml
+          test -z "${CARGO_HOME:-}"
+
+          cargo_config_dir="$PWD"
+          while true; do
+            test ! -e "$cargo_config_dir/.cargo/config"
+            test ! -e "$cargo_config_dir/.cargo/config.toml"
+            [[ "$cargo_config_dir" == "/" ]] && break
+            cargo_config_dir="$(dirname "$cargo_config_dir")"
+          done
+
+          controlled_cargo_home="$RUNNER_TEMP/cwl-cargo-home-$EXPECTED_SHA"
+          rm -rf "$controlled_cargo_home"
+          mkdir -p "$controlled_cargo_home"
+          printf 'CARGO_HOME=%s\n' "$controlled_cargo_home" >> "$GITHUB_ENV"
 
       - name: Fetch locked dependencies once
         shell: bash
