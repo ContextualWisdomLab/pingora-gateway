@@ -394,7 +394,10 @@ fn wait_for_http_failure(stream: &mut impl ReadWrite, target: u32) {
     let mut headers_seen = false;
     for _ in 0..64 {
         let (frame_type, flags, stream_id, _) = read_frame(stream);
-        assert_ne!(frame_type, H2_GOAWAY, "origin failure must remain stream-local");
+        assert_ne!(
+            frame_type, H2_GOAWAY,
+            "origin failure must remain stream-local"
+        );
         if frame_type == H2_SETTINGS && stream_id == 0 && flags & H2_ACK == 0 {
             write_frame(stream, H2_SETTINGS, H2_ACK, 0, &[]);
             stream
@@ -410,7 +413,10 @@ fn wait_for_http_failure(stream: &mut impl ReadWrite, target: u32) {
             headers_seen = true;
         }
         if stream_id == target && flags & H2_END_STREAM != 0 {
-            assert!(headers_seen, "pre-commit failure must include response headers");
+            assert!(
+                headers_seen,
+                "pre-commit failure must include response headers"
+            );
             return;
         }
     }
@@ -422,7 +428,10 @@ fn wait_for_committed_prefix(stream: &mut impl Read, target: u32) -> Vec<u8> {
     let mut body = Vec::new();
     for _ in 0..64 {
         let (frame_type, flags, stream_id, payload) = read_frame(stream);
-        assert_ne!(frame_type, H2_GOAWAY, "committed response must not close H2");
+        assert_ne!(
+            frame_type, H2_GOAWAY,
+            "committed response must not close H2"
+        );
         assert!(
             frame_type != H2_RST_STREAM || stream_id != target,
             "stream must not reset before committed body prefix is observed"
@@ -447,11 +456,7 @@ fn wait_for_committed_prefix(stream: &mut impl Read, target: u32) -> Vec<u8> {
     panic!("committed response prefix was not observed");
 }
 
-fn wait_for_post_commit_failure(
-    stream: &mut impl Read,
-    target: u32,
-    mut body: Vec<u8>,
-) -> Vec<u8> {
+fn wait_for_post_commit_failure(stream: &mut impl Read, target: u32, mut body: Vec<u8>) -> Vec<u8> {
     for _ in 0..64 {
         let (frame_type, flags, stream_id, payload) = read_frame(stream);
         assert_ne!(
@@ -512,9 +517,7 @@ fn read_sibling(stream: &mut impl ReadWrite, target: u32) -> Vec<u8> {
 
 fn write_sibling_response(stream: &mut TcpStream) {
     stream
-        .write_all(
-            b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\nConnection: close\r\n\r\nsibling-ok",
-        )
+        .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\nConnection: close\r\n\r\nsibling-ok")
         .expect("sibling response should write");
     stream.flush().expect("sibling response should flush");
 }
@@ -547,7 +550,9 @@ fn pre_commit_origin_reset_returns_http_failure_and_preserves_h2_sibling() {
 
     write_get(&mut tls, 3, 0x85);
     assert_eq!(read_sibling(&mut tls, 3), b"sibling-ok");
-    origin.join().expect("pre-commit origin fixture should complete");
+    origin
+        .join()
+        .expect("pre-commit origin fixture should complete");
 }
 
 #[test]
@@ -562,11 +567,11 @@ fn post_commit_origin_reset_preserves_first_response_and_h2_sibling() {
         let request = read_headers(&mut failed);
         assert!(request.starts_with("GET / HTTP/1.1\r\n"));
         failed
-            .write_all(
-                b"HTTP/1.1 200 OK\r\nContent-Length: 20\r\nConnection: close\r\n\r\npartial",
-            )
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 20\r\nConnection: close\r\n\r\npartial")
             .expect("committed partial response should write");
-        failed.flush().expect("committed partial response should flush");
+        failed
+            .flush()
+            .expect("committed partial response should flush");
         reset_rx
             .recv_timeout(IO_BUDGET)
             .expect("downstream should observe commitment before reset");
@@ -592,5 +597,7 @@ fn post_commit_origin_reset_preserves_first_response_and_h2_sibling() {
 
     write_get(&mut tls, 3, 0x85);
     assert_eq!(read_sibling(&mut tls, 3), b"sibling-ok");
-    origin.join().expect("post-commit origin fixture should complete");
+    origin
+        .join()
+        .expect("post-commit origin fixture should complete");
 }
