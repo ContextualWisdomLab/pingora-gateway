@@ -200,7 +200,9 @@ fn release_reproducibility_lane_fails_closed_on_compiler_or_artifact_drift() {
 
 #[test]
 fn release_reproducibility_lane_isolates_cargo_configuration_hierarchy() {
-    assert!(RELEASE_REPRODUCIBILITY_WORKFLOW.contains("test -z \"${CARGO_HOME:-}\""));
+    assert!(
+        RELEASE_REPRODUCIBILITY_WORKFLOW.contains("test -z \"${CARGO_HOME:-}\"")
+    );
     assert!(RELEASE_REPRODUCIBILITY_WORKFLOW.contains("cargo_config_dir=\"$PWD\""));
     assert!(RELEASE_REPRODUCIBILITY_WORKFLOW
         .contains("test ! -e \"$cargo_config_dir/.cargo/config\""));
