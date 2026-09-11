@@ -140,6 +140,29 @@ jobs:
             )
           }
 
+          verify_trivy_image_binding() {
+            local receipt="$1"
+            local image_id_key="$2"
+            local expected_ref="$3"
+            local report="$4"
+            local image_id
+            local -a image_id_lines
+
+            mapfile -t image_id_lines < <(
+              awk -F= -v expected_key="$image_id_key" '$1 == expected_key { print $0 }' "$receipt"
+            )
+            test "${#image_id_lines[@]}" -eq 1 || return 1
+            image_id="${image_id_lines[0]#*=}"
+            [[ "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
+            test "$(jq -r '.ArtifactType' "$report")" = "container_image" || return 1
+            test "$(jq -r '.ArtifactName' "$report")" = "$expected_ref" || return 1
+            test "$(jq -r '.Metadata.Reference' "$report")" = "$expected_ref" || return 1
+            test "$(jq -r '.Metadata.ImageID' "$report")" = "$image_id" || return 1
+            jq -e --arg expected_ref "$expected_ref" \
+              '(.Metadata.RepoTags | type) == "array" and (.Metadata.RepoTags | index($expected_ref)) != null' \
+              "$report" >/dev/null || return 1
+          }
+
           test -s "$repro_receipt"
           test -s "$supply_receipt"
           verify_receipt_field "$repro_receipt" "checkout_sha" "$SOURCE_SHA"
@@ -167,6 +190,16 @@ jobs:
           verify_receipt_digest "$supply_receipt" "evidence/supply-chain" "candidate.spdx.json"
           verify_receipt_digest "$supply_receipt" "evidence/supply-chain" "trivy-image.json"
           verify_receipt_digest "$supply_receipt" "evidence/supply-chain" "trivy-pg-erd-image.json"
+          verify_trivy_image_binding \
+            "$supply_receipt" \
+            "generic_local_image_id" \
+            "cwl-pingora-gateway:${SOURCE_SHA}" \
+            "evidence/supply-chain/trivy-image.json"
+          verify_trivy_image_binding \
+            "$supply_receipt" \
+            "pg_erd_local_image_id" \
+            "cwl-pingora-pg-erd-migration:${SOURCE_SHA}" \
+            "evidence/supply-chain/trivy-pg-erd-image.json"
           cmp --silent Cargo.lock evidence/supply-chain/Cargo.lock
           cmp --silent deny.toml evidence/supply-chain/deny.toml
 
