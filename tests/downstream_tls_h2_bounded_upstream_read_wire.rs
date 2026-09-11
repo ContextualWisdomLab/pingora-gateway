@@ -38,7 +38,7 @@ const INITIAL_CONNECTION_WINDOW_BYTES: usize = 65_535;
 const PRESSURE_BODY_BYTES: usize = 64 * 1024 * 1024;
 const ORIGIN_CHUNK_BYTES: usize = 64 * 1024;
 const MAX_ORIGIN_REQUEST_HEADER_BYTES: usize = 64 * 1024;
-const PING_BARRIER: &[u8; 8] = b"mem-bound";
+const PING_BARRIER: &[u8; 8] = b"membound";
 
 /// Ensures a spawned gateway cannot survive a failed or completed fixture.
 struct GatewayProcess(Child);
