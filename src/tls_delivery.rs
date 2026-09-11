@@ -92,19 +92,12 @@ fn select_h2_http1(client_protocols: &[u8]) -> Result<&[u8], AlpnError> {
 fn apply_downstream_tls_security_profile(
     settings: &mut TlsSettings,
 ) -> Result<(), DownstreamTlsDeliveryError> {
-    settings
+    let result = settings
         .set_min_proto_version(Some(SslVersion::TLS1_2))
-        .map_err(security_profile_error)?;
-    settings
-        .set_max_proto_version(Some(SslVersion::TLS1_3))
-        .map_err(security_profile_error)?;
-    settings
-        .set_cipher_list(DOWNSTREAM_TLS12_CIPHER_LIST)
-        .map_err(security_profile_error)?;
-    settings
-        .set_ciphersuites(DOWNSTREAM_TLS13_CIPHERSUITES)
-        .map_err(security_profile_error)?;
-    Ok(())
+        .and_then(|_| settings.set_max_proto_version(Some(SslVersion::TLS1_3)))
+        .and_then(|_| settings.set_cipher_list(DOWNSTREAM_TLS12_CIPHER_LIST))
+        .and_then(|_| settings.set_ciphersuites(DOWNSTREAM_TLS13_CIPHERSUITES));
+    result.map_err(security_profile_error)
 }
 
 /// Builds one Pingora TLS listener configuration from validated operator references.
@@ -156,7 +149,8 @@ mod tests {
     use tempfile::tempdir;
 
     use super::{
-        build_downstream_tls_settings, security_profile_error, select_h2_http1, H2_ALPN, HTTP1_ALPN,
+        build_downstream_tls_settings, security_profile_error, select_h2_http1,
+        DownstreamTlsDeliveryError, H2_ALPN, HTTP1_ALPN,
     };
     use crate::downstream_tls::DownstreamTlsConfig;
 
@@ -177,6 +171,25 @@ mod tests {
             security_profile_error("profile rejected").to_string(),
             "unable to apply downstream TLS security profile: profile rejected"
         );
+    }
+
+    #[test]
+    fn missing_identity_material_fails_closed_as_materialization_error() {
+        let directory = tempdir().expect("certificate workspace should be available");
+        let certificate = directory.path().join("missing-server.crt");
+        let private_key = directory.path().join("missing-server.key");
+        let yaml = format!(
+            "certificate_chain_file: {}\nprivate_key_file: {}\nalpn: h2_http1\n",
+            certificate.display(),
+            private_key.display()
+        );
+        let config: DownstreamTlsConfig =
+            serde_yaml::from_str(&yaml).expect("test TLS config should deserialize");
+
+        assert!(matches!(
+            build_downstream_tls_settings(&config),
+            Err(DownstreamTlsDeliveryError::Materialization(_))
+        ));
     }
 
     #[test]
