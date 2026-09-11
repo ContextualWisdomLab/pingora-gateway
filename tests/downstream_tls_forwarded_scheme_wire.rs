@@ -208,7 +208,9 @@ fn read_headers(stream: &mut TcpStream) -> String {
         stream
             .set_read_timeout(Some(remaining))
             .expect("origin read deadline should be set");
-        let read = stream.read(&mut buffer).expect("origin headers should read");
+        let read = stream
+            .read(&mut buffer)
+            .expect("origin headers should read");
         assert!(read > 0, "gateway closed before origin headers completed");
         raw.extend_from_slice(&buffer[..read]);
         assert!(raw.len() <= MAX_ORIGIN_HEADER_BYTES);
@@ -232,7 +234,9 @@ fn tls_termination_rebuilds_forwarded_scheme_from_transport_and_drops_spoofed_id
     let origin_listener = TcpListener::bind("127.0.0.1:0").expect("origin should bind");
     let origin_address = origin_listener.local_addr().expect("origin address");
     let origin = thread::spawn(move || {
-        let (mut stream, _) = origin_listener.accept().expect("gateway should reach origin");
+        let (mut stream, _) = origin_listener
+            .accept()
+            .expect("gateway should reach origin");
         let request = read_headers(&mut stream);
         let headers = header_lines(&request);
         assert!(headers.iter().any(|line| line == "forwarded: proto=https"));
