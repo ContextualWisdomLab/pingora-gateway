@@ -464,7 +464,7 @@ fn sigterm_h2_goaway_drains_admitted_streams_and_bounds_new_work() {
     );
 
     let second_seen_at = second_seen_rx
-        .recv_timeout(Duration::from_millis(100))
+        .recv_timeout(grace_period)
         .expect("stream 3 should reach origin before H2 drain begins");
     let second_after_signal = second_seen_at
         .checked_duration_since(signal_sent_at)
