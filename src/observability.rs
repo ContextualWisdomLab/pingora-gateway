@@ -91,6 +91,15 @@ fn register_counter(name: &'static str, help: &'static str) -> IntCounter {
         .unwrap_or_else(|error| panic!("gateway metric {name} must register exactly once: {error}"))
 }
 
+fn register_counter_vec(
+    name: &'static str,
+    help: &'static str,
+    labels: &'static [&'static str],
+) -> IntCounterVec {
+    register_int_counter_vec!(name, help, labels)
+        .unwrap_or_else(|error| panic!("gateway metric {name} must register exactly once: {error}"))
+}
+
 static REQUESTS_TOTAL: LazyLock<IntCounter> = LazyLock::new(|| {
     register_counter(
         "cwl_pingora_gateway_requests_total",
@@ -120,14 +129,11 @@ static BACKPRESSURE_REJECTIONS_TOTAL: LazyLock<IntCounter> = LazyLock::new(|| {
 });
 
 static REQUESTS_BY_TRANSPORT_TOTAL: LazyLock<IntCounterVec> = LazyLock::new(|| {
-    let metric = register_int_counter_vec!(
+    let metric = register_counter_vec(
         "cwl_pingora_gateway_requests_by_transport_total",
         "Completed downstream requests partitioned by bounded transport facts",
-        &["outcome", "protocol", "transport"]
-    )
-    .unwrap_or_else(|error| {
-        panic!("gateway transport request metric must register exactly once: {error}")
-    });
+        &["outcome", "protocol", "transport"],
+    );
 
     for outcome in ["ok", "error"] {
         for protocol in ["h1", "h2"] {
@@ -162,7 +168,8 @@ mod tests {
     use std::panic;
 
     use super::{
-        outcome_label, register_counter, transport_labels, RequestObservation, RequestOutcome,
+        outcome_label, register_counter, register_counter_vec, transport_labels,
+        RequestObservation, RequestOutcome,
     };
 
     #[test]
@@ -210,6 +217,18 @@ mod tests {
         let _first = register_counter(name, help);
 
         let duplicate = panic::catch_unwind(|| register_counter(name, help));
+
+        assert!(duplicate.is_err());
+    }
+
+    #[test]
+    fn duplicate_metric_vector_registration_fails_closed() {
+        let name = "cwl_pingora_gateway_test_duplicate_registration_by_transport_total";
+        let help = "Coverage-only vector proving duplicate registration fails closed";
+        let labels = &["outcome", "protocol", "transport"];
+        let _first = register_counter_vec(name, help, labels);
+
+        let duplicate = panic::catch_unwind(|| register_counter_vec(name, help, labels));
 
         assert!(duplicate.is_err());
     }
