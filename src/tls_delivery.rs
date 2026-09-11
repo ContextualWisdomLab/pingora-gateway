@@ -4,14 +4,32 @@
 //! construction. It does not issue, rotate, persist or otherwise become authoritative for TLS
 //! identity material.
 
+use std::fmt::Display;
+
 use pingora::listeners::tls::TlsSettings;
-use pingora::tls::ssl::AlpnError;
+use pingora::tls::ssl::{AlpnError, SslVersion};
 use thiserror::Error;
 
 use crate::downstream_tls::{DownstreamAlpnPolicy, DownstreamTlsConfig, DownstreamTlsConfigError};
 
 const H2_ALPN: &[u8] = b"h2";
 const HTTP1_ALPN: &[u8] = b"http/1.1";
+
+/// TLS 1.2 compatibility ciphers admitted by the versioned downstream HTTPS/H2 profile.
+///
+/// Only ephemeral ECDHE key exchange with AEAD is retained. Static RSA, static ECDH and finite-
+/// field DH suites are excluded so TLS 1.2 compatibility does not reintroduce key exchanges
+/// deprecated by RFC 10015.
+const DOWNSTREAM_TLS12_CIPHER_LIST: &str = "ECDHE-ECDSA-AES128-GCM-SHA256\
+:ECDHE-RSA-AES128-GCM-SHA256\
+:ECDHE-ECDSA-AES256-GCM-SHA384\
+:ECDHE-RSA-AES256-GCM-SHA384\
+:ECDHE-ECDSA-CHACHA20-POLY1305\
+:ECDHE-RSA-CHACHA20-POLY1305";
+
+/// TLS 1.3 AEAD suites explicitly admitted by the downstream edge profile.
+const DOWNSTREAM_TLS13_CIPHERSUITES: &str =
+    "TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256";
 
 /// Reasons validated downstream TLS configuration cannot be materialized for Pingora.
 #[derive(Debug, Error)]
@@ -28,6 +46,13 @@ pub enum DownstreamTlsDeliveryError {
     /// Pingora/OpenSSL could not load or validate the supplied certificate/key material.
     #[error("unable to materialize downstream TLS settings: {0}")]
     Materialization(String),
+    /// Pingora/OpenSSL rejected the code-owned downstream TLS security profile.
+    #[error("unable to apply downstream TLS security profile: {0}")]
+    SecurityProfile(String),
+}
+
+fn security_profile_error(error: impl Display) -> DownstreamTlsDeliveryError {
+    DownstreamTlsDeliveryError::SecurityProfile(error.to_string())
 }
 
 /// Selects the highest-preference protocol admitted by the `h2_http1` edge contract.
@@ -58,12 +83,30 @@ fn select_h2_http1(client_protocols: &[u8]) -> Result<&[u8], AlpnError> {
     h2.or(http1).ok_or(AlpnError::ALERT_FATAL)
 }
 
+/// Applies the code-owned compatibility profile instead of inheriting supplier helper defaults.
+///
+/// This migration serves existing HTTPS/HTTP/2 clients, so TLS 1.2 remains an explicit floor and
+/// TLS 1.3 the ceiling. TLS 1.2 is constrained to ephemeral ECDHE + AEAD; TLS 1.3 is constrained
+/// to the current AES-GCM and ChaCha20-Poly1305 suites. Changing this profile is therefore a
+/// versioned edge-security decision rather than an ambient OpenSSL/Pingora upgrade side effect.
+fn apply_downstream_tls_security_profile(
+    settings: &mut TlsSettings,
+) -> Result<(), DownstreamTlsDeliveryError> {
+    let result = settings
+        .set_min_proto_version(Some(SslVersion::TLS1_2))
+        .and_then(|_| settings.set_max_proto_version(Some(SslVersion::TLS1_3)))
+        .and_then(|_| settings.set_cipher_list(DOWNSTREAM_TLS12_CIPHER_LIST))
+        .and_then(|_| settings.set_ciphersuites(DOWNSTREAM_TLS13_CIPHERSUITES));
+    result.map_err(security_profile_error)
+}
+
 /// Builds one Pingora TLS listener configuration from validated operator references.
 ///
 /// The returned settings negotiate only the protocol policy explicitly represented by the
 /// contract. Current `H2Http1` semantics prefer HTTP/2, allow HTTP/1.1 fallback when offered,
 /// and fail the handshake when an ALPN-bearing client offers no admitted protocol; h2c and
-/// HTTP/3 are deliberately absent.
+/// HTTP/3 are deliberately absent. Protocol versions and cipher suites are also pinned by the
+/// code-owned downstream TLS security profile rather than inherited from supplier defaults.
 pub fn build_downstream_tls_settings(
     config: &DownstreamTlsConfig,
 ) -> Result<TlsSettings, DownstreamTlsDeliveryError> {
@@ -87,12 +130,14 @@ pub fn build_downstream_tls_settings(
         .check_private_key()
         .map_err(|error| DownstreamTlsDeliveryError::Materialization(error.to_string()))?;
 
-    match config.alpn() {
-        DownstreamAlpnPolicy::H2Http1 => {
-            settings.set_alpn_select_callback(|_, alpn_in| select_h2_http1(alpn_in));
+    apply_downstream_tls_security_profile(&mut settings).map(|()| {
+        match config.alpn() {
+            DownstreamAlpnPolicy::H2Http1 => {
+                settings.set_alpn_select_callback(|_, alpn_in| select_h2_http1(alpn_in));
+            }
         }
-    }
-    Ok(settings)
+        settings
+    })
 }
 
 #[cfg(test)]
@@ -104,7 +149,10 @@ mod tests {
     use pingora::tls::ssl::{SslAcceptor, SslConnector, SslMethod, SslVerifyMode};
     use tempfile::tempdir;
 
-    use super::{build_downstream_tls_settings, select_h2_http1, H2_ALPN, HTTP1_ALPN};
+    use super::{
+        build_downstream_tls_settings, security_profile_error, select_h2_http1,
+        DownstreamTlsDeliveryError, H2_ALPN, HTTP1_ALPN,
+    };
     use crate::downstream_tls::DownstreamTlsConfig;
 
     fn run_openssl(args: &[&str]) {
@@ -116,6 +164,36 @@ mod tests {
             .status()
             .expect("CI must provide the explicitly installed openssl CLI");
         assert!(status.success(), "openssl command failed: {args:?}");
+    }
+
+    #[test]
+    fn security_profile_errors_preserve_backend_diagnostics() {
+        assert_eq!(
+            security_profile_error("profile rejected").to_string(),
+            "unable to apply downstream TLS security profile: profile rejected"
+        );
+    }
+
+    #[test]
+    fn missing_identity_material_fails_closed_as_materialization_error() {
+        let directory = tempdir().expect("certificate workspace should be available");
+        let certificate = directory.path().join("missing-server.crt");
+        let private_key = directory.path().join("missing-server.key");
+        let yaml = format!(
+            "certificate_chain_file: {}\nprivate_key_file: {}\nalpn: h2_http1\n",
+            certificate.display(),
+            private_key.display()
+        );
+        let config: DownstreamTlsConfig =
+            serde_yaml::from_str(&yaml).expect("test TLS config should deserialize");
+        let error = build_downstream_tls_settings(&config)
+            .err()
+            .expect("missing identity material must fail closed");
+
+        assert_eq!(
+            std::mem::discriminant(&error),
+            std::mem::discriminant(&DownstreamTlsDeliveryError::Materialization(String::new()))
+        );
     }
 
     #[test]
