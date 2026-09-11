@@ -1,0 +1,197 @@
+name: Protected Release Evidence Bundle
+
+on:
+  workflow_dispatch:
+    inputs:
+      reproducibility_run_id:
+        description: Successful Release Reproducibility push run for the selected protected main SHA
+        required: true
+        type: string
+      supply_chain_run_id:
+        description: Successful Supply Chain push run for the selected protected main SHA
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+  attestations: read
+
+concurrency:
+  group: protected-release-evidence-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  SOURCE_SHA: ${{ github.sha }}
+  REPRODUCIBILITY_RUN_ID: ${{ inputs.reproducibility_run_id }}
+  SUPPLY_CHAIN_RUN_ID: ${{ inputs.supply_chain_run_id }}
+  CERT_IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/release-reproducibility.yml@refs/heads/main
+
+jobs:
+  assemble-protected-release-evidence:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout exact protected revision
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          persist-credentials: false
+
+      - name: Verify protected source identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$REPRODUCIBILITY_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$SUPPLY_CHAIN_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+
+      - name: Verify exact upstream evidence runs
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          verify_run() {
+            local run_id="$1"
+            local expected_name="$2"
+            local expected_path="$3"
+            local run_json
+
+            run_json="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}")"
+            test "$(jq -r '.status' <<<"$run_json")" = "completed"
+            test "$(jq -r '.conclusion' <<<"$run_json")" = "success"
+            test "$(jq -r '.head_sha' <<<"$run_json")" = "$SOURCE_SHA"
+            test "$(jq -r '.head_branch' <<<"$run_json")" = "main"
+            test "$(jq -r '.event' <<<"$run_json")" = "push"
+            test "$(jq -r '.name' <<<"$run_json")" = "$expected_name"
+            test "$(jq -r '.path' <<<"$run_json")" = "$expected_path"
+            test "$(jq -r '.repository.full_name' <<<"$run_json")" = "$GITHUB_REPOSITORY"
+          }
+
+          verify_run \
+            "$REPRODUCIBILITY_RUN_ID" \
+            "Release Reproducibility" \
+            ".github/workflows/release-reproducibility.yml"
+          verify_run \
+            "$SUPPLY_CHAIN_RUN_ID" \
+            "Supply Chain" \
+            ".github/workflows/supply-chain.yml"
+
+      - name: Download exact source-bound evidence
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p evidence/reproducibility evidence/supply-chain
+          gh run download "$REPRODUCIBILITY_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "release-reproducibility-${SOURCE_SHA}" \
+            --dir evidence/reproducibility
+          gh run download "$SUPPLY_CHAIN_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "candidate-evidence-${SOURCE_SHA}" \
+            --dir evidence/supply-chain
+
+      - name: Verify protected-source evidence identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          repro_receipt=evidence/reproducibility/release-reproducibility.txt
+          supply_receipt=evidence/supply-chain/candidate-evidence.txt
+
+          test -s "$repro_receipt"
+          test -s "$supply_receipt"
+          grep -Fx "checkout_sha=${SOURCE_SHA}" "$repro_receipt"
+          grep -Fx "attested_source_sha=${SOURCE_SHA}" "$repro_receipt"
+          grep -Fx "signer_sha=${SOURCE_SHA}" "$repro_receipt"
+          grep -Fx "certificate_identity=${CERT_IDENTITY}" "$repro_receipt"
+          grep -Fx "result=byte-identical" "$repro_receipt"
+          grep -Fx "source_sha=${SOURCE_SHA}" "$supply_receipt"
+
+          for evidence in \
+            evidence/reproducibility/cwl-pingora-gateway \
+            evidence/reproducibility/cwl-pingora-pg-erd-migration \
+            evidence/supply-chain/Cargo.lock \
+            evidence/supply-chain/deny.toml \
+            evidence/supply-chain/candidate.spdx.json \
+            evidence/supply-chain/trivy-image.json \
+            evidence/supply-chain/trivy-pg-erd-image.json; do
+            test -s "$evidence"
+          done
+
+      - name: Verify protected-source binary provenance
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for binary in cwl-pingora-gateway cwl-pingora-pg-erd-migration; do
+            gh attestation verify "evidence/reproducibility/${binary}" \
+              --repo "$GITHUB_REPOSITORY" \
+              --cert-identity "$CERT_IDENTITY" \
+              --source-digest "$SOURCE_SHA" \
+              --signer-digest "$SOURCE_SHA" \
+              --deny-self-hosted-runners
+          done
+
+      - name: Assemble deterministic release evidence bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle_dir=protected-release-evidence
+          rm -rf "$bundle_dir"
+          mkdir -p "$bundle_dir"
+
+          cp evidence/reproducibility/cwl-pingora-gateway "$bundle_dir/"
+          cp evidence/reproducibility/cwl-pingora-pg-erd-migration "$bundle_dir/"
+          cp evidence/reproducibility/release-reproducibility.txt "$bundle_dir/"
+          cp evidence/supply-chain/Cargo.lock "$bundle_dir/"
+          cp evidence/supply-chain/deny.toml "$bundle_dir/"
+          cp evidence/supply-chain/candidate.spdx.json "$bundle_dir/"
+          cp evidence/supply-chain/trivy-image.json "$bundle_dir/"
+          cp evidence/supply-chain/trivy-pg-erd-image.json "$bundle_dir/"
+          cp evidence/supply-chain/candidate-evidence.txt "$bundle_dir/"
+
+          {
+            printf 'evidence_kind=protected-source-release-evidence-bundle\n'
+            printf 'source_sha=%s\n' "$SOURCE_SHA"
+            printf 'reproducibility_run_id=%s\n' "$REPRODUCIBILITY_RUN_ID"
+            printf 'supply_chain_run_id=%s\n' "$SUPPLY_CHAIN_RUN_ID"
+            printf 'certificate_identity=%s\n' "$CERT_IDENTITY"
+            printf 'publication_state=unpublished\n'
+          } > "$bundle_dir/protected-release-evidence.txt"
+
+          (
+            cd "$bundle_dir"
+            LC_ALL=C find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\n' \
+              | sort \
+              | xargs sha256sum \
+              > SHA256SUMS
+          )
+
+          source_date_epoch="$(git show -s --format=%ct "$SOURCE_SHA")"
+          [[ "$source_date_epoch" =~ ^[1-9][0-9]*$ ]]
+          archive="cwl-pingora-gateway-release-evidence-${SOURCE_SHA}.tar.gz"
+          tar \
+            --sort=name \
+            --mtime="@${source_date_epoch}" \
+            --owner=0 \
+            --group=0 \
+            --numeric-owner \
+            -czf "$archive" \
+            "$bundle_dir"
+          sha256sum "$archive" > "${archive}.sha256"
+
+      - name: Upload protected release evidence bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: protected-release-evidence-${{ env.SOURCE_SHA }}
+          path: |
+            cwl-pingora-gateway-release-evidence-${{ env.SOURCE_SHA }}.tar.gz
+            cwl-pingora-gateway-release-evidence-${{ env.SOURCE_SHA }}.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 30
