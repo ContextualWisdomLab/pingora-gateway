@@ -113,9 +113,8 @@ fn byte_mismatch_keeps_bounded_root_cause_evidence_without_weakening_the_gate() 
     assert!(RELEASE_REPRODUCIBILITY_WORKFLOW.contains("strings -a \"$candidate_b\""));
     assert!(RELEASE_REPRODUCIBILITY_WORKFLOW.contains("head -n 512"));
     assert!(RELEASE_REPRODUCIBILITY_WORKFLOW.contains("if: ${{ failure() }}"));
-    assert!(RELEASE_REPRODUCIBILITY_WORKFLOW.contains(
-        "name: release-reproducibility-diagnostics-${{ env.EXPECTED_SHA }}"
-    ));
+    assert!(RELEASE_REPRODUCIBILITY_WORKFLOW
+        .contains("name: release-reproducibility-diagnostics-${{ env.EXPECTED_SHA }}"));
     assert!(RELEASE_REPRODUCIBILITY_WORKFLOW.contains("retention-days: 7"));
 }
 
