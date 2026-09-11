@@ -4,9 +4,10 @@
 //! tests prove an Upgrade attempt is rejected before either composition root contacts an origin,
 //! while gateway-local readiness remains available.
 
-use std::io::{ErrorKind, Read, Write};
+use std::io::{Error, ErrorKind, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::process::{Child, Command, Stdio};
+use std::sync::{Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -15,6 +16,11 @@ use tempfile::NamedTempFile;
 const MAX_RESPONSE_HEADER_BYTES: usize = 64 * 1024;
 const ORIGIN_CONTACT_OBSERVATION_WINDOW: Duration = Duration::from_millis(500);
 
+// Each real-listener case must release an ephemeral reservation before its child process can bind
+// that exact address. Serializing those handoffs prevents sibling tests in this binary from
+// reclaiming a just-released port while preserving the production process boundary under test.
+static REAL_LISTENER_TEST_LOCK: Mutex<()> = Mutex::new(());
+
 struct GatewayProcess(Child);
 
 impl Drop for GatewayProcess {
@@ -22,6 +28,12 @@ impl Drop for GatewayProcess {
         let _ = self.0.kill();
         let _ = self.0.wait();
     }
+}
+
+fn serialize_real_listener_test() -> MutexGuard<'static, ()> {
+    REAL_LISTENER_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 /// Holds both ephemeral gateway listeners at once so the OS cannot reuse one reservation for both.
@@ -88,12 +100,86 @@ fn wait_until_listening(address: SocketAddr, process: &mut Child) {
     }
 }
 
+fn try_response_headers(
+    address: SocketAddr,
+    request: &[u8],
+    timeout: Duration,
+) -> std::io::Result<String> {
+    let mut downstream =
+        TcpStream::connect_timeout(&address, timeout.min(Duration::from_millis(250)))?;
+    downstream.set_write_timeout(Some(timeout))?;
+    downstream.write_all(request)?;
+
+    let deadline = Instant::now() + timeout;
+    let mut response = Vec::new();
+    let mut buffer = [0_u8; 1024];
+    loop {
+        let now = Instant::now();
+        if now >= deadline {
+            return Err(Error::new(
+                ErrorKind::TimedOut,
+                "gateway response header exceeded whole-header deadline",
+            ));
+        }
+        downstream.set_read_timeout(Some(deadline.saturating_duration_since(now)))?;
+        let read = downstream.read(&mut buffer)?;
+        if read == 0 {
+            return Err(Error::new(
+                ErrorKind::UnexpectedEof,
+                "gateway closed before response headers completed",
+            ));
+        }
+        response.extend_from_slice(&buffer[..read]);
+        if response.len() > MAX_RESPONSE_HEADER_BYTES {
+            return Err(Error::new(
+                ErrorKind::InvalidData,
+                "gateway response header exceeded fixture byte budget",
+            ));
+        }
+        if response.windows(4).any(|window| window == b"\r\n\r\n") {
+            return Ok(String::from_utf8_lossy(&response).into_owned());
+        }
+    }
+}
+
+fn wait_until_ready(address: SocketAddr, process: &mut Child) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let request = b"GET /readyz HTTP/1.1\r\nHost: gateway.local\r\nConnection: close\r\n\r\n";
+    loop {
+        if let Some(status) = process
+            .try_wait()
+            .expect("gateway process state should be readable")
+        {
+            panic!("gateway exited before readiness became available: {status}");
+        }
+        if let Ok(response) = try_response_headers(address, request, Duration::from_millis(500)) {
+            if http1_status_code(&response) == Some(200) {
+                return;
+            }
+        }
+        assert!(
+            Instant::now() < deadline,
+            "gateway readiness did not become available within 10s"
+        );
+        thread::sleep(Duration::from_millis(25));
+    }
+}
+
 fn start_gateway(
     binary: &str,
     config: &NamedTempFile,
-    listener: SocketAddr,
-    metrics_listener: SocketAddr,
+    listener_reservation: TcpListener,
+    metrics_reservation: TcpListener,
 ) -> GatewayProcess {
+    let listener = listener_reservation
+        .local_addr()
+        .expect("traffic reservation should expose an address");
+    let metrics_listener = metrics_reservation
+        .local_addr()
+        .expect("metrics reservation should expose an address");
+    drop(listener_reservation);
+    drop(metrics_reservation);
+
     let mut child = Command::new(binary)
         .args(["--config", config.path().to_str().expect("UTF-8 temp path")])
         .stdin(Stdio::null())
@@ -101,43 +187,15 @@ fn start_gateway(
         .stderr(Stdio::null())
         .spawn()
         .expect("compiled gateway binary should start");
-    wait_until_listening(listener, &mut child);
+    wait_until_ready(listener, &mut child);
     wait_until_listening(metrics_listener, &mut child);
     GatewayProcess(child)
 }
 
 /// Reads one response header inside a whole-header deadline and finite byte budget.
 fn response_headers(address: SocketAddr, request: &[u8]) -> String {
-    let mut downstream = TcpStream::connect(address).expect("gateway should accept traffic");
-    downstream
-        .write_all(request)
-        .expect("downstream request should be writable");
-
-    let deadline = Instant::now() + Duration::from_secs(5);
-    let mut response = Vec::new();
-    let mut buffer = [0_u8; 1024];
-    loop {
-        let now = Instant::now();
-        assert!(
-            now < deadline,
-            "gateway response header exceeded 5s deadline"
-        );
-        downstream
-            .set_read_timeout(Some(deadline.saturating_duration_since(now)))
-            .expect("downstream timeout should be configurable");
-        let read = downstream
-            .read(&mut buffer)
-            .expect("gateway response headers should be readable");
-        assert!(read > 0, "gateway closed before response headers completed");
-        response.extend_from_slice(&buffer[..read]);
-        assert!(
-            response.len() <= MAX_RESPONSE_HEADER_BYTES,
-            "gateway response header exceeded {MAX_RESPONSE_HEADER_BYTES} bytes"
-        );
-        if response.windows(4).any(|window| window == b"\r\n\r\n") {
-            return String::from_utf8_lossy(&response).into_owned();
-        }
-    }
+    try_response_headers(address, request, Duration::from_secs(5))
+        .expect("gateway response headers should be readable")
 }
 
 /// Parses only an exact HTTP/1.1 three-digit status token from the response status line.
@@ -205,6 +263,7 @@ fn status_parser_rejects_numeric_prefix_and_protocol_case_lookalikes() {
 
 #[test]
 fn generic_binary_rejects_websocket_upgrade_before_origin_contact() {
+    let _listener_test_guard = serialize_real_listener_test();
     let origin = TcpListener::bind("127.0.0.1:0").expect("origin fixture should bind");
     let origin_address = origin.local_addr().expect("origin address should exist");
     let (listener_reservation, metrics_reservation) = reserve_gateway_listeners();
@@ -215,13 +274,11 @@ fn generic_binary_rejects_websocket_upgrade_before_origin_contact() {
         .local_addr()
         .expect("metrics reservation should expose an address");
     let config = write_generic_config(listener, metrics_listener, origin_address);
-    drop(listener_reservation);
-    drop(metrics_reservation);
     let _process = start_gateway(
         env!("CARGO_BIN_EXE_cwl-pingora-gateway"),
         &config,
-        listener,
-        metrics_listener,
+        listener_reservation,
+        metrics_reservation,
     );
 
     let response = response_headers(listener, &websocket_upgrade_request("/socket"));
@@ -236,6 +293,7 @@ fn generic_binary_rejects_websocket_upgrade_before_origin_contact() {
 
 #[test]
 fn pg_erd_binary_rejects_websocket_upgrade_before_route_origin_contact() {
+    let _listener_test_guard = serialize_real_listener_test();
     let backend = TcpListener::bind("127.0.0.1:0").expect("backend fixture should bind");
     let frontend = TcpListener::bind("127.0.0.1:0").expect("frontend fixture should bind");
     let backend_address = backend.local_addr().expect("backend address should exist");
@@ -255,13 +313,11 @@ fn pg_erd_binary_rejects_websocket_upgrade_before_route_origin_contact() {
         backend_address,
         frontend_address,
     );
-    drop(listener_reservation);
-    drop(metrics_reservation);
     let _process = start_gateway(
         env!("CARGO_BIN_EXE_cwl-pingora-pg-erd-migration"),
         &config,
-        listener,
-        metrics_listener,
+        listener_reservation,
+        metrics_reservation,
     );
 
     let response = response_headers(listener, &websocket_upgrade_request("/api/socket"));
