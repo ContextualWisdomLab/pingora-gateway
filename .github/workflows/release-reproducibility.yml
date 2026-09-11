@@ -83,7 +83,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p release-binaries
+          mkdir -p release-binaries release-reproducibility-diagnostics
           : > release-reproducibility.txt
           {
             printf 'evidence_kind=unreleased-same-platform-release-binary-reproducibility\n'
@@ -91,6 +91,7 @@ jobs:
             rustc --version --verbose
           } >> release-reproducibility.txt
 
+          mismatch=0
           for binary in cwl-pingora-gateway cwl-pingora-pg-erd-migration; do
             candidate_a="/tmp/cwl-pingora-repro-a-${EXPECTED_SHA}/release/${binary}"
             candidate_b="/tmp/cwl-pingora-repro-b-${EXPECTED_SHA}/release/${binary}"
@@ -98,16 +99,59 @@ jobs:
             test -x "$candidate_b"
             digest_a="$(sha256sum "$candidate_a" | awk '{print $1}')"
             digest_b="$(sha256sum "$candidate_b" | awk '{print $1}')"
-            test "$digest_a" = "$digest_b"
-            cmp --silent "$candidate_a" "$candidate_b"
+            {
+              printf 'candidate_a_sha256=%s %s\n' "$binary" "$digest_a"
+              printf 'candidate_b_sha256=%s %s\n' "$binary" "$digest_b"
+            } >> release-reproducibility.txt
+
+            if [[ "$digest_a" != "$digest_b" ]] || ! cmp --silent "$candidate_a" "$candidate_b"; then
+              mismatch=1
+              mkdir -p "release-reproducibility-diagnostics/${binary}"
+              cp "$candidate_a" "release-reproducibility-diagnostics/${binary}/candidate-a"
+              cp "$candidate_b" "release-reproducibility-diagnostics/${binary}/candidate-b"
+              cmp -l "$candidate_a" "$candidate_b" \
+                | head -n 256 \
+                > "release-reproducibility-diagnostics/${binary}/cmp-first-256.txt" || true
+              readelf -n "$candidate_a" \
+                > "release-reproducibility-diagnostics/${binary}/candidate-a-notes.txt"
+              readelf -n "$candidate_b" \
+                > "release-reproducibility-diagnostics/${binary}/candidate-b-notes.txt"
+              strings -a "$candidate_a" \
+                > "release-reproducibility-diagnostics/${binary}/candidate-a-strings.txt"
+              strings -a "$candidate_b" \
+                > "release-reproducibility-diagnostics/${binary}/candidate-b-strings.txt"
+              diff -u \
+                "release-reproducibility-diagnostics/${binary}/candidate-a-strings.txt" \
+                "release-reproducibility-diagnostics/${binary}/candidate-b-strings.txt" \
+                | head -n 512 \
+                > "release-reproducibility-diagnostics/${binary}/strings-first-512.diff" || true
+              continue
+            fi
+
             cp "$candidate_a" "release-binaries/${binary}"
             printf 'binary_sha256=%s %s\n' "$binary" "$digest_a" >> release-reproducibility.txt
           done
 
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          if [[ "$mismatch" -ne 0 ]]; then
+            printf 'result=byte-mismatch\n' >> release-reproducibility.txt
+            cp release-reproducibility.txt release-reproducibility-diagnostics/receipt.txt
+            exit 1
+          fi
+
+          printf 'result=byte-identical\n' >> release-reproducibility.txt
           sha256sum release-binaries/cwl-pingora-gateway \
             release-binaries/cwl-pingora-pg-erd-migration \
             >> release-reproducibility.txt
-          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+
+      - name: Upload byte-mismatch diagnostics
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: release-reproducibility-diagnostics-${{ env.EXPECTED_SHA }}
+          path: release-reproducibility-diagnostics/
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Upload exact reproducibility evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
