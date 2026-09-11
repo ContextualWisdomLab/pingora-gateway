@@ -78,18 +78,13 @@ fn release_reproducibility_lane_builds_twice_with_the_release_compiler() {
 
 #[test]
 fn release_reproducibility_lane_fails_closed_on_compiler_or_artifact_drift() {
-    assert!(RELEASE_REPRODUCIBILITY_WORKFLOW.contains(
-        "test \"$(git rev-parse HEAD)\" = \"$EXPECTED_SHA\""
-    ));
+    assert!(RELEASE_REPRODUCIBILITY_WORKFLOW
+        .contains("test \"$(git rev-parse HEAD)\" = \"$EXPECTED_SHA\""));
     assert!(RELEASE_REPRODUCIBILITY_WORKFLOW.contains("test -z \"${RUSTUP_TOOLCHAIN:-}\""));
     assert!(RELEASE_REPRODUCIBILITY_WORKFLOW.contains("test -z \"${RUSTFLAGS:-}\""));
-    assert!(RELEASE_REPRODUCIBILITY_WORKFLOW.contains(
-        "test -z \"${CARGO_ENCODED_RUSTFLAGS:-}\""
-    ));
+    assert!(RELEASE_REPRODUCIBILITY_WORKFLOW.contains("test -z \"${CARGO_ENCODED_RUSTFLAGS:-}\""));
     assert!(RELEASE_REPRODUCIBILITY_WORKFLOW.contains("test -z \"${RUSTC_WRAPPER:-}\""));
-    assert!(RELEASE_REPRODUCIBILITY_WORKFLOW.contains(
-        "test -z \"${RUSTC_WORKSPACE_WRAPPER:-}\""
-    ));
+    assert!(RELEASE_REPRODUCIBILITY_WORKFLOW.contains("test -z \"${RUSTC_WORKSPACE_WRAPPER:-}\""));
     assert!(RELEASE_REPRODUCIBILITY_WORKFLOW.contains("test ! -e rust-toolchain"));
     assert!(RELEASE_REPRODUCIBILITY_WORKFLOW.contains("test ! -e rust-toolchain.toml"));
     assert!(!RELEASE_REPRODUCIBILITY_WORKFLOW.contains("1.98.0"));
@@ -97,15 +92,13 @@ fn release_reproducibility_lane_fails_closed_on_compiler_or_artifact_drift() {
         RELEASE_REPRODUCIBILITY_WORKFLOW
     ));
     assert!(RELEASE_REPRODUCIBILITY_WORKFLOW.contains("test \"$digest_a\" = \"$digest_b\""));
-    assert!(RELEASE_REPRODUCIBILITY_WORKFLOW.contains(
-        "cmp --silent \"$candidate_a\" \"$candidate_b\""
-    ));
-    assert!(RELEASE_REPRODUCIBILITY_WORKFLOW.contains(
-        "evidence_kind=unreleased-same-platform-release-binary-reproducibility"
-    ));
-    assert!(RELEASE_REPRODUCIBILITY_WORKFLOW.contains(
-        "name: release-reproducibility-${{ env.EXPECTED_SHA }}"
-    ));
+    assert!(
+        RELEASE_REPRODUCIBILITY_WORKFLOW.contains("cmp --silent \"$candidate_a\" \"$candidate_b\"")
+    );
+    assert!(RELEASE_REPRODUCIBILITY_WORKFLOW
+        .contains("evidence_kind=unreleased-same-platform-release-binary-reproducibility"));
+    assert!(RELEASE_REPRODUCIBILITY_WORKFLOW
+        .contains("name: release-reproducibility-${{ env.EXPECTED_SHA }}"));
 }
 
 #[test]
