@@ -148,6 +148,9 @@ jobs:
 
           cp evidence/reproducibility/cwl-pingora-gateway "$bundle_dir/"
           cp evidence/reproducibility/cwl-pingora-pg-erd-migration "$bundle_dir/"
+          chmod 0755 \
+            "$bundle_dir/cwl-pingora-gateway" \
+            "$bundle_dir/cwl-pingora-pg-erd-migration"
           cp evidence/reproducibility/release-reproducibility.txt "$bundle_dir/"
           cp evidence/supply-chain/Cargo.lock "$bundle_dir/"
           cp evidence/supply-chain/deny.toml "$bundle_dir/"
@@ -182,8 +185,9 @@ jobs:
             --owner=0 \
             --group=0 \
             --numeric-owner \
-            -czf "$archive" \
-            "$bundle_dir"
+            -cf - \
+            "$bundle_dir" \
+            | gzip -n > "$archive"
           sha256sum "$archive" > "${archive}.sha256"
 
       - name: Upload protected release evidence bundle
