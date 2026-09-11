@@ -18,6 +18,7 @@ concurrency:
 
 env:
   EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+  SIGNER_SHA: ${{ github.sha }}
 
 jobs:
   release-binary-reproducibility:
@@ -133,6 +134,7 @@ jobs:
           {
             printf 'evidence_kind=unreleased-same-platform-release-binary-reproducibility\n'
             printf 'source_sha=%s\n' "$EXPECTED_SHA"
+            printf 'signer_sha=%s\n' "$SIGNER_SHA"
             printf 'source_date_epoch=%s\n' "$SOURCE_DATE_EPOCH"
             printf 'canonical_target_dir=%s\n' "$REPRO_TARGET_DIR"
             rustc --version --verbose
@@ -216,12 +218,12 @@ jobs:
           gh attestation verify release-binaries/cwl-pingora-gateway --repo "$GITHUB_REPOSITORY" \
             --signer-workflow "ContextualWisdomLab/pingora-gateway/.github/workflows/release-reproducibility.yml" \
             --source-digest "$EXPECTED_SHA" \
-            --signer-digest "$EXPECTED_SHA" \
+            --signer-digest "$SIGNER_SHA" \
             --deny-self-hosted-runners
           gh attestation verify release-binaries/cwl-pingora-pg-erd-migration --repo "$GITHUB_REPOSITORY" \
             --signer-workflow "ContextualWisdomLab/pingora-gateway/.github/workflows/release-reproducibility.yml" \
             --source-digest "$EXPECTED_SHA" \
-            --signer-digest "$EXPECTED_SHA" \
+            --signer-digest "$SIGNER_SHA" \
             --deny-self-hosted-runners
 
       - name: Upload exact reproducibility evidence
