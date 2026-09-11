@@ -371,7 +371,9 @@ fn declared_and_streamed_body_limits_reject_without_poisoning_h2_connection() {
                                 b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\nConnection: close\r\n\r\nsibling-ok",
                             )
                             .expect("sibling origin response should be writable");
-                        connection.flush().expect("sibling origin response should flush");
+                        connection
+                            .flush()
+                            .expect("sibling origin response should flush");
                         return;
                     }
                     assert!(
@@ -425,7 +427,8 @@ fn declared_and_streamed_body_limits_reject_without_poisoning_h2_connection() {
         1,
         &declared_oversized_post_headers(),
     );
-    tls.flush().expect("declared oversized request should flush");
+    tls.flush()
+        .expect("declared oversized request should flush");
     wait_for_stream_end(&mut tls, 1);
 
     write_h2_frame(
@@ -442,7 +445,8 @@ fn declared_and_streamed_body_limits_reject_without_poisoning_h2_connection() {
         3,
         OVERSIZED_BODY,
     );
-    tls.flush().expect("streamed oversized request should flush");
+    tls.flush()
+        .expect("streamed oversized request should flush");
     wait_for_stream_end(&mut tls, 3);
 
     write_h2_frame(
@@ -479,8 +483,14 @@ fn declared_and_streamed_body_limits_reject_without_poisoning_h2_connection() {
         }
     }
 
-    assert!(sibling_headers_seen, "compliant sibling must receive response headers");
-    assert!(sibling_ended, "compliant sibling must complete on the same H2 connection");
+    assert!(
+        sibling_headers_seen,
+        "compliant sibling must receive response headers"
+    );
+    assert!(
+        sibling_ended,
+        "compliant sibling must complete on the same H2 connection"
+    );
     assert_eq!(sibling_body, b"sibling-ok");
     origin_fixture
         .join()
