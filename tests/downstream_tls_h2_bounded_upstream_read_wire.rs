@@ -303,7 +303,11 @@ fn handle_control_frame(
         return true;
     }
     if frame_type == H2_FRAME_PING && stream_id == 0 && flags & H2_FLAG_ACK == 0 {
-        assert_eq!(payload.len(), 8, "PING payload must be exactly eight octets");
+        assert_eq!(
+            payload.len(),
+            8,
+            "PING payload must be exactly eight octets"
+        );
         write_h2_frame(stream, H2_FRAME_PING, H2_FLAG_ACK, 0, payload);
         stream.flush().expect("PING acknowledgement should flush");
         return true;
@@ -331,7 +335,10 @@ fn finish_settings_handshake(stream: &mut impl ReadWrite) {
         );
         if frame_type == H2_FRAME_SETTINGS && stream_id == 0 {
             if flags & H2_FLAG_ACK != 0 {
-                assert!(payload.is_empty(), "SETTINGS ACK must have an empty payload");
+                assert!(
+                    payload.is_empty(),
+                    "SETTINGS ACK must have an empty payload"
+                );
                 client_settings_acked = true;
             } else {
                 server_settings_seen = true;
@@ -439,9 +446,9 @@ fn exhausted_connection_window_bounds_upstream_read_ahead_and_recovers() {
                             .send(written)
                             .expect("backpressure observation channel should remain connected");
                         backpressure_reported = true;
-                        resume_rx
-                            .recv_timeout(Duration::from_secs(5))
-                            .expect("client must restore connection credit within the gateway write budget");
+                        resume_rx.recv_timeout(Duration::from_secs(5)).expect(
+                            "client must restore connection credit within the gateway write budget",
+                        );
                         origin
                             .set_nonblocking(false)
                             .expect("origin should return to blocking writes for recovery");
@@ -459,7 +466,9 @@ fn exhausted_connection_window_bounds_upstream_read_ahead_and_recovers() {
             backpressure_reported,
             "the 64 MiB origin body completed without downstream pressure reaching the origin socket"
         );
-        origin.flush().expect("recovered pressure body should flush");
+        origin
+            .flush()
+            .expect("recovered pressure body should flush");
         origin_done.store(true, Ordering::Release);
     });
 
@@ -514,7 +523,10 @@ fn exhausted_connection_window_bounds_upstream_read_ahead_and_recovers() {
             response_headers_seen = true;
         }
         if stream_id == 1 && frame_type == H2_FRAME_DATA {
-            assert!(response_headers_seen, "response DATA requires preceding headers");
+            assert!(
+                response_headers_seen,
+                "response DATA requires preceding headers"
+            );
             assert!(
                 flags & H2_FLAG_END_STREAM == 0,
                 "64 MiB response must not complete inside the initial connection window"
@@ -533,7 +545,10 @@ fn exhausted_connection_window_bounds_upstream_read_ahead_and_recovers() {
             }
         }
     }
-    assert!(response_headers_seen, "pressure response headers must be observed");
+    assert!(
+        response_headers_seen,
+        "pressure response headers must be observed"
+    );
     assert_eq!(
         body_bytes, INITIAL_CONNECTION_WINDOW_BYTES,
         "client must consume exactly the initial connection window before withholding credit"
@@ -546,7 +561,9 @@ fn exhausted_connection_window_bounds_upstream_read_ahead_and_recovers() {
     );
     let backpressured_at = backpressured_rx
         .recv_timeout(Duration::from_secs(2))
-        .expect("zero downstream connection credit must propagate bounded read-ahead to the origin");
+        .expect(
+            "zero downstream connection credit must propagate bounded read-ahead to the origin",
+        );
     assert!(
         (INITIAL_CONNECTION_WINDOW_BYTES..PRESSURE_BODY_BYTES).contains(&backpressured_at),
         "origin backpressure must occur after real response progress but before full-body handoff: {backpressured_at}"
@@ -624,7 +641,10 @@ fn exhausted_connection_window_bounds_upstream_read_ahead_and_recovers() {
         }
     }
 
-    assert!(ended, "pressure response must complete after restoring connection credit");
+    assert!(
+        ended,
+        "pressure response must complete after restoring connection credit"
+    );
     assert_eq!(body_bytes, PRESSURE_BODY_BYTES);
     origin_fixture
         .join()
