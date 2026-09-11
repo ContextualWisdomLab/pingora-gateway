@@ -156,8 +156,7 @@ mod tests {
     use tempfile::tempdir;
 
     use super::{
-        build_downstream_tls_settings, security_profile_error, select_h2_http1, H2_ALPN,
-        HTTP1_ALPN,
+        build_downstream_tls_settings, security_profile_error, select_h2_http1, H2_ALPN, HTTP1_ALPN,
     };
     use crate::downstream_tls::DownstreamTlsConfig;
 
