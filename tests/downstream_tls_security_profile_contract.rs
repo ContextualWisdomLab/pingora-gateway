@@ -39,8 +39,15 @@ fn tls12_profile_admits_only_ephemeral_ecdhe_aead_suites() {
         .chars()
         .filter(|character| !matches!(character, '"' | '\\' | '\n' | ' '))
         .collect();
-    let suites: Vec<_> = normalized.split(':').filter(|suite| !suite.is_empty()).collect();
-    assert_eq!(suites.len(), 6, "TLS 1.2 profile cardinality changed unexpectedly");
+    let suites: Vec<_> = normalized
+        .split(':')
+        .filter(|suite| !suite.is_empty())
+        .collect();
+    assert_eq!(
+        suites.len(),
+        6,
+        "TLS 1.2 profile cardinality changed unexpectedly"
+    );
 
     for suite in suites {
         assert!(
