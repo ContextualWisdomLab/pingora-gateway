@@ -25,6 +25,7 @@ const H2_FRAME_DATA: u8 = 0x0;
 const H2_FRAME_HEADERS: u8 = 0x1;
 const H2_FRAME_RST_STREAM: u8 = 0x3;
 const H2_FRAME_SETTINGS: u8 = 0x4;
+const H2_FRAME_PING: u8 = 0x6;
 const H2_FRAME_GOAWAY: u8 = 0x7;
 const H2_FLAG_ACK: u8 = 0x1;
 const H2_FLAG_END_STREAM: u8 = 0x1;
@@ -253,6 +254,31 @@ fn read_h2_frame(stream: &mut impl Read) -> (u8, u8, u32, Vec<u8>) {
     (header[3], header[4], stream_id, payload)
 }
 
+fn acknowledge_peer_control_frame(
+    stream: &mut impl Write,
+    frame_type: u8,
+    flags: u8,
+    stream_id: u32,
+    payload: &[u8],
+) -> bool {
+    if frame_type == H2_FRAME_SETTINGS && stream_id == 0 && flags & H2_FLAG_ACK == 0 {
+        write_h2_frame(stream, H2_FRAME_SETTINGS, H2_FLAG_ACK, 0, &[]);
+        stream.flush().expect("SETTINGS acknowledgement should flush");
+        return true;
+    }
+    if frame_type == H2_FRAME_PING && stream_id == 0 && flags & H2_FLAG_ACK == 0 {
+        assert_eq!(
+            payload.len(),
+            8,
+            "HTTP/2 PING payload must be exactly eight octets"
+        );
+        write_h2_frame(stream, H2_FRAME_PING, H2_FLAG_ACK, 0, payload);
+        stream.flush().expect("PING acknowledgement should flush");
+        return true;
+    }
+    false
+}
+
 fn parse_goaway(payload: &[u8]) -> (u32, u32) {
     assert!(
         payload.len() >= 8,
@@ -432,9 +458,7 @@ fn sigterm_h2_goaway_drains_admitted_streams_and_bounds_new_work() {
     let mut initial_goaway = None;
     for _ in 0..64 {
         let (frame_type, flags, stream_id, payload) = read_h2_frame(&mut tls);
-        if frame_type == H2_FRAME_SETTINGS && stream_id == 0 && flags & H2_FLAG_ACK == 0 {
-            write_h2_frame(&mut tls, H2_FRAME_SETTINGS, H2_FLAG_ACK, 0, &[]);
-            tls.flush().expect("SETTINGS acknowledgement should flush");
+        if acknowledge_peer_control_frame(&mut tls, frame_type, flags, stream_id, &payload) {
             continue;
         }
         assert!(
@@ -491,9 +515,7 @@ fn sigterm_h2_goaway_drains_admitted_streams_and_bounds_new_work() {
 
     for _ in 0..128 {
         let (frame_type, flags, stream_id, payload) = read_h2_frame(&mut tls);
-        if frame_type == H2_FRAME_SETTINGS && stream_id == 0 && flags & H2_FLAG_ACK == 0 {
-            write_h2_frame(&mut tls, H2_FRAME_SETTINGS, H2_FLAG_ACK, 0, &[]);
-            tls.flush().expect("SETTINGS acknowledgement should flush");
+        if acknowledge_peer_control_frame(&mut tls, frame_type, flags, stream_id, &payload) {
             continue;
         }
         assert!(
