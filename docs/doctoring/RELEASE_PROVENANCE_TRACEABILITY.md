@@ -8,7 +8,7 @@ Proposed release-evidence increment. This document covers cryptographically sign
 
 PR #90 proves that two clean builds from one exact source, lock file, verified Rust 1.98.1 compiler, controlled Cargo configuration hierarchy, stable source timestamp, and canonical build path produce byte-identical gateway binaries. Byte equality alone does not authenticate who built those bytes, which workflow produced them, or which source digest the builder was executing.
 
-A promotion candidate therefore still needs provenance whose signature identity is outside ordinary workflow-controlled predicate data. GitHub artifact attestations use an Actions OIDC identity and Sigstore-issued signing certificate, associate the resulting in-toto/SLSA statement with the repository, and support verification of repository, signer workflow, source digest, signer digest, and runner class.
+A promotion candidate therefore still needs provenance whose signature identity is outside ordinary workflow-controlled predicate data. GitHub artifact attestations use an Actions OIDC identity and Sigstore-issued signing certificate, associate the resulting in-toto/SLSA statement with the repository, and support verification of repository, exact certificate SubjectAlternativeName, source digest, signer digest, and runner class.
 
 ## Constraints and alternatives
 
@@ -26,7 +26,9 @@ The first complete hosted semantic attempt was exact `93b6b3fefc3981fd6dbf687316
 
 That failure exposed an identity-model defect in the initial verifier, not an attestation or binary-reproducibility failure. For a `pull_request` workflow, `github.event.pull_request.head.sha` identifies the exact source revision intentionally checked out and built, while `github.sha` identifies the synthetic PR merge commit whose workflow identity is encoded in the OIDC/Sigstore signing certificate. Binding both `source-digest` and `signer-digest` to the PR head therefore rejects a valid attestation and, more importantly, models two distinct authorities as if they were one.
 
-The causal repair keeps `EXPECTED_SHA=${{ github.event.pull_request.head.sha || github.sha }}` as source authority and introduces `SIGNER_SHA=${{ github.sha }}` as workflow-signer authority. `gh attestation verify` continues to require `source-digest=$EXPECTED_SHA`, but now requires `signer-digest=$SIGNER_SHA`. On protected-branch push runs the two naturally collapse to the same protected commit; on PR runs they intentionally remain distinct. The reproducibility receipt records both identities so later release evidence cannot silently conflate them.
+The first causal repair kept `EXPECTED_SHA=${{ github.event.pull_request.head.sha || github.sha }}` as source authority and introduced `SIGNER_SHA=${{ github.sha }}` as workflow-signer authority. A requested technical review then identified a second, valid identity-binding gap: path-only `--signer-workflow` is weaker than an exact certificate SAN policy and can be vulnerable to pattern-matching ambiguity in verifier implementations. The stronger repair removes that path-pattern check and sets `CERT_IDENTITY=https://github.com/${{ github.repository }}/.github/workflows/release-reproducibility.yml@${{ github.ref }}`. Verification now uses `--cert-identity=$CERT_IDENTITY`, whose GitHub CLI contract is an exact SubjectAlternativeName match, while independently retaining `source-digest=$EXPECTED_SHA`, `signer-digest=$SIGNER_SHA`, and hosted-runner denial.
+
+On protected-branch push runs, source and signer SHA naturally collapse to the same protected commit and the certificate identity ends in `@refs/heads/main`. On PR runs, source SHA remains the explicitly built PR head while signer SHA and certificate ref identify GitHub's synthetic `refs/pull/<n>/merge` execution identity. The reproducibility receipt records all three identities so later release evidence cannot silently conflate them.
 
 ## Selected acceptance
 
@@ -36,15 +38,17 @@ A current exact head is provenance-GREEN only when all of the following hold:
 2. both release binaries are byte-identical before attestation starts;
 3. `actions/attest` is pinned to exact commit `1e69f48acb82d1966a394da916b4c1698aa569d6` and receives both release binaries as subjects;
 4. GitHub OIDC/Sigstore provenance generation succeeds with `id-token`, `attestations`, and artifact-metadata write authority but read-only repository contents;
-5. `gh attestation verify` succeeds separately for both binaries while enforcing this repository, this exact signer workflow, `source-digest=$EXPECTED_SHA`, `signer-digest=$SIGNER_SHA`, and denial of self-hosted-runner provenance;
-6. the receipt records the exact source and signer identities used for verification;
+5. `gh attestation verify` succeeds separately for both binaries while enforcing this repository, an exact certificate SAN for this workflow and current GitHub ref, `source-digest=$EXPECTED_SHA`, `signer-digest=$SIGNER_SHA`, and denial of self-hosted-runner provenance;
+6. the receipt records the exact source SHA, signer SHA, and certificate identity used for verification;
 7. normal CI, Supply Chain, capacity, TLS/H2 performance, reproducibility, review-thread, and governance evidence remain exact-current.
 
 ## Risk and interpretation
 
-A GREEN result authenticates the exact candidate binaries to a GitHub Actions workflow identity and separately binds the built source digest and workflow-signer digest using GitHub's OIDC/Sigstore attestation system. GitHub CLI documentation notes that certificate identity and verified timestamps are the portions not controlled by workflow-authored predicate content; the selected verification therefore binds actor identity rather than trusting predicate fields alone.
+A GREEN result authenticates the exact candidate binaries to a GitHub Actions workflow certificate identity and separately binds the built source digest and workflow-signer digest using GitHub's OIDC/Sigstore attestation system. GitHub CLI documents `--cert-identity` as an exact match against the certificate SubjectAlternativeName. This avoids relying on a looser workflow-path matcher for the strongest actor-identity assertion.
 
-For PR evidence, a successful signer-digest check authenticates the synthetic merge commit under which GitHub executed the workflow, while the source-digest check authenticates the explicit PR-head source revision that this workflow checked out and built. Neither identity is substituted for the other.
+For PR evidence, a successful signer-digest check authenticates the synthetic merge commit under which GitHub executed the workflow, the exact certificate identity authenticates the workflow file plus `refs/pull/<n>/merge`, and the source-digest check authenticates the explicit PR-head source revision that this workflow checked out and built. None of these identities is substituted for another.
+
+GitHub CLI documentation notes that certificate identity and verified timestamps are the portions not controlled by workflow-authored predicate content. The selected policy therefore bases actor identity on the certificate and treats ordinary predicate fields as additional build/source evidence, not as a substitute for the signing identity.
 
 This remains candidate provenance. It does not make a mutable PR artifact an immutable product release, does not establish that a second independent builder reproduces the bytes, and does not prove deployment provenance. Version/CHANGELOG/tag/package identity, immutable release publication, release-asset verification, representative NUMA evidence, supplier release qualification, rollback, shadow/canary, cutover, and legacy removal remain later gates.
 
@@ -52,15 +56,15 @@ This remains candidate provenance. It does not make a mutable PR artifact an imm
 
 - GitHub documents artifact attestations as signed attestations that establish where and how build artifacts were produced. Current guidance uses `actions/attest@v4` and requires OIDC and attestation write permissions.
 - The current `actions/attest` documentation states that public repositories use the Sigstore public-good instance and that provenance mode emits SLSA build provenance when no custom predicate or SBOM mode is selected.
-- GitHub CLI `gh attestation verify` validates artifact integrity, predicate type, repository/owner identity, and optionally signer workflow, signer digest, source digest, OIDC issuer, and runner class. GitHub recommends specifying signer workflow identity as precisely as possible.
-- GitHub Actions defines `github.sha` for `pull_request` workflows as the last merge commit on the PR merge branch, while the pull request head SHA is available separately from the event payload. The provenance lane therefore keeps source and signer commit identities distinct on PR runs.
-- GitHub CLI warns that ordinary provenance predicate data can be manipulated by the originating workflow; certificate identity and verified timestamps have different trust properties. This lane therefore relies on certificate-bound actor/source verification rather than custom predicate claims.
+- GitHub CLI `gh attestation verify` validates artifact integrity, predicate type, repository/owner identity, and optionally exact certificate identity, signer digest, source digest, OIDC issuer, and runner class. `--cert-identity` requires the certificate SubjectAlternativeName to match the supplied value exactly.
+- GitHub Actions defines `GITHUB_SHA` for `pull_request` workflows as the last merge commit on the PR merge branch, while the pull request head SHA is available separately from the event payload. The provenance lane therefore keeps source and signer commit identities distinct on PR runs.
+- GitHub CLI warns that ordinary provenance predicate data can be manipulated by the originating workflow; certificate identity and verified timestamps have different trust properties. This lane therefore relies on certificate-bound actor identity rather than custom predicate claims.
 
 ## References
 
 GitHub, Inc. (2026). *Using artifact attestations to establish provenance for builds*. GitHub Docs. https://docs.github.com/en/actions/how-tos/secure-your-work/use-artifact-attestations/use-artifact-attestations
 
-GitHub, Inc. (2026). *Contexts reference*. GitHub Docs. https://docs.github.com/en/actions/reference/workflows-and-actions/contexts
+GitHub, Inc. (2026). *Events that trigger workflows*. GitHub Docs. https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows
 
 GitHub, Inc. (2026). *gh attestation verify*. GitHub CLI Manual. https://cli.github.com/manual/gh_attestation_verify
 
