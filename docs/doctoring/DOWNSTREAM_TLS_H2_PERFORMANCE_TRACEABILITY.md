@@ -20,7 +20,7 @@ The custom fresh buyer-path metric deliberately adds connection establishment an
 
 `tests/load/run_tls_h2_performance.sh` issues an ephemeral local CA and an IP-SAN server certificate, starts version-2 generic gateway candidates with `h2_http1`, and runs k6 against `https://127.0.0.1`. Certificate verification remains enabled through the local CA; the harness does not use `insecureSkipTLSVerify`. The origin remains the bounded Rust load fixture with keep-alive enabled so the comparison changes downstream connection behavior rather than intentionally adding upstream churn.
 
-`.github/workflows/tls-h2-performance.yml` builds the exact source SHA in release mode, compiles the bounded Rust origin with optimization, installs the same checksum-pinned k6 2.2.0 identity used by the repository load lane, validates the harness, runs both modes, and uploads both JSON summaries under an exact-SHA artifact name.
+`.github/workflows/tls-h2-performance.yml` builds the exact source SHA in release mode, compiles the bounded Rust origin with optimization, installs the same checksum-pinned k6 2.2.0 identity used by the repository load lane, validates the harness, runs both modes, and uploads both JSON summaries under an exact-SHA artifact name. Before any Cargo build it installs, selects, and verifies the repository release compiler identity, Rust 1.98.1. `tests/tls_h2_performance_toolchain_contract.rs` prevents this release-producing lane from silently falling back to Rust 1.98.0, an override, or a command-local Cargo toolchain selector. A receipt produced with a non-authoritative release compiler can remain useful for diagnosis, but it is not promotion or release evidence.
 
 ## Interpretation and non-claims
 
