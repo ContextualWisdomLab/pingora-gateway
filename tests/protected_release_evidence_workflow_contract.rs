@@ -9,12 +9,10 @@ fn protected_release_evidence_runs_only_as_an_explicit_main_dispatch() {
     assert!(PROTECTED_RELEASE_EVIDENCE_WORKFLOW.contains("workflow_dispatch:"));
     assert!(!PROTECTED_RELEASE_EVIDENCE_WORKFLOW.contains("pull_request:"));
     assert!(!PROTECTED_RELEASE_EVIDENCE_WORKFLOW.contains("push:"));
-    assert!(PROTECTED_RELEASE_EVIDENCE_WORKFLOW.contains(
-        "test \"$GITHUB_REF\" = \"refs/heads/main\""
-    ));
-    assert!(PROTECTED_RELEASE_EVIDENCE_WORKFLOW.contains(
-        "test \"$(git rev-parse HEAD)\" = \"$SOURCE_SHA\""
-    ));
+    assert!(PROTECTED_RELEASE_EVIDENCE_WORKFLOW
+        .contains("test \"$GITHUB_REF\" = \"refs/heads/main\""));
+    assert!(PROTECTED_RELEASE_EVIDENCE_WORKFLOW
+        .contains("test \"$(git rev-parse HEAD)\" = \"$SOURCE_SHA\""));
 }
 
 #[test]
@@ -71,8 +69,9 @@ fn bundle_requires_protected_source_identity_and_binary_provenance() {
 }
 
 #[test]
-fn bundle_is_digest_bound_and_remains_explicitly_unpublished() {
+fn bundle_is_digest_bound_executable_and_explicitly_unpublished() {
     for required in [
+        "chmod 0755",
         "evidence_kind=protected-source-release-evidence-bundle",
         "publication_state=unpublished",
         "SHA256SUMS",
@@ -81,6 +80,8 @@ fn bundle_is_digest_bound_and_remains_explicitly_unpublished() {
         "--owner=0",
         "--group=0",
         "--numeric-owner",
+        "-cf -",
+        "gzip -n",
     ] {
         assert!(
             PROTECTED_RELEASE_EVIDENCE_WORKFLOW.contains(required),
