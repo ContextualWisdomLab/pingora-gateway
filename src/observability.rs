@@ -8,7 +8,9 @@ use std::sync::LazyLock;
 
 use log::info;
 use pingora::prelude::{Error, Session};
-use pingora_prometheus::prometheus::{register_int_counter, IntCounter};
+use pingora_prometheus::prometheus::{
+    register_int_counter, register_int_counter_vec, IntCounter, IntCounterVec,
+};
 
 /// Stable low-cardinality outcome for one completed downstream request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,15 +65,29 @@ impl RequestObservation {
             REQUEST_ERRORS_TOTAL.inc();
         }
 
-        let outcome = match self.outcome {
-            RequestOutcome::Ok => "ok",
-            RequestOutcome::Error => "error",
-        };
+        let outcome = outcome_label(self.outcome);
         info!(
             "gateway_request status={} outcome={outcome} request_body_bytes={}",
             self.status, self.request_body_bytes
         );
     }
+}
+
+fn outcome_label(outcome: RequestOutcome) -> &'static str {
+    match outcome {
+        RequestOutcome::Ok => "ok",
+        RequestOutcome::Error => "error",
+    }
+}
+
+fn transport_labels(
+    is_http2: bool,
+    has_tls: bool,
+    outcome: RequestOutcome,
+) -> [&'static str; 3] {
+    let protocol = if is_http2 { "h2" } else { "h1" };
+    let transport = if has_tls { "tls" } else { "cleartext" };
+    [outcome_label(outcome), protocol, transport]
 }
 
 fn register_counter(name: &'static str, help: &'static str) -> IntCounter {
@@ -107,11 +123,40 @@ static BACKPRESSURE_REJECTIONS_TOTAL: LazyLock<IntCounter> = LazyLock::new(|| {
     )
 });
 
+static REQUESTS_BY_TRANSPORT_TOTAL: LazyLock<IntCounterVec> = LazyLock::new(|| {
+    let metric = register_int_counter_vec!(
+        "cwl_pingora_gateway_requests_by_transport_total",
+        "Completed downstream requests partitioned by bounded transport facts",
+        &["outcome", "protocol", "transport"]
+    )
+    .unwrap_or_else(|error| {
+        panic!("gateway transport request metric must register exactly once: {error}")
+    });
+
+    for outcome in ["ok", "error"] {
+        for protocol in ["h1", "h2"] {
+            for transport in ["cleartext", "tls"] {
+                metric.with_label_values(&[outcome, protocol, transport]);
+            }
+        }
+    }
+    metric
+});
+
 pub(crate) fn record_request(session: &Session, error: Option<&Error>, request_body_bytes: u64) {
     let status = session
         .response_written()
         .map_or(0, |response| response.status.as_u16());
-    RequestObservation::from_parts(status, error.is_some(), request_body_bytes).record();
+    let observation = RequestObservation::from_parts(status, error.is_some(), request_body_bytes);
+    let has_tls = session
+        .digest()
+        .and_then(|digest| digest.ssl_digest.as_ref())
+        .is_some();
+    let labels = transport_labels(session.is_http2(), has_tls, observation.outcome());
+    REQUESTS_BY_TRANSPORT_TOTAL
+        .with_label_values(&labels)
+        .inc();
+    observation.record();
 }
 
 pub(crate) fn record_backpressure_rejection() {
@@ -122,7 +167,9 @@ pub(crate) fn record_backpressure_rejection() {
 mod tests {
     use std::panic;
 
-    use super::{register_counter, RequestObservation, RequestOutcome};
+    use super::{
+        outcome_label, register_counter, transport_labels, RequestObservation, RequestOutcome,
+    };
 
     #[test]
     fn request_observation_maps_error_state_without_payload_fields() {
@@ -137,6 +184,28 @@ mod tests {
         assert_eq!(
             RequestObservation::from_parts(503, true, 0).outcome(),
             RequestOutcome::Error
+        );
+    }
+
+    #[test]
+    fn transport_labels_are_finite_transport_facts_only() {
+        assert_eq!(outcome_label(RequestOutcome::Ok), "ok");
+        assert_eq!(outcome_label(RequestOutcome::Error), "error");
+        assert_eq!(
+            transport_labels(false, false, RequestOutcome::Ok),
+            ["ok", "h1", "cleartext"]
+        );
+        assert_eq!(
+            transport_labels(false, true, RequestOutcome::Error),
+            ["error", "h1", "tls"]
+        );
+        assert_eq!(
+            transport_labels(true, false, RequestOutcome::Error),
+            ["error", "h2", "cleartext"]
+        );
+        assert_eq!(
+            transport_labels(true, true, RequestOutcome::Ok),
+            ["ok", "h2", "tls"]
         );
     }
 
