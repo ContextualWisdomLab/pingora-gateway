@@ -9,8 +9,9 @@ fn protected_release_evidence_runs_only_as_an_explicit_main_dispatch() {
     assert!(PROTECTED_RELEASE_EVIDENCE_WORKFLOW.contains("workflow_dispatch:"));
     assert!(!PROTECTED_RELEASE_EVIDENCE_WORKFLOW.contains("pull_request:"));
     assert!(!PROTECTED_RELEASE_EVIDENCE_WORKFLOW.contains("push:"));
-    assert!(PROTECTED_RELEASE_EVIDENCE_WORKFLOW
-        .contains("test \"$GITHUB_REF\" = \"refs/heads/main\""));
+    assert!(
+        PROTECTED_RELEASE_EVIDENCE_WORKFLOW.contains("test \"$GITHUB_REF\" = \"refs/heads/main\"")
+    );
     assert!(PROTECTED_RELEASE_EVIDENCE_WORKFLOW
         .contains("test \"$(git rev-parse HEAD)\" = \"$SOURCE_SHA\""));
 }
@@ -89,9 +90,8 @@ fn bundle_is_digest_bound_executable_and_explicitly_unpublished() {
         );
     }
 
-    assert!(PROTECTED_RELEASE_EVIDENCE_WORKFLOW.contains(&format!(
-        "uses: actions/checkout@{CHECKOUT_ACTION_SHA}"
-    )));
+    assert!(PROTECTED_RELEASE_EVIDENCE_WORKFLOW
+        .contains(&format!("uses: actions/checkout@{CHECKOUT_ACTION_SHA}")));
     assert!(PROTECTED_RELEASE_EVIDENCE_WORKFLOW.contains(&format!(
         "uses: actions/upload-artifact@{UPLOAD_ARTIFACT_ACTION_SHA}"
     )));
