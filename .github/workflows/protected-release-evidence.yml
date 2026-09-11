@@ -112,8 +112,8 @@ jobs:
             mapfile -t field_lines < <(
               awk -F= -v expected_key="$key" '$1 == expected_key { print $0 }' "$receipt"
             )
-            test "${#field_lines[@]}" -eq 1
-            test "${field_lines[0]}" = "${key}=${expected_value}"
+            test "${#field_lines[@]}" -eq 1 || return 1
+            test "${field_lines[0]}" = "${key}=${expected_value}" || return 1
           }
 
           verify_receipt_digest() {
@@ -133,7 +133,7 @@ jobs:
                 }
               ' "$receipt"
             )
-            test "${#digest_lines[@]}" -eq 1
+            test "${#digest_lines[@]}" -eq 1 || return 1
             (
               cd "$root"
               printf '%s\n' "${digest_lines[0]}" | sha256sum --check --strict -
