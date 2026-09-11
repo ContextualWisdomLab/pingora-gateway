@@ -17,7 +17,11 @@ pub const V1_MAX_UPSTREAM_ATTEMPTS: usize = 1;
 /// Compatibility worker count used by version-1 configs that predate explicit topology control.
 pub const V1_DEFAULT_SERVICE_THREADS: usize = 1;
 
-/// Time allowed after SIGTERM before runtime shutdown begins.
+/// Time between Pingora broadcasting service shutdown and beginning runtime shutdown.
+///
+/// Services observe the shutdown watch before this process-level sleep. An HTTP/2 connection can
+/// therefore enqueue its initial graceful GOAWAY immediately while admitted or racing streams keep
+/// draining during this interval. This value is not an artificial delay before GOAWAY emission.
 pub const V1_GRACE_PERIOD_SECONDS: u64 = 5;
 
 /// Timeout passed to each Pingora service runtime after the grace period.
