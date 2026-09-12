@@ -8,6 +8,7 @@
 pub mod edge_contract;
 pub mod edge_routing;
 pub mod gateway_proxy;
+pub mod http_policy;
 pub mod pingora_delivery;
 pub mod runtime_policy;
 pub mod startup;
