@@ -52,6 +52,13 @@ fn pages_artifact_and_public_site_are_bound_to_exact_source() {
         "EXPECTED_SHA: ${{ github.sha }}",
         "source-sha.txt",
         "Published Pages source identity did not converge",
+        "marker_file=\"$(mktemp)\"",
+        "trap 'rm -f \"$marker_file\"' EXIT",
+        "marker_status=\"$(curl",
+        "root_status=\"$(curl",
+        "[ \"$marker_status\" = \"200\" ]",
+        "[ \"$(cat \"$marker_file\")\" = \"$EXPECTED_SHA\" ]",
+        "[ \"$root_status\" = \"200\" ]",
     ] {
         assert!(
             yaml.contains(expected),
@@ -80,9 +87,10 @@ fn pages_artifact_and_public_site_are_bound_to_exact_source() {
         2,
         "both public verification requests must reject cross-origin redirect substitution"
     );
-    assert!(
-        yaml.contains("if observed_sha=\"$(curl"),
-        "marker verification must branch on curl success before trusting response bytes"
+    assert_eq!(
+        yaml.matches("--write-out '%{http_code}'").count(),
+        2,
+        "both public verification requests must prove an explicit HTTP 200 response"
     );
     assert!(
         !yaml.contains("2>/dev/null || true"),
