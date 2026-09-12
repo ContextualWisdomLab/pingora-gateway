@@ -45,12 +45,17 @@ fn pages_artifact_and_public_site_are_bound_to_exact_source_and_rendered_root() 
         "source: ./docs",
         "destination: ./_site",
         "build_revision: ${{ github.sha }}",
+        "id: artifact_identity",
+        "outputs:\n      index_sha256: ${{ steps.artifact_identity.outputs.index_sha256 }}",
         "printf '%s\\n' \"$GITHUB_SHA\" > _site/source-sha.txt",
-        "sha256sum _site/index.html | awk '{print $1}' > _site/index-sha256.txt",
+        "root_sha=\"$(sha256sum _site/index.html | awk '{print $1}')\"",
+        "printf '%s\\n' \"$root_sha\" > _site/index-sha256.txt",
+        "printf 'index_sha256=%s\\n' \"$root_sha\" >> \"$GITHUB_OUTPUT\"",
         "path: ./_site",
         "name: github-pages",
         "url: ${{ steps.deployment.outputs.page_url }}",
         "EXPECTED_SHA: ${{ github.sha }}",
+        "EXPECTED_ROOT_SHA: ${{ needs.build.outputs.index_sha256 }}",
         "source-sha.txt",
         "index-sha256.txt",
         "Published Pages source identity and rendered root did not converge",
@@ -65,10 +70,10 @@ fn pages_artifact_and_public_site_are_bound_to_exact_source_and_rendered_root() 
         "[ \"$(cat \"$marker_file\")\" = \"$EXPECTED_SHA\" ]",
         "[ \"$root_digest_status\" = \"200\" ]",
         "grep -Eq '^[0-9a-f]{64}$' \"$root_digest_file\"",
+        "[ \"$(cat \"$root_digest_file\")\" = \"$EXPECTED_ROOT_SHA\" ]",
         "[ \"$root_status\" = \"200\" ]",
         "observed_root_sha=\"$(sha256sum \"$root_file\" | awk '{print $1}')\"",
-        "expected_root_sha=\"$(cat \"$root_digest_file\")\"",
-        "[ \"$observed_root_sha\" = \"$expected_root_sha\" ]",
+        "[ \"$observed_root_sha\" = \"$EXPECTED_ROOT_SHA\" ]",
     ] {
         assert!(
             yaml.contains(expected),
@@ -76,6 +81,10 @@ fn pages_artifact_and_public_site_are_bound_to_exact_source_and_rendered_root() 
         );
     }
 
+    assert!(
+        !yaml.contains("expected_root_sha=\"$(cat \"$root_digest_file\")\""),
+        "the public digest file must not be the sole authority for the expected rendered-root digest"
+    );
     assert_eq!(
         yaml.matches("curl --fail --silent --show-error --location")
             .count(),
