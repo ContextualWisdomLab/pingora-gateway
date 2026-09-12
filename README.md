@@ -6,7 +6,7 @@
 
 Pingora Gateway centralizes edge concerns that should not be reimplemented independently by every product: upstream connection handling, bounded transport policy, request-size and in-flight limits, health/readiness, coarse telemetry, and container hardening. It is built on Cloudflare Pingora while exposing its own reviewed configuration contract to consumers instead of leaking Pingora types into product APIs.
 
-> This README describes the current candidate branch. Protected `main` remains shipped authority until this Draft satisfies current review, security, supply-chain, and integration governance.
+> This README describes the current candidate branch. Protected `main` remains shipped authority until the dependency-ordered stack satisfies current review, security, supply-chain, and integration governance.
 
 ## Why it exists
 
@@ -15,13 +15,14 @@ Shared infrastructure is useful only when it reduces duplication **without absor
 | Need | What the current gateway provides |
 | --- | --- |
 | Edge runtime | Executable Rust/Pingora reverse-proxy path |
-| Explicit upstream | One reviewed HTTP or HTTPS upstream in the v1 configuration contract |
+| Explicit upstream | One reviewed HTTP or HTTPS upstream in the generic v1/v2 configuration contract |
+| Downstream transport | Cleartext generic v1 plus opt-in generic v2 TLS with `h2_http1` ALPN; bounded pg-erd v3 uses the same TLS/H2 boundary |
 | Bounded I/O | Connect/read/write/idle, request-body, process in-flight, and upstream keepalive-pool budgets |
 | Backpressure | Fail-fast HTTP 503 when the configured non-health in-flight budget is exhausted; health remains observable |
 | Forwarding safety | Distrust of client-supplied forwarding identity and hop-by-hop header policy |
 | Operations | `/livez`, `/readyz`, low-cardinality Prometheus metrics, and coarse credential-safe access logs |
 | Container boundary | Non-root runtime, read-only-root compatibility, dropped Linux capabilities, and `no-new-privileges` contract |
-| Reproducibility | Locked Rust dependency graph and immutable Pingora git revision |
+| Reproducibility | Locked Rust dependency graph and exact Pingora `0.9.0` registry dependencies |
 
 ## Product boundary
 
@@ -44,7 +45,7 @@ Pingora Gateway does **not** own product authentication, tenant/business routing
 
 ## Quickstart
 
-The current crate is `cwl-pingora-gateway` `0.1.0`, requires Rust 1.98.0, and pins Pingora `0.8.0` to an immutable upstream revision.
+The current crate is `cwl-pingora-gateway` `0.1.0`, declares Rust 1.98.0 as its branch MSRV, and uses exact registry dependencies `pingora = 0.9.0` and `pingora-prometheus = 0.9.0`. The protected-release promotion graph separately requires the Rust 1.98.1 compiler foundation before release evidence can be credited.
 
 Copy the example configuration, point the single upstream at a service you control, choose explicit positive `max_in_flight_requests` and `upstream_keepalive_pool_size` budgets, and run the gateway:
 
@@ -53,7 +54,9 @@ cp examples/gateway.yaml ./gateway.yaml
 cargo run --locked --bin cwl-pingora-gateway -- --config ./gateway.yaml
 ```
 
-The configuration is fail-closed: unknown fields, unsupported versions, listener collisions, zero body/concurrency/keepalive budgets or timeouts, multiple v1 upstreams, and incomplete TLS identity are rejected rather than normalized into a guessed configuration.
+The configuration is fail-closed: unknown fields, unsupported versions, listener collisions, zero body/concurrency/keepalive budgets or timeouts, multiple generic upstreams, and invalid or incomplete TLS declarations are rejected rather than normalized into a guessed configuration.
+
+Generic version 1 is cleartext. Generic version 2 retains the same one-upstream/runtime invariants and requires downstream certificate-chain/private-key references plus the explicit `h2_http1` ALPN policy. The bounded pg-erd migration profile remains a separate process/configuration root: versions 1 and 2 are cleartext, while version 3 adds the same downstream TLS/H2 boundary. Certificate issuance, renewal, ACME, revocation workflow, backup and private-key custody remain outside this repository.
 
 Check the local process separately for liveness and readiness:
 
@@ -68,10 +71,10 @@ See [`API_CONFIG_CONTRACT.md`](API_CONFIG_CONTRACT.md) for the configuration con
 
 ## Security and traffic behavior
 
-The v1 gateway starts from distrust at the edge:
+The gateway starts from distrust at the edge:
 
 - inbound `Forwarded`, `X-Forwarded-*`, and `X-Real-IP` identity is discarded;
-- the current cleartext downstream listener does not invent a trusted client IP;
+- no current generic version invents a trusted client identity from request headers; TLS-enabled configurations derive `https` from the admitted listener transport rather than hostile forwarding input;
 - hop-by-hop and connection-nominated request headers are removed by the upstream policy;
 - body, in-flight request, upstream keepalive-pool, and upstream-I/O budgets are explicit;
 - metrics use low-cardinality labels and should be exposed only on an access-controlled observability network;
@@ -87,21 +90,23 @@ This is an OCI **build/runtime contract**, not evidence of a published productio
 
 ## Integration maturity
 
-The current v1 surface is intentionally narrow: one traffic listener, one metrics listener, and one upstream. Route tables, product-aware load balancing, WebSocket policy, dynamic reload, downstream TLS termination, ACME, Kubernetes Gateway API, and broader migration parity remain future increments that require a real consumer and executable acceptance evidence.
+The current generic surface remains intentionally narrow: one traffic listener, one metrics listener, and one explicit upstream per process. Generic v1 stays cleartext; generic v2 adds only downstream TLS/H2 transport. The separate pg-erd composition root characterizes its bounded migration routing/HTTP-policy behavior without turning the generic contract into a product route language.
+
+WebSocket/HTTP Upgrade, HTTP/2 Extended CONNECT, h2c, HTTP/3/QUIC, generic load balancing, dynamic reload, ACME/certificate lifecycle, and Kubernetes Gateway API remain separate versioned increments. Complete H2-downstream to H1-upstream parity is also still gated by release-qualified supplier disposition of the tracked Cookie and zero-length body-framing roots; mutable upstream contributor branches are evidence, not dependencies.
 
 Existing Nginx or Traefik use in another repository is not automatically a Pingora migration candidate. Static serving, PHP/FastCGI, certificate management, application routing, and product-specific ingress may belong to other boundaries.
 
 ## Supply-chain and licensing posture
 
-The crate's dependency policy permits a reviewed commercial-friendly set including Apache-2.0, MIT, BSD, ISC, CC0-1.0, OpenSSL, Unicode-3.0, and Zlib families; unknown registries/git sources and wildcard dependencies are denied. Pingora and `pingora-prometheus` are pinned to exact version `0.8.0` plus an immutable Cloudflare git revision.
+The crate's dependency policy permits a reviewed commercial-friendly set including Apache-2.0, MIT, BSD, ISC, CC0-1.0, OpenSSL, Unicode-3.0, and Zlib families; unknown registries/git sources and wildcard dependencies are denied. Pingora and `pingora-prometheus` are exact registry dependencies at `0.9.0`, with the committed `Cargo.lock` defining the resolved candidate graph.
 
-Cloudflare Pingora is Apache-2.0 licensed. This repository's own crate metadata is also Apache-2.0, and the root [`LICENSE`](LICENSE) now carries that grant. Third-party dependencies retain their own license and attribution obligations; the repository license does not replace dependency provenance.
+Cloudflare Pingora is Apache-2.0 licensed. This repository's own crate metadata is also Apache-2.0, and the root [`LICENSE`](LICENSE) carries that grant. Third-party dependencies retain their own license and attribution obligations; the repository license does not replace dependency provenance.
 
-Current supply-chain policy still reports inherited maintenance concerns from the pinned framework rather than relabeling them as vulnerabilities or suppressing real vulnerability/unsoundness findings. See [`deny.toml`](deny.toml) and the current supply-chain workflow for the executable policy.
+Current supply-chain policy still reports inherited maintenance concerns from the framework dependency graph rather than relabeling them as vulnerabilities or suppressing real vulnerability/unsoundness findings. In particular, the current Pingora 0.9.0 graph still carries the separately tracked `derivative 2.2.0 / RUSTSEC-2024-0388` supplier root, so no release-ready dependency claim is made here. See [`deny.toml`](deny.toml) and the current supply-chain workflow for the executable policy.
 
 ## Quality and status
 
-This is a **0.1.0 candidate / Draft** product line, not a released gateway. The branch contains locked format/test/Clippy/doc builds, compiled-binary loopback E2E including saturation/recovery, OCI security acceptance, security/SAST lanes, and explicit supply-chain policy. Public Rust API documentation is a build gate via `#![deny(missing_docs)]` and `RUSTDOCFLAGS="-D warnings"`.
+This is a **0.1.0 candidate**, not a released gateway. The candidate stack contains locked format/test/Clippy/doc builds, compiled-binary traffic E2E including saturation/recovery and TLS/H2 slices, OCI security acceptance, security/SAST lanes, and explicit supply-chain/release-evidence controls. Those successor results do not override unresolved supplier, governance, protected-integration, publication, deployment, or cutover gates. Public Rust API documentation is a build gate via `#![deny(missing_docs)]` and `RUSTDOCFLAGS="-D warnings"`.
 
 Run the core local checks with:
 
