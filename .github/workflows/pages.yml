@@ -86,9 +86,9 @@ jobs:
             *) echo "Pages URL must use HTTPS" >&2; exit 1 ;;
           esac
           for attempt in $(seq 1 12); do
-            observed_sha="$(curl --fail --silent --show-error --location --max-time 10 "${PAGE_URL%/}/source-sha.txt" 2>/dev/null || true)"
+            observed_sha="$(curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --max-time 10 "${PAGE_URL%/}/source-sha.txt" 2>/dev/null || true)"
             if [ "$observed_sha" = "$EXPECTED_SHA" ]; then
-              curl --fail --silent --show-error --location --max-time 10 "${PAGE_URL%/}/" >/dev/null
+              curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --max-time 10 "${PAGE_URL%/}/" >/dev/null
               exit 0
             fi
             sleep 5
