@@ -37,7 +37,7 @@ The HTTPS migration increment SHALL preserve cleartext semantics of earlier Admi
 - preserve product auth/business routing, Keyverse identity and Wardnet/EgressWeave authority boundaries; and
 - prove the admitted path with real TLS sockets and exact-head evidence.
 
-Basic TLS/H2 listener capability is not complete HTTP/2 parity. Issue #51 remains the product acceptance authority for parallel streams, reset/cancellation, GOAWAY/drain, header/body admission, flow control/backpressure, origin failure/recovery, forwarding trust and cutover observability. H2-downstream to H1-upstream Cookie and zero-length body-framing correctness remain gated by release-qualified supplier disposition of `cloudflare/pingora#901` and `#936`.
+Basic TLS/H2 listener capability is not complete HTTP/2 parity. Issue #51 remains the product acceptance authority for parallel streams, reset/cancellation, GOAWAY/drain, header/body admission, flow control/backpressure, origin failure/recovery, forwarding trust and cutover observability. H2-downstream to H1-upstream Cookie correctness remains gated until `cloudflare/pingora#901` is present in a maintainer-integrated, release-qualified supplier identity or an alternate deployment contract makes that downgrade path unreachable. Zero-length body-framing correctness is a separate gate currently represented by open alternatives `cloudflare/pingora#936` and `#976` (or a maintainer successor) and likewise requires a maintainer-integrated, release-qualified supplier identity or an alternate deployment contract that removes the affected downgrade path. Mutable contributor heads are evidence only and must not be treated as release authority.
 
 ## Non-goals
 

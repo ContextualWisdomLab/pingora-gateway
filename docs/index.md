@@ -10,9 +10,11 @@ title: Pingora Gateway
 
 ## Current status
 
-Protected `main` remains shipped authority. The active foundation candidate implements the first executable v1 runtime, but it is still Draft and is not a published release or production cutover.
+Protected `main` remains shipped authority. The active dependency-ordered candidate stack contains the generic Rust/Pingora runtime plus later TLS/H2, migration-characterization, supply-chain and protected-release-evidence increments, but it is not yet protected-integrated, published, deployed or cut over.
 
-The current candidate owns one explicit upstream, bounded transport and request budgets, fail-fast in-flight admission, forwarding-header distrust, `/livez` and `/readyz`, low-cardinality metrics, coarse credential-safe logging, upstream TLS verification, graceful drain, OCI hardening, and locked supply-chain evidence. Product authentication, business routing, certificate issuance, identity, workflow state, and domain-specific retry/failover remain external responsibilities.
+The current candidate owns one explicit generic upstream per process, bounded transport and request budgets, fail-fast in-flight admission, forwarding-header distrust, `/livez` and `/readyz`, low-cardinality metrics, coarse credential-safe logging, verified upstream TLS, opt-in downstream TLS/H2 for the admitted configuration versions, graceful drain, OCI hardening, and locked supply-chain/release-evidence controls. Product authentication, business routing, certificate issuance/lifecycle, identity, workflow state, Wardnet/EgressWeave verdicts, Keyverse authority, and domain-specific retry/failover remain external responsibilities.
+
+The branch dependency contract uses exact registry `pingora = 0.9.0` and `pingora-prometheus = 0.9.0`. That candidate graph still carries the separately tracked `derivative 2.2.0 / RUSTSEC-2024-0388` supplier root, so current successor GREEN evidence is not a release-ready dependency claim. H2-downstream to H1-upstream parity also remains gated by release-qualified supplier disposition of the tracked Cookie and zero-length body-framing roots; mutable upstream contributor branches are evidence only.
 
 ## Start here
 
@@ -23,13 +25,13 @@ The current candidate owns one explicit upstream, bounded transport and request 
 - [Releases](https://github.com/ContextualWisdomLab/pingora-gateway/releases) — immutable release evidence when one is published.
 - [Ask DeepWiki](https://deepwiki.com/ContextualWisdomLab/pingora-gateway) — repository-grounded navigation and questions.
 
-Links to candidate-only files may not resolve from `main` until the foundation integrates; the pull request remains the review authority for those bytes meanwhile.
+Links to candidate-only files may not resolve from `main` until the dependency-ordered stack integrates; the pull requests remain the review authority for those bytes meanwhile.
 
 ## License and dependency boundary
 
-Pingora Gateway original source and documentation are Apache-2.0 on the foundation candidate. Cloudflare Pingora is separately Apache-2.0 licensed, and all third-party crates, container bases, copied material, data, and assets retain their own licenses and attribution obligations. The repository license does not replace dependency provenance.
+Pingora Gateway original source and documentation are Apache-2.0 on the candidate stack. Cloudflare Pingora is separately Apache-2.0 licensed, and all third-party crates, container bases, copied material, data, and assets retain their own licenses and attribution obligations. The repository license does not replace dependency provenance.
 
-Current security/supply-chain findings are not waived by the permissive source license. The foundation remains blocked wherever exact-head security or dependency policy fails.
+Current security/supply-chain findings are not waived by the permissive source license. Promotion remains blocked wherever exact-head security, dependency, independent-review, protected-integration or release policy is unsatisfied.
 
 ## Publication truth
 

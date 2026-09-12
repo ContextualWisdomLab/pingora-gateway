@@ -70,7 +70,7 @@ Version 2 retains all version-1 generic network/runtime invariants and requires 
 
 The only admitted ALPN policy is `h2_http1`. The delivery adapter uses Pingora/OpenSSL's public ALPN callback surface to prefer `h2`, fall back to `http/1.1` only when the client actually offers it, and fail the TLS handshake for an ALPN-bearing client with no admitted protocol overlap or a malformed ALPN vector. This deliberately strengthens Pingora 0.9.0's `enable_h2()` convenience behavior to satisfy RFC 7301's fatal `no_application_protocol` requirement on no overlap. h2c is not enabled. HTTP/3/QUIC is not implied by this field and remains unsupported by this contract.
 
-A version-2 source capability is not a complete mixed-protocol parity claim. Supplier `cloudflare/pingora#901` and `#936` continue to gate H2-downstream to H1-upstream Cookie/body-framing correctness until maintainer-integrated, release-qualified identities exist or an alternate deployment contract makes those downgrade paths unreachable.
+A version-2 source capability is not a complete mixed-protocol parity claim. H2-downstream to H1-upstream Cookie correctness remains gated until `cloudflare/pingora#901` is present in a maintainer-integrated, release-qualified supplier identity or an alternate deployment contract makes that downgrade path unreachable. Zero-length body-framing correctness is tracked separately through the open `cloudflare/pingora#936` / `#976` alternatives (or a maintainer successor) and requires the same maintainer-integrated, release-qualified identity or an alternate deployment contract that removes the affected downgrade path. Mutable contributor heads are evidence only, not release authority.
 
 ## Bounded `cwl-pingora-pg-erd-migration`
 
