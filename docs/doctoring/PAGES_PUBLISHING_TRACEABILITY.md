@@ -16,6 +16,7 @@ The first publication lane is intentionally `workflow_dispatch` only. Repository
 - GitHub's Pages deployment documentation requires `pages: write` and `id-token: write` on the deploy job. Those privileges are therefore scoped to `deploy`; the build job has only `contents: read` and `pages: read`, while workflow-level permissions are empty. This prevents the build/Jekyll steps from minting an OIDC token or creating a Pages deployment.
 - Public verification must remain HTTPS and must not transfer publication evidence to a redirected origin. `curl --location` follows a redirect to a new location, including another host, while `--proto-redir` constrains only the protocol. Because the expected Git commit SHA is public, an unrelated HTTPS origin could return that marker and create false publication evidence if cross-origin redirects were accepted. Both the source-marker request and root request therefore combine HTTPS-only protocol restrictions with `--max-redirs 0`. Any redirect fails closed; an intentionally redirected Pages topology must first be represented by a canonical `page_url` or an explicit, reviewed origin-binding contract rather than being silently followed.
 - Transfer failure is part of the identity decision. The marker response is trusted only when curl itself succeeds. A previous retry form used command substitution followed by `|| true`; that could mask a redirect/transport failure while retaining response bytes from the failed transfer. If those bytes equalled the public expected SHA, they could be mistaken for successful publication evidence. The current loop branches on the curl assignment's real exit status and compares the marker only after a successful transfer.
+- HTTP status is also part of publication identity. curl `--fail` rejects response codes at 400 or greater; it does not make every non-2xx response a transfer failure. A 3xx response without a followable `Location`, for example, must not be accepted merely because its body contains the public expected SHA. The verifier writes the marker body to a temporary file, records `%{http_code}`, and accepts it only when the transfer succeeds, the code is exactly `200`, and the file content equals the expected SHA. The site-root probe independently requires exact HTTP `200` as well.
 
 ## Exact action authority
 
@@ -43,12 +44,15 @@ Source-level acceptance is encoded by `tests/pages_workflow_contract.rs` and req
 - a generated `source-sha.txt` containing the protected source SHA;
 - Pages artifact upload, deployment through `github-pages`, and public HTTPS verification of both the source marker and site root;
 - HTTPS-only initial/redirect protocol policy plus zero accepted redirects on both public verification requests, preventing transport downgrade and redirected-origin substitution;
-- preservation of curl failure status before any marker bytes are compared with the expected SHA; and
+- preservation of curl failure status before any marker bytes are compared with the expected SHA;
+- explicit HTTP `200` on both the marker and site-root fetches; and
 - serialized deployment without cancelling an in-progress publication.
 
 The redirected-origin repair was derived from a hostile case in which an initially trusted HTTPS endpoint redirected the marker request to a different HTTPS origin. The historical verifier would follow that redirect because `--proto-redir '=https'` approves the scheme, not the origin. The repaired verifier uses `--max-redirs 0`, so the same topology cannot satisfy the marker check. This is an evidence-identity boundary: the marker must be served directly by the deployment URL returned for the Pages environment, not merely by any HTTPS location reachable from it.
 
-A second hostile boundary follows from shell exit semantics. A failed curl may have emitted response bytes before returning non-zero. Masking that status with `|| true` turns the assignment into success and leaves those bytes available for comparison. The verifier therefore uses the assignment itself as the `if` condition and compares `observed_sha` only on zero exit. Retry remains available because a failed transfer simply advances to the next bounded attempt; failure is not converted into evidence.
+A second hostile boundary follows from shell exit semantics. A failed curl may have emitted response bytes before returning non-zero. Masking that status with `|| true` turns the assignment into success and leaves those bytes available for comparison. The verifier therefore uses the assignment itself as the `if` condition and compares marker bytes only on zero exit. Retry remains available because a failed transfer simply advances to the next bounded attempt; failure is not converted into evidence.
+
+A third boundary is HTTP success itself. curl documents `--fail` as returning error 22 for HTTP response codes at 400 or greater, so a syntactically successful lower status cannot be treated as proof of publication. The verifier therefore separates response bytes from `%{http_code}` and requires exact `200`. The temporary marker file is removed by an exit trap and is never compared after a failed transfer or non-200 response.
 
 Operational completion additionally requires repository-owner administration to enable GitHub Pages with GitHub Actions as the publishing source, followed by a successful manual run from protected `main`. Record the deployment run, protected source SHA, returned public URL, and the public `/source-sha.txt` value. Until that happens, the Pages gap remains open.
 
@@ -70,6 +74,6 @@ GitHub. (2026). *actions/configure-pages v6 action metadata* [Source code, commi
 
 GitHub. (2026). *actions/deploy-pages* [Documentation, v5 line]. https://github.com/actions/deploy-pages
 
-GitHub. (2026, April 10). *actions/upload-pages-artifact v5.0.0*. https://github.com/actions/upload-pages-artifact/releases/tag/v5.0.0
+GitHub. (2026, April 10). *actions/upload-pages-artifact v5.0.0*. GitHub. https://github.com/actions/upload-pages-artifact/releases/tag/v5.0.0
 
-The curl project. (n.d.). *curl man page: `--location`, `--proto-redir`, and `--max-redirs`*. https://curl.se/docs/manpage.html
+The curl project. (n.d.). *curl man page: `--fail`, `--location`, `--proto-redir`, `--max-redirs`, and `--write-out`*. https://curl.se/docs/manpage.html
