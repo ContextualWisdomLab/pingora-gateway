@@ -78,8 +78,9 @@ fn pg_erd_cloud_plan_preserves_route_and_header_contract() {
 
 #[test]
 fn migration_plan_requires_explicit_upstream_authority() {
-    let error = EdgeMigrationPlan::try_new(Vec::new(), pg_erd_routes(), pg_erd_headers())
-        .expect_err("a migration plan without upstream authority must fail closed");
+    let error =
+        EdgeMigrationPlan::try_new(Vec::new(), pg_erd_routes(), pg_erd_headers())
+            .expect_err("a migration plan without upstream authority must fail closed");
 
     assert_eq!(error, MigrationPlanError::NoUpstreams);
 }
