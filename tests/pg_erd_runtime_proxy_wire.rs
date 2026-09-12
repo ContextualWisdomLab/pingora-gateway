@@ -330,11 +330,9 @@ fn migration_proxy_callbacks_run_on_real_http_traffic() {
         b"POST /api HTTP/1.1\r\nHost: app.example\r\nContent-Length: 4\r\nConnection: close\r\n\r\ntest",
     );
     assert_status_and_policy(&small_body, 200);
-    assert!(
-        small_body
-            .to_ascii_lowercase()
-            .contains("x-forwarded-port: 80\n")
-    );
+    assert!(small_body
+        .to_ascii_lowercase()
+        .contains("x-forwarded-port: 80\n"));
 
     let declared_oversize = raw_request(
         base,
