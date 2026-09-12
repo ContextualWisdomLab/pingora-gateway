@@ -13,6 +13,7 @@ The first publication lane is intentionally `workflow_dispatch` only. Repository
 - `actions/configure-pages` `enablement: true` was rejected for this workflow: the action documents that automatic enablement requires a token other than `GITHUB_TOKEN`, with repository administration and Pages write authority for a GitHub App. Secret/admin authority is not copied into the repository merely to avoid the owner-admin handoff.
 - The workflow uses GitHub's Jekyll Pages builder because the buyer source is Markdown under `docs/`; uploading the raw directory would not prove the rendered site that users receive.
 - Deployment concurrency does not cancel an in-flight publish. A later publish may queue, but the current production deployment is allowed to finish so the externally observed source identity remains attributable.
+- GitHub's Pages deployment documentation requires `pages: write` and `id-token: write` on the deploy job. Those privileges are therefore scoped to `deploy`; the build job has only `contents: read` and `pages: read`, while workflow-level permissions are empty. This prevents the build/Jekyll steps from minting an OIDC token or creating a Pages deployment.
 
 ## Exact action authority
 
@@ -34,7 +35,7 @@ Source-level acceptance is encoded by `tests/pages_workflow_contract.rs` and req
 
 - manual dispatch with an explicit `refs/heads/main` fail-closed guard;
 - exact `github.sha` checkout and post-checkout identity verification;
-- minimum workflow permissions (`contents: read`, `pages: write`, `id-token: write`);
+- empty workflow-level permissions, build-only `contents: read` + `pages: read`, and deploy-only `pages: write` + `id-token: write`;
 - exact-SHA action pins;
 - Jekyll build from `./docs` into `./_site`;
 - a generated `source-sha.txt` containing the protected source SHA;
@@ -53,6 +54,10 @@ GitHub. (n.d.). *Configuring a publishing source for your GitHub Pages site*. Gi
 
 GitHub. (n.d.). *Using custom workflows with GitHub Pages*. GitHub Docs. https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages
 
+GitHub. (n.d.). *Workflow syntax for GitHub Actions: Defining access for the GITHUB_TOKEN scopes*. GitHub Docs. https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax
+
 GitHub. (2026). *actions/configure-pages v6 action metadata* [Source code, commit 45bfe0192ca1faeb007ade9deae92b16b8254a0d]. https://github.com/actions/configure-pages/blob/45bfe0192ca1faeb007ade9deae92b16b8254a0d/action.yml
+
+GitHub. (2026). *actions/deploy-pages* [Documentation, v5 line]. https://github.com/actions/deploy-pages
 
 GitHub. (2026, April 10). *actions/upload-pages-artifact v5.0.0*. https://github.com/actions/upload-pages-artifact/releases/tag/v5.0.0
