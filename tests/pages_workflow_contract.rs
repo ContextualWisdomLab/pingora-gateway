@@ -31,7 +31,10 @@ fn pages_actions_are_immutable_and_least_privilege() {
         "id-token: write",
         "persist-credentials: false",
     ] {
-        assert!(yaml.contains(expected), "missing Pages contract: {expected}");
+        assert!(
+            yaml.contains(expected),
+            "missing Pages contract: {expected}"
+        );
     }
 }
 
@@ -51,7 +54,10 @@ fn pages_artifact_and_public_site_are_bound_to_exact_source() {
         "curl --fail --silent --show-error --location",
         "Published Pages source identity did not converge",
     ] {
-        assert!(yaml.contains(expected), "missing source-identity contract: {expected}");
+        assert!(
+            yaml.contains(expected),
+            "missing source-identity contract: {expected}"
+        );
     }
 }
 
