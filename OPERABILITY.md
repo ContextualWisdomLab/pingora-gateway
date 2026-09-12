@@ -36,7 +36,11 @@ SIGTERM uses Pingora graceful termination with an explicit 5-second request-drai
 
 Run as a non-root user and prefer a read-only root filesystem. Mount only the versioned config and any required upstream trust bundle read-only. The runtime does not intentionally write logs or state files; stdout/stderr should be collected by the platform. Do not bake secrets or private keys into the image or config.
 
-The existing Dockerfile and OCI gate package and invoke the generic `cwl-pingora-gateway` process. They do not yet prove that `cwl-pingora-pg-erd-migration` is packaged, selected and exercised under the same uid/gid 65532, read-only-root, capability-drop and `no-new-privileges` contract. That is a required deployment slice before pg-erd canary traffic.
+The Dockerfile has one build-time process selector, `CWL_GATEWAY_BIN`, with an explicit allowlist of `cwl-pingora-gateway` and `cwl-pingora-pg-erd-migration`. The selected executable is copied to one fixed distroless runtime path, so the final image contains neither a shell selector nor both product profiles. The default remains the generic runtime. Build the bounded pg-erd candidate with `docker build --build-arg CWL_GATEWAY_BIN=cwl-pingora-pg-erd-migration -t cwl-pingora-pg-erd-migration:<source-sha> .`; any other selector value fails the image build.
+
+CI now defines executable OCI acceptance for both admitted images. Each image must declare uid/gid `65532`, start with a read-only root filesystem, all Linux capabilities dropped and `no-new-privileges`, and reach its process-local `/livez` endpoint from a read-only mounted versioned configuration. `examples/pg-erd-migration.yaml` is an OCI smoke fixture only: its loopback origins are placeholders because `/livez` does not establish product-origin health. Dedicated routed origin/load/failure evidence remains a separate gate. Until the exact current head actually runs these jobs to terminal success, this source-defined acceptance is not hosted GREEN evidence.
+
+The supply-chain candidate lane builds both admitted images, scans each fail-closed for HIGH/CRITICAL OS/library vulnerabilities, records both local image IDs against the exact source SHA, and uploads the common committed-lock/dependency SBOM plus per-image scan results. These are unreleased candidate receipts; release still requires immutable registry digests, release-bound SBOM/provenance/reproducibility evidence, and rollback rehearsal.
 
 ## Cutover and rollback
 
@@ -44,4 +48,4 @@ A consumer migration must keep the last known-good deployment manifest/image dig
 
 Roll back by restoring the exact protected prior deployment revision, not by editing a live container. Certificate management, identity, product authorization/business policy, and security-verdict ownership must remain with their existing bounded owners during edge-runtime rollback.
 
-No consumer may pin `pingora-gateway` until a protected release publishes an immutable image digest and rollback has been rehearsed. The current Dockerfile alone is not a releasable artifact, and the pg-erd candidate additionally needs dedicated image invocation plus routed load/failure evidence before release/canary eligibility.
+No consumer may pin `pingora-gateway` until a protected release publishes an immutable image digest and rollback has been rehearsed. Dedicated pg-erd image source/acceptance now exists on the candidate branch, but it still needs terminal exact-head OCI/supply-chain execution plus routed load/failure evidence before release/canary eligibility.

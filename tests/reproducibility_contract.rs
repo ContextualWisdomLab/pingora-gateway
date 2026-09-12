@@ -19,7 +19,7 @@ fn release_builds_use_the_committed_lockfile() {
         "the OCI builder must receive the reviewed Cargo.lock"
     );
     assert!(
-        DOCKERFILE.contains("cargo build --locked --release --bin cwl-pingora-gateway"),
-        "the OCI release build must reject lockfile drift"
+        DOCKERFILE.contains("cargo build --locked --release --bin \"${CWL_GATEWAY_BIN}\""),
+        "every admitted OCI release binary must reject lockfile drift"
     );
 }
