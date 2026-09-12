@@ -127,10 +127,66 @@ fn malformed_header_authority_is_rejected_before_activation() {
                 header_name: "X-Test".to_string(),
             },
         ),
+        (
+            ResponseHeaderRule {
+                name: "X-Test".to_string(),
+                value: "safe\0opaque".to_string(),
+            },
+            HeaderPolicyError::InvalidHeaderValue {
+                header_name: "X-Test".to_string(),
+            },
+        ),
+        (
+            ResponseHeaderRule {
+                name: "X-Test".to_string(),
+                value: "safe\u{001f}opaque".to_string(),
+            },
+            HeaderPolicyError::InvalidHeaderValue {
+                header_name: "X-Test".to_string(),
+            },
+        ),
+        (
+            ResponseHeaderRule {
+                name: "X-Test".to_string(),
+                value: "safe\u{007f}opaque".to_string(),
+            },
+            HeaderPolicyError::InvalidHeaderValue {
+                header_name: "X-Test".to_string(),
+            },
+        ),
+        (
+            ResponseHeaderRule {
+                name: "X-Test".to_string(),
+                value: " nosniff".to_string(),
+            },
+            HeaderPolicyError::InvalidHeaderValue {
+                header_name: "X-Test".to_string(),
+            },
+        ),
+        (
+            ResponseHeaderRule {
+                name: "X-Test".to_string(),
+                value: "nosniff\t".to_string(),
+            },
+            HeaderPolicyError::InvalidHeaderValue {
+                header_name: "X-Test".to_string(),
+            },
+        ),
     ] {
         assert_eq!(
             ResponseHeaderPolicy::try_new(vec![rule]).expect_err("invalid header must fail"),
             expected
         );
     }
+}
+
+#[test]
+fn interior_http_whitespace_remains_valid_field_content() {
+    let policy = ResponseHeaderPolicy::try_new(vec![ResponseHeaderRule {
+        name: "X-Test".to_string(),
+        value: "token\tvalue with spaces".to_string(),
+    }])
+    .expect("interior SP and HTAB are valid HTTP field-content");
+
+    assert_eq!(policy.value_for("x-test"), Some("token\tvalue with spaces"));
 }
