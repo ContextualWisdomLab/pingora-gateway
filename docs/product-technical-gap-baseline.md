@@ -1,56 +1,68 @@
 # Product / Technical Gap Baseline
 
-This file is the code-current migration baseline for `ContextualWisdomLab/pingora-gateway`. Live PR metadata remains the exact-head authority; this document intentionally does not self-hash its own containing commit. Historical RED/GREEN detail remains in PRs, commits, workflow receipts, ADRs and `CHANGELOG.md` rather than being copied indefinitely into this snapshot.
+This baseline is code-current for the bootstrap PR. Exact source heads, base tips, reviews, workflow/security runs, rulesets, and sibling Context Fabric heads are always re-read live; predecessor evidence never transfers across source, documentation, dependency, base, or governance movement.
 
-## Authority and bounded contexts
+## Shared runtime
 
-`pingora-gateway` owns shared Ingress, Edge Routing, TLS consumption, HTTP Policy, Load Balancing mechanics, Observability, Admin Config and Runtime Isolation behavior that is genuinely edge/runtime responsibility. Product authentication and business logic remain product-owned. Keyverse remains identity authority; Wardnet/EgressWeave remain their policy authorities. The gateway consumes released/versioned contracts or explicit operator transport inputs and does not copy sibling source, issue cross-service SQL, or depend on mutable sibling PR heads.
-
-Generic v1 remains a one-upstream Rust/Pingora process. The bounded `cwl-pingora-pg-erd-migration` process is a separate composition root for the characterized `pg-erd-cloud` route/header contract; it is not a general product-routing DSL.
-
-## Dependency and promotion root
-
-Foundation #1 remains `0da81a93f93e869c15bb7d34c55fc87479d16522`. Compiler prerequisite #56 remains Ready/open/mergeable at exact `18fb38b1ba70c4bf222642ef347f3d57a98379a2`; CI `33992794787` and Supply Chain `33992794799` are terminal GREEN, but an independent `APPROVED` review is still required before protected promotion. Bot/static review is not substituted for that governance gate.
-
-Supplier-intake #54 remains Ready/open/mergeable at exact `50b0516a9249c4066e3a0f305dbf2759eae3ae06`. Its hosted RED is intentional: committed `Cargo.lock` still contains `derivative 2.2.0`, and `tests/supply_chain_policy.rs` rejects that exact package under the CWL release criterion. Audit ignores, lock deletion, mutable supplier pins, muted regressions and scanner suppression are not admissible repairs.
-
-Supplier-semantics #62 remains Ready/open/mergeable at exact `32e0aeedac7b0fe6234d476245f37994b1b9168f`, with exact CI `34051494660` and Supply Chain `34051494627` terminal GREEN. Its Rust measured-origin receipt records 400 requests, 800/800 status/body checks, zero HTTP failures and p95 `0.71593235 ms`; it also preserves the required `PeerOptions` Debug and `Backend` equality/hash/order semantics that an upstream repair must not regress.
-
-Fresh supplier authority remains protected `cloudflare/pingora/main@09696b51bc59315353d96686355861604d0bb48c`. The accepted next step is a maintainer-integrated, release-qualified immutable Pingora repair removing `derivative` from the relevant workspace/core/load-balancing manifests and regenerated lock while preserving #62 semantics. Gateway promotion then requires an exact supplier bump, committed lock regeneration, unchanged #54 GREEN, preserved #62 GREEN, and #56 independent approval/governance.
-
-## Current pg-erd stack
-
-Parent #12 is exact `69f22265cd88881b8e14cedb32defa0a91180aa2` and is terminal hosted GREEN: CI `34161291459` and Supply Chain `34161291354` passed formatting, compile/test, strict Clippy, warning-denied rustdoc, 100% owned-production line/region coverage, dependency-lock verification, generic load and OCI runtime. Its public `PgErdMigrationConfig::build_proxy()` boundary revalidates deterministic Admin Config invariants so direct Serde deserialization cannot bypass version, listener authority, runtime, keepalive or transport-authority checks.
-
-#14 is exact parented on #12 and reached exact `8937364909b82f50fd911aa001a8d073b517f5d9` through ordinary non-force adoption. CI `34163230667` is terminal GREEN for `load-contract 101869182479`, `test 101869182630` and `oci-runtime 101869182648`; Supply Chain `34163230576` / `candidate-evidence 101869180840` is terminal GREEN. The k6 artifact `10033390215`, digest `sha256:b098e774a469aee2e4fbf1a343ccee5579b77c08bc0d099dc3f301b82d602b90`, records 400 requests, 800/800 checks, zero HTTP failures and p95 `1.5951211 ms` against the unchanged `<20 ms` generic loopback threshold. This is controlled generic loopback evidence, not routed pg-erd or representative deployment SLO evidence. OCI proves both admitted image profiles under uid/gid 65532, read-only root, dropped capabilities and `no-new-privileges`; Supply Chain builds/scans both profiles, produces SPDX dependency SBOM evidence and binds receipts to exact source. Registry-bound immutable image identity and release-bound provenance remain unproven.
-
-#14's shared `edge_contract` is the sole effective socket-authority implementation. Traffic/metrics overlap rejects port zero, same-family wildcard/concrete aliases, IPv6-wildcard/IPv4 dual-stack ambiguity, native↔mapped IPv4 aliases, native/mapped wildcard aliases and mapped-to-mapped wildcard aliases. `migration_admin` reuses that boundary instead of duplicating it.
-
-#15 preserves the generic forwarding-trust delta while adopting current #14 without force-push or destructive rebase. Ordinary two-parent adoption `87fa98275340e205feb81b6dad208391cd619254` uses prior #15 `50c160e6d76c09559f56a1cda3b9269f720757ed` as first parent and exact #14 `8937364909b82f50fd911aa001a8d073b517f5d9` as second parent. Follow-up `4cad126a568093b31a052e0375e95a2ca8680e76` reapplies only the still-valid TRD forwarding contract on the current parent tree. Parent-supplied route-ordering and parameterized `cargo build --locked --release --bin "${CWL_GATEWAY_BIN}"` reproducibility repairs are inherited rather than duplicated.
-
-The #15 effective forwarding invariant is: remove request-controlled `Forwarded`, `X-Forwarded-For`, `X-Forwarded-Host`, `X-Forwarded-Port`, `X-Forwarded-Proto`, `X-Forwarded-Server` and `X-Real-IP`; then emit only gateway-owned `Forwarded: proto=http`. Generic v1 makes no client-IP or trusted-proxy provenance claim. Product identity authority is not introduced.
-
-Exact predecessor `f3dbe7afe1fa945d74145bb7852ae77882145b0a` produced a real hosted coverage RED rather than a compile, lint, traffic or OCI failure. CI `34165264156` had GREEN formatting, compile/test, strict Clippy, warning-denied rustdoc, owned-production coverage workload, load contract and dual-profile OCI runtime; only `Enforce complete owned production coverage` failed. Coverage artifact `10034137549`, digest `sha256:77778830cb0fe2334adeaeceb511360cc219e3dad0036a3e7c7c9d81474900d4`, showed exactly one uncovered production region in `src/gateway_proxy.rs` at the error-propagation edge of inserting the static gateway-owned `Forwarded: proto=http` literal. Supply Chain `34165264253` was terminal GREEN on that predecessor SHA.
-
-Source repair `abeca67680bc218781209f2ffe065c1091dd55e4` removes only that impossible literal-header error branch: the same statically valid gateway-owned header is inserted with an explicit invariant `expect`, matching existing literal response-header construction. Request-controlled header removal, the emitted value, function result type and external error/resource-policy surface are unchanged. This repair must earn fresh exact-head formatting, compile/test, strict Clippy, rustdoc, 100% owned-production coverage, load/OCI and Supply Chain evidence; no predecessor GREEN transfers after the source move.
-
-## Capability state and buyer-visible gaps
-
-| Area | Current state | Remaining acceptance |
+| Area | State | Evidence / gap |
 | --- | --- | --- |
-| Admin Config / network authority | Implemented; #12/#14 exact hosted GREEN | Keep exact-head revalidation after every restack; no duplicate listener-authority implementations |
-| Generic forwarding trust | Implemented on #15; predecessor hosted coverage RED has a one-line causal source repair | Fresh exact-head 100% coverage/full CI/Supply Chain and fresh review required |
-| Edge routing / HTTP policy | Characterized and compiled for pg-erd | Routed production-process parity must remain GREEN through descendant restacks |
-| Runtime isolation | Declared/streamed body and in-flight limits implemented; inherited real-listener saturation/recovery exists | Routed timeout/reset/post-commit truncation/slow-drip, origin-capacity and in-flight SIGTERM drain remain separate tests |
-| Upstream TLS | Generic local-CA/SNI verification exists; pg-erd fail-closed trust activation exists | Successful pg-erd TLS listener/origin path and representative TLS performance remain unproven |
-| Protocols | HTTP/1.1 path exists | Downstream TLS/H2, H2→H1 Cookie behavior, WebSocket/Extended CONNECT and explicit H3/QUIC disposition require separate supplier-capable contracts |
-| OCI / supply chain | Dual-profile local candidate build, least privilege, audit, SPDX SBOM and scan evidence GREEN on #14 | Immutable registry digest, signing/attestation/provenance, release-bound SBOM, reproducibility receipt and rollback rehearsal |
-| Performance | Generic loopback #14 p95 `1.5951211 ms`; supplier measured-origin #62 p95 `0.71593235 ms` | Do not treat these as production SLO proof; routed pg-erd concurrency/TLS/failure measurements must meet the same `<20 ms` objective where applicable without sample reduction or artificial warm-up |
-| Observability | Low-cardinality counters/logging and separate metrics listener | Payload-free routed assertions, tracing and buyer-facing operability/recovery evidence |
-| Release / migration | No protected release or consumer cutover credit | Immutable release → parity → shadow/canary → rollback rehearsal → cutover → verified Nginx/OpenResty/legacy removal |
+| Executable Pingora path | Implemented on branch | Production binary composes `GatewayCommand` -> `GatewayConfig` -> `GatewayProxy` -> `http_proxy_service`; every changed head must reacquire hosted evidence |
+| DDD ownership | Implemented | Edge invariants live in `edge_contract`; Pingora types and trust-bundle loading stay in delivery/application modules; product auth/business policy, certificate issuance/rotation, Wardnet/EgressWeave decisions, and Keyverse identity remain outside this boundary |
+| Fail-closed config | Implemented | Strict YAML, version/body/upstream/TLS/trust-path/timeout validation; v1 deliberately admits exactly one upstream and cannot replace a multi-route edge |
+| Upstream TLS | Implemented candidate | Compiled-binary local-CA/hostname verification proves configured custom trust and SNI mismatch behavior. The delivery adapter also has an explicit no-custom-bundle regression proving platform trust roots remain selected instead of being accidentally replaced; every changed head must reacquire exact-current-head evidence before release |
+| HTTP protocol scope | Partial | Initial upstream adapter explicitly uses HTTP/1.1. No HTTP/2 or HTTP/3 parity claim exists without executable downstream/upstream contract evidence |
+| Hop-by-hop / forwarding trust | Implemented on branch | Pingora standard request policy plus explicit removal/reconstruction of forwarding identity; trusted client-IP chain configuration remains a future bounded contract |
+| Retry policy | Implemented, intentionally minimal | `max_retries=1` means one total upstream attempt and zero generic automatic retries; domain idempotency/replay policy stays with the product owner |
+| Request limits | Partial | Declared and streamed/chunked body size are bounded; configurable header, connection, concurrency and backpressure budgets remain gaps |
+| Failure recovery | Partial executable evidence | A compiled-binary loopback contract requires a refused origin connection to return HTTP 502 within the configured connection-budget envelope and proves `/readyz` remains healthy afterward. Timeout, reset, partial-response, streaming and saturation cases remain gaps |
+| Health | Implemented on branch | `/livez` and `/readyz` are served through the production Pingora path; readiness does not invent product-specific dependency probes |
+| Graceful drain | Implemented candidate behavior | SIGTERM uses a bounded 5 s grace plus 10 s runtime shutdown timeout inside a 30 s external termination budget; exact-release evidence must be reacquired |
+| Logs / metrics / traces | Partial | Low-cardinality counters and credential/cookie-safe coarse access logs exist; tracing and richer bounded operability evidence remain gaps |
+| OCI isolation | Implemented candidate hardening | Runtime is uid/gid 65532, read-only-root compatible, capability-free and `no-new-privileges`; both builder and runtime base images are digest-pinned after the Scorecard review finding, and exact-head OCI/Scorecard evidence must reacquire |
+| Dependency policy | Release-blocked | `.github#1605` owns the exact-release Pingora vs patched-`lru` decision; current upstream also carries unmaintained `derivative 2.2.0` (`RUSTSEC-2024-0388`, no fixed release). `.github#810` independently owns the public non-fork Dependency Review compare-API HTTP 403 availability incident. Known-unsound downgrade, blanket advisory waiver, fail-open 403 handling, or substitute-scanner promotion is prohibited |
+| Coverage / public API docs | Gates implemented | Owned production line/region coverage is required at 100%; `#![deny(missing_docs)]` and warning-denied rustdoc cover public APIs. The platform-root peer branch that previously left two uncovered regions now has a focused executable regression; every changed head must satisfy the same gates |
+| Load / 20 ms p95 | Executable candidate | Checksum-pinned k6 2.2.0 exercises 400 release-mode loopback requests across four VUs and gates the minimal HTTP/1.1 path at p95 <20 ms with zero failures. This is only a local regression bound; representative consumer/TLS/network deployment evidence is still required before a 20 ms production SLO is claimed |
+| Rollback | Documented, not rehearsed | Rehearsal requires an immutable protected release artifact/digest |
 
-## Execution order
+## Organization edge inventory
 
-The current dependency order is `#54 derivative RED + #62 exact semantics/load GREEN → maintainer-integrated immutable supplier repair → gateway supplier bump and committed lock regeneration → #54 GREEN + preserved #62 GREEN → #56 independent APPROVED/governance → foundation/protected integration → #12 → #14 → #15 current source repair exact-head GREEN → #16/#17 and later descendants ordinary non-force restack with exact-head GREEN → remaining routed TLS/failure/drain/protocol acceptance → immutable gateway release/SBOM/provenance/reproducibility/rollback → shadow/canary → cutover → verified legacy removal`.
+Fresh organization code evidence still finds no actionable OpenResty deployment. Responsibility class, not process name alone, determines migration scope.
 
-No Draft state, predecessor receipt, bot review, local image ID, mutable supplier PR, queue state or controlled loopback measurement is treated as protected merge, release, canary, cutover, rollback or legacy-removal evidence.
+| Repository / evidence | Classification | Migration consequence |
+| --- | --- | --- |
+| `linux-cluster-ops/docs/architecture/nginx-routing-inventory.md` plus Nginx/Certbot recovery evidence | ACTIVE_RUNTIME / CURRENT_OPERATOR_DOC | True shared-edge candidate, but current multi-vhost routing, static/PHP-FPM and certificate-adjacent operations exceed Pingora v1. Split authority and freeze executable traffic/TLS contracts first |
+| `pg-erd-cloud/deploy/traefik/dynamic.yaml` and production compose/docs | ACTIVE_DEPLOYMENT / PLAUSIBLE_CONSUMER | Ordered `/healthz` -> backend, `/api*` -> backend, `/` -> SPA plus response-security headers. One-upstream Pingora v1 is not parity-equivalent |
+| `naruon` NGINX ingress/live-E2E plus Traefik evaluation | ACTIVE_DEPLOYMENT / TEST_RUNTIME | More-specific writer owns mutation. Keycloak/authentication stays outside Pingora; only transport/edge policy can migrate after owner handoff and parity evidence |
+| `scopeweave`, `LineageWeave`, `inkspan` Nginx static-serving images/config | ACTIVE_STATIC_RUNTIME | Static hosting is not automatically a shared-edge migration; prove gateway responsibility before queueing |
+| `life-os` ClusterIP-only base manifests with separately managed edge namespace | DELEGATED EDGE | Repository base manifests do not prove an embedded legacy edge to migrate |
+
+No consumer is marked migrated, shadowed, canaried, cut over, or legacy-removed. Required sequence remains executable legacy characterization -> Pingora parity -> shadow/canary -> protected production cutover -> rollback evidence -> legacy removal.
+
+## Context Graph dependency — read only
+
+`ContextualWisdomLab/context-graph-contracts` is not writable from this loop. Repository metadata still follows the central protected-main transition owner path rather than being hard-coded here. The current Context Assertion event-semantic tail is Draft #21, live head `de376b0608a60ad195e06f5522887be2e63d7b60`, based on #20 `0044d7193a8e9f477e42e961d49b71dc1a956c47`. Repository-owned exact-head `ci`, `reproducibility`, `receipt-package-smoke`, and `supply-chain` runs are terminal success at the latest read; no submitted review or inline review thread exists. Draft/open-head success is not an immutable released Shared Kernel, and the repository currently has no GitHub Release.
+
+GREEN for an edge migration requires a protected immutable Context Graph release carrying canonical object/authority refs, truth status/origin, valid/system time, provenance, Context Assertion + CloudEvent schema/profile/AsyncAPI semantics, exact package identity, and conformance/admission evidence. Runtime request/log/customer data must not be copied into Context Graph authority.
+
+## Enterprise Architecture dependency — read only
+
+`ContextualWisdomLab/enterprise-architecture-core` is also not writable from this loop. The DDD parent for the Context Fabric projection moved during this run: Draft #39 is exact `731b3b60264aa9a4d11db3fa5a68f86df944dd0c` on #36 `fff51536c64ba751a37d4ccfd8d2865296b115b9`. This parent now owns the explicit hosted-runner acquisition repair. Exact-head `supply-chain` (`33538539326`) and `runtime-readiness` (`33538539392`) are terminal success, but `ci` (`33538539197`) is terminal FAILURE. Runner acquisition and most acceptance lanes are healthy: Python 3.11–3.14 validation, package, and compose-runtime are GREEN; `postgres-migration` job `99958740497` fails specifically at `Exercise database invariants` after successful foundation migration, idempotent-upgrade/checksum-drift rehearsal, previous-boundary upgrade, atomic rollback, and schema/ledger verification. This is a repository/runtime invariant defect and must be causally repaired by the EA owner rather than treated as infrastructure or weakened.
+
+The Context Fabric projection child #40 remains exact `b3ec93a42528ab0defc0116ac4695d669298240f`, but its recorded base is the superseded #39 head `b44635b686c66e78ebd7f1218343a933a510cd89`. Fresh comparison against current #39 reports `diverged`, merge base `b44635b...`, `ahead_by=67`, `behind_by=4`. Therefore #40's former terminal GREEN `ci` (`33536723144`), `runtime-readiness` (`33536722617`), and `supply-chain` (`33536723303`) are historical only and cannot satisfy the current parent/child integration boundary. The earlier terminal-planner fixture defect was causally repaired on that historical child head, but that repair must be preserved and re-proven after a non-destructive restack. The repository still has no GitHub Release.
+
+The Context Fabric owner path must first causally repair #39's PostgreSQL invariant failure and make the resulting exact parent terminal-clean under live policy. It must then non-destructively restack #40 onto that exact repaired parent while preserving only child-owned Context Fabric/EA projection delta, and reacquire every applicable exact-head repository/security/coverage/package/SBOM/provenance/review artifact. Pingora does not perform that source or PR-state mutation.
+
+The owner path is correct when it binds one released `contracts/context-graph-dependency.json`, requires exact `ContextualWisdomLab/<repository>` ownership, `direction_code=inbound_projection`, `exchange_kind=context_assertion_cloudevent`, `ea_core_owns=false`, canonical/source refs, truth status, effective/system time and provenance, and rejects provisional PR heads as release authority.
+
+For each eventual edge migration, EA admission must version `current technology/interface -> migration initiative/scenario -> target technology/interface -> validated execution`, linking affected application/service/API, current and target provider/version, lifecycle, security/operability risk, accountable owner, dependency, canary/cutover/rollback state, and immutable Pingora artifact identity. Cross-service application-table SQL remains prohibited.
+
+## Dependency-ordered blockers
+
+1. Reacquire exact-current-head CI, 100% owned production line/region coverage, rustdoc, k6, OCI, SAST and supply-chain evidence after every source or documentation movement; repair only evidence-backed repository defects.
+2. Keep `.github#1605` and `.github#810` fail-closed until their respective policy and GitHub dependency-review availability owner paths are resolved; do not suppress `RUSTSEC-2024-0388` generically.
+3. Require the Context Fabric owner to repair EA #39's exact-current-head PostgreSQL invariant failure without weakening semantics, prove the repaired parent terminal GREEN, then restack #40 non-destructively on that exact parent and reacquire all child admission/provenance evidence; do not transfer historical #40 GREEN runs.
+4. Add explicit concurrency/backpressure budgets and broader timeout/reset/streaming/network-failure recovery evidence, then benchmark representative consumer traffic before adopting a production 20 ms p95 objective.
+5. Add a protected release path that publishes an immutable image digest with provenance and rehearse rollback against that exact digest.
+6. Satisfy then-live protected-branch review/governance without self-approval, bot-as-human claims, stale evidence transfer, or routine administrator bypass.
+7. Wait for an immutable released Context Graph bundle and a coherent compatible GREEN EA admission path before asserting authoritative architecture execution state.
+8. Only then characterize and migrate the highest-impact consumer whose actual responsibility belongs to the shared edge bounded context.
