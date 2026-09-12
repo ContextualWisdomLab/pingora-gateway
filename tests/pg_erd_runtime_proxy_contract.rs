@@ -145,10 +145,11 @@ fn migration_proxy_rejects_unmatched_paths_instead_of_inventing_a_destination() 
     let limits = RuntimeIsolationLimits::try_new(1024, 1).expect("limits must be valid");
     let proxy = MigrationGatewayProxy::try_new(delivery, limits).expect("proxy must activate");
 
+    let error = proxy
+        .build_upstream_peer("/missing")
+        .expect_err("unmatched path must remain unroutable");
     assert_eq!(
-        proxy
-            .build_upstream_peer("/missing")
-            .expect_err("unmatched path must remain unroutable"),
+        error,
         MigrationGatewayProxyError::UnmatchedRoute {
             request_path: "/missing".to_string(),
         }

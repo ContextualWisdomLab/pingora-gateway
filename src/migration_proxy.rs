@@ -18,6 +18,7 @@ use thiserror::Error;
 use crate::forwarding_policy::{DownstreamScheme, ForwardingContext};
 use crate::migration_delivery::MigrationDeliveryPlan;
 use crate::observability::{record_backpressure_rejection, record_request};
+use crate::process_health::{respond_healthy, LIVENESS_PATH, READINESS_PATH};
 use crate::runtime_isolation::{
     BodyLimitExceeded, RequestAdmission, RequestAdmissionBudget, RequestBodyBudget,
     RuntimeIsolationLimits,
@@ -59,16 +60,21 @@ pub struct MigrationGatewayProxy {
 }
 
 impl MigrationGatewayProxy {
-    /// Activates callbacks over an already validated delivery plan and runtime-isolation contract.
+    /// Creates callbacks over an already validated delivery plan and runtime-isolation contract.
+    pub fn new(delivery: MigrationDeliveryPlan, limits: RuntimeIsolationLimits) -> Self {
+        Self {
+            delivery,
+            limits,
+            admission_budget: RequestAdmissionBudget::new(limits),
+        }
+    }
+
+    /// Backward-compatible constructor retaining the earlier result-shaped API.
     pub fn try_new(
         delivery: MigrationDeliveryPlan,
         limits: RuntimeIsolationLimits,
     ) -> Result<Self, MigrationGatewayProxyError> {
-        Ok(Self {
-            delivery,
-            limits,
-            admission_budget: RequestAdmissionBudget::new(limits),
-        })
+        Ok(Self::new(delivery, limits))
     }
 
     /// Selects and clones the concrete peer admitted for one characterized request path.
@@ -192,9 +198,17 @@ impl ProxyHttp for MigrationGatewayProxy {
     where
         Self::CTX: Send + Sync,
     {
-        self.admit_request(ctx)?;
-        Self::reject_oversize_declared_body(session, ctx)?;
-        Ok(false)
+        match session.req_header().uri.path() {
+            LIVENESS_PATH | READINESS_PATH => {
+                respond_healthy(session).await?;
+                Ok(true)
+            }
+            _ => {
+                self.admit_request(ctx)?;
+                Self::reject_oversize_declared_body(session, ctx)?;
+                Ok(false)
+            }
+        }
     }
 
     async fn request_body_filter(
@@ -274,7 +288,6 @@ impl ProxyHttp for MigrationGatewayProxy {
 
         FailToProxy {
             error_code: status,
-            // Preserve Pingora's conservative default: callback failures never opt into reuse.
             can_reuse_downstream: false,
         }
     }
