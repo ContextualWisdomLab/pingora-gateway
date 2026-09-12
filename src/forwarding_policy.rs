@@ -270,6 +270,22 @@ mod tests {
     }
 
     #[test]
+    fn malformed_host_authority_fails_closed_through_transport_derivation() {
+        let client = PingoraSocketAddr::from(SocketAddr::from((Ipv4Addr::LOCALHOST, 49152)));
+        let request = request_with_host("app.example:0");
+
+        let error = ForwardingContext::from_downstream_transport(
+            Some(&client),
+            &request,
+            &request,
+            DownstreamScheme::Http,
+        )
+        .expect_err("invalid Host port must fail closed at the transport-derived boundary");
+
+        assert_eq!(error.etype, ErrorType::HTTPStatus(400));
+    }
+
+    #[test]
     fn invalid_forwarding_field_value_fails_closed() {
         let mut request =
             RequestHeader::build("GET", b"/", None).expect("fixture request must be valid");
