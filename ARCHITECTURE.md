@@ -10,7 +10,7 @@ The **Edge Routing** bounded context characterizes deterministic request-path se
 
 The **HTTP Policy** bounded context characterizes explicit edge-owned HTTP response mutations independently from route selection and Pingora delivery. The current candidate records response-security fields already emitted by a consumer edge. It does not own application response semantics, authentication/authorization, Wardnet/EgressWeave verdicts, or Keyverse identity, and it is not yet activated in Pingora callbacks.
 
-The **Migration Plan** bounded context composes characterized Edge Routing and HTTP Policy with an explicit upstream-authority set before runtime wiring. It proves that every characterized route points only to an admitted stable upstream identity; it does not grant network authority, construct Pingora peers, or activate traffic.
+`EdgeMigrationPlan` is a transport-neutral **application composition**, not another bounded context. It composes already validated Edge Routing and HTTP Policy objects with an explicit stable upstream-identity authority set before runtime wiring. This lets migration orchestration prove that every characterized route names admitted authority without moving route ownership, HTTP-policy ownership, network activation, service discovery, product logic, or security-owner decisions into a new domain boundary.
 
 The **Pingora Delivery** adapter maps admitted values to `HttpPeer`, proxy callbacks, header policy, health responses, and request-body enforcement. Pingora types never cross into the transport-neutral bounded contexts. `GatewayCommand` is the application startup service that reads and validates configuration before the composition root grants network authority.
 
@@ -25,8 +25,10 @@ consumer legacy-edge evidence
  Edge Routing     HTTP Policy       (characterization)
        \             /
         \           /
-         Migration Plan             (explicit stable upstream authority;
-                                     not active runtime delivery)
+         EdgeMigrationPlan           (application composition;
+                ^                     stable identity admission only)
+                |
+     explicit migration upstream identities
 
 operator YAML --> Edge Contract --> startup application service
                                       |
@@ -37,8 +39,8 @@ operator YAML --> Edge Contract --> startup application service
                                Cloudflare Pingora
 ```
 
-Consumer repositories depend on documented image/config/deployment contracts, not Rust internals. Product-specific behavior stays upstream or in a separately justified adapter owned by that consumer. Characterization and migration-plan modules may encode only observed shared-edge semantics and explicit stable upstream identity authority; they do not by themselves grant runtime network authority.
+Consumer repositories depend on documented image/config/deployment contracts, not Rust internals. Product-specific behavior stays upstream or in a separately justified adapter owned by that consumer. Characterization modules may encode only observed shared-edge semantics; `migration_plan` may compose those contracts with explicit stable identities, but neither characterization nor composition grants runtime network authority.
 
 ## Anti-corruption boundary
 
-`edge_contract`, `edge_routing`, `http_policy`, and `migration_plan` are transport-neutral anti-corruption boundaries against Pingora-specific delivery semantics. `pingora_delivery` may translate admitted network values to `HttpPeer`; `gateway_proxy` may implement `ProxyHttp`. Reversing these dependencies, importing product-domain authorization/business code, performing implicit service discovery, or letting request-controlled destinations become upstream authority is a DDD defect.
+`edge_contract`, `edge_routing`, and `http_policy` are transport-neutral domain boundaries against Pingora-specific delivery semantics. `migration_plan` is the transport-neutral application composition over those admitted concepts; it does not become a shared domain model. `pingora_delivery` may translate admitted network values to `HttpPeer`; `gateway_proxy` may implement `ProxyHttp`. Reversing these dependencies, importing product-domain authorization/business code, performing implicit service discovery, or letting request-controlled destinations become upstream authority is a DDD defect.
