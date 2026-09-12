@@ -31,7 +31,7 @@ Custom upstream trust-bundle bytes are not preloaded during YAML parsing. Peer/t
 
 Pingora's standard upstream-request policy handles hop-by-hop and connection-nominated headers. The generic gateway additionally removes request-controlled forwarding identity and emits only gateway-owned generic forwarding information appropriate to its current cleartext downstream contract.
 
-The pg-erd migration callback uses the separate Ingress Forwarding Policy: request-controlled `Forwarded`, `X-Forwarded-*`, `X-Real-IP` and the legacy `X-Forwarded-Server` value are discarded before characterized compatibility fields are rebuilt from accepted transport/request authority. The currently characterized legacy entry point is cleartext `web`, so downstream scheme is explicitly `http`; HTTPS forwarding semantics require a separate downstream-TLS contract.
+The pg-erd migration callback uses the separate Ingress Forwarding Policy. Request-controlled `Forwarded`, `X-Forwarded-*`, `X-Real-IP` and legacy `X-Forwarded-Server` values are discarded. `X-Forwarded-For` and `X-Real-IP` are then rebuilt from the accepted client socket, `X-Forwarded-Host` preserves the original Host authority, and `X-Forwarded-Port` is derived from an explicit Host port or the admitted scheme default. The process listener bind port is not external authority because container, Service, NAT, and port-publish layers can expose a different public port. The currently characterized legacy entry point is cleartext `web`, so downstream scheme is explicitly `http`; HTTPS forwarding semantics require a separate downstream-TLS contract.
 
 ## Health, observability and graceful lifecycle
 
