@@ -2,7 +2,7 @@
 
 ## Start
 
-Run the generic process as `cwl-pingora-gateway --config /path/to/gateway.yaml`. Configuration is read and validated before the listener is registered. Invalid or missing configuration exits non-zero. `max_request_body_bytes`, `max_in_flight_requests`, and `upstream_keepalive_pool_size` are mandatory positive deployment inputs; the process will not start with a zero value or silently inherit a Pingora keepalive default. If a TLS upstream declares `trust_bundle_file`, that absolute PEM bundle is read and parsed during peer activation before listeners open; unreadable, empty, or malformed trust material prevents activation.
+Run the generic process as `cwl-pingora-gateway --config /path/to/gateway.yaml`. Configuration is read and validated before the listener is registered. Invalid or missing configuration exits non-zero. `max_request_body_bytes`, `max_in_flight_requests`, and `upstream_keepalive_pool_size` are mandatory positive deployment inputs; the process will not start with a zero value or silently inherit a Pingora keepalive default. Traffic, metrics and upstream transport ports must be non-zero, and traffic/metrics listeners must not overlap the same effective socket authority. If a TLS upstream declares `trust_bundle_file`, that absolute PEM bundle is read and parsed during peer activation before listeners open; unreadable, empty, or malformed trust material prevents activation.
 
 The pg-erd migration candidate is a separate executable: `cwl-pingora-pg-erd-migration --config /path/to/pg-erd-migration.yaml`. It consumes the bounded `PgErdMigrationConfig` profile rather than widening generic `GatewayConfig` v1. The profile admits exactly the compiled `backend` and `frontend` transport identities plus deployment-variable sockets, runtime budgets and upstream transport/TLS values. Route tables, response-policy fields, product authentication/business rules, Keyverse identity, Wardnet/EgressWeave verdicts, service discovery and arbitrary destinations are not operator-configurable.
 
@@ -36,7 +36,9 @@ SIGTERM uses Pingora graceful termination with an explicit 5-second request-drai
 
 Run as a non-root user and prefer a read-only root filesystem. Mount only the versioned config and any required upstream trust bundle read-only. The runtime does not intentionally write logs or state files; stdout/stderr should be collected by the platform. Do not bake secrets or private keys into the image or config.
 
-The existing Dockerfile and OCI gate package and invoke the generic `cwl-pingora-gateway` process. They do not yet prove that `cwl-pingora-pg-erd-migration` is packaged, selected and exercised under the same uid/gid 65532, read-only-root, capability-drop and `no-new-privileges` contract. That is a required deployment slice before pg-erd canary traffic.
+The Dockerfile exposes one build-time selector, `CWL_GATEWAY_BIN`, fail-closed to exactly `cwl-pingora-gateway` or `cwl-pingora-pg-erd-migration`. The selected executable is copied to one fixed distroless runtime path, so the final image contains one admitted process identity and no shell-based runtime selector. The default remains the generic runtime. Build the pg-erd profile with `docker build --build-arg CWL_GATEWAY_BIN=cwl-pingora-pg-erd-migration -t cwl-pingora-pg-erd-migration:<source-sha> .`.
+
+CI defines executable OCI acceptance for both admitted images. Each must declare uid/gid `65532`, start with a read-only root filesystem, all Linux capabilities dropped and `no-new-privileges`, consume only a read-only configuration mount, and expose its process-local `/livez`. `examples/pg-erd-migration.yaml` is an OCI smoke fixture only; its loopback origins are placeholders because `/livez` does not establish product-origin health. The supply-chain lane builds and fail-closed scans both candidate images, binds both local image IDs and per-image scan outputs to the exact source SHA, and keeps failure diagnostics separate from the promotion-shaped success artifact. These are unreleased candidate receipts, not registry release identities.
 
 ## Cutover and rollback
 
@@ -44,4 +46,4 @@ A consumer migration must keep the last known-good deployment manifest/image dig
 
 Roll back by restoring the exact protected prior deployment revision, not by editing a live container. Certificate management, identity, product authorization/business policy, and security-verdict ownership must remain with their existing bounded owners during edge-runtime rollback.
 
-No consumer may pin `pingora-gateway` until a protected release publishes an immutable image digest and rollback has been rehearsed. The current Dockerfile alone is not a releasable artifact, and the pg-erd candidate additionally needs dedicated image invocation plus routed load/failure evidence before release/canary eligibility.
+No consumer may pin `pingora-gateway` until a protected release publishes an immutable image digest and rollback has been rehearsed. Dedicated pg-erd image source/acceptance exists on this candidate, but it still requires terminal exact-head OCI/supply-chain execution plus routed load/failure evidence before release/canary eligibility.
