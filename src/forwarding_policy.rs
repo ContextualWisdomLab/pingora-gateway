@@ -309,6 +309,7 @@ mod tests {
             "[::1",
             "[::1]junk",
             "app[example",
+            "app]example",
         ] {
             let error = authority_port(authority, DownstreamScheme::Http)
                 .expect_err("malformed authority must not produce forwarding metadata");
