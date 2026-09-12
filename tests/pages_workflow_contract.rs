@@ -1,0 +1,126 @@
+use std::fs;
+
+const WORKFLOW: &str = ".github/workflows/pages.yml";
+
+fn workflow() -> String {
+    fs::read_to_string(WORKFLOW).expect("Pages workflow must exist")
+}
+
+#[test]
+fn pages_publication_is_manual_and_protected_main_only() {
+    let yaml = workflow();
+    assert!(yaml.contains("workflow_dispatch:"));
+    assert!(!yaml.contains("pull_request:"));
+    assert!(!yaml.contains("push:"));
+    assert!(yaml.contains("test \"$GITHUB_REF\" = \"refs/heads/main\""));
+    assert!(yaml.contains("ref: ${{ github.sha }}"));
+    assert!(yaml.contains("test \"$(git rev-parse HEAD)\" = \"$GITHUB_SHA\""));
+}
+
+#[test]
+fn pages_actions_are_immutable_and_permissions_are_job_scoped() {
+    let yaml = workflow();
+    for expected in [
+        "actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803",
+        "actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d",
+        "actions/jekyll-build-pages@44a6e6beabd48582f863aeeb6cb2151cc1716697",
+        "actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9",
+        "actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346",
+        "permissions: {}",
+        "build:\n    name: build-pages\n    runs-on: ubuntu-latest\n    permissions:\n      contents: read\n      pages: read",
+        "deploy:\n    name: deploy-pages\n    runs-on: ubuntu-latest\n    needs: build\n    permissions:\n      pages: write\n      id-token: write",
+        "persist-credentials: false",
+    ] {
+        assert!(
+            yaml.contains(expected),
+            "missing Pages contract: {expected}"
+        );
+    }
+}
+
+#[test]
+fn pages_artifact_and_public_site_are_bound_to_exact_source_and_rendered_root() {
+    let yaml = workflow();
+    for expected in [
+        "source: ./docs",
+        "destination: ./_site",
+        "build_revision: ${{ github.sha }}",
+        "id: artifact_identity",
+        "outputs:\n      index_sha256: ${{ steps.artifact_identity.outputs.index_sha256 }}",
+        "printf '%s\\n' \"$GITHUB_SHA\" > _site/source-sha.txt",
+        "root_sha=\"$(sha256sum _site/index.html | awk '{print $1}')\"",
+        "printf '%s\\n' \"$root_sha\" > _site/index-sha256.txt",
+        "printf 'index_sha256=%s\\n' \"$root_sha\" >> \"$GITHUB_OUTPUT\"",
+        "path: ./_site",
+        "name: github-pages",
+        "url: ${{ steps.deployment.outputs.page_url }}",
+        "EXPECTED_SHA: ${{ github.sha }}",
+        "EXPECTED_ROOT_SHA: ${{ needs.build.outputs.index_sha256 }}",
+        "source-sha.txt",
+        "index-sha256.txt",
+        "Published Pages source identity and rendered root did not converge",
+        "marker_file=\"$(mktemp)\"",
+        "root_digest_file=\"$(mktemp)\"",
+        "root_file=\"$(mktemp)\"",
+        "trap 'rm -f \"$marker_file\" \"$root_digest_file\" \"$root_file\"' EXIT",
+        "marker_status=\"$(curl",
+        "root_digest_status=\"$(curl",
+        "root_status=\"$(curl",
+        "[ \"$marker_status\" = \"200\" ]",
+        "[ \"$(cat \"$marker_file\")\" = \"$EXPECTED_SHA\" ]",
+        "[ \"$root_digest_status\" = \"200\" ]",
+        "grep -Eq '^[0-9a-f]{64}$' \"$root_digest_file\"",
+        "[ \"$(cat \"$root_digest_file\")\" = \"$EXPECTED_ROOT_SHA\" ]",
+        "[ \"$root_status\" = \"200\" ]",
+        "observed_root_sha=\"$(sha256sum \"$root_file\" | awk '{print $1}')\"",
+        "[ \"$observed_root_sha\" = \"$EXPECTED_ROOT_SHA\" ]",
+    ] {
+        assert!(
+            yaml.contains(expected),
+            "missing source/rendered-root identity contract: {expected}"
+        );
+    }
+
+    assert!(
+        !yaml.contains("expected_root_sha=\"$(cat \"$root_digest_file\")\""),
+        "the public digest file must not be the sole authority for the expected rendered-root digest"
+    );
+    assert_eq!(
+        yaml.matches("curl --fail --silent --show-error --location")
+            .count(),
+        3,
+        "marker, rendered-root digest, and rendered root must stay independently verified"
+    );
+    assert_eq!(
+        yaml.matches("--proto '=https'").count(),
+        3,
+        "all public verification requests must allow only HTTPS"
+    );
+    assert_eq!(
+        yaml.matches("--proto-redir '=https'").count(),
+        3,
+        "all public verification requests must reject redirect downgrade"
+    );
+    assert_eq!(
+        yaml.matches("--max-redirs 0").count(),
+        3,
+        "all public verification requests must reject cross-origin redirect substitution"
+    );
+    assert_eq!(
+        yaml.matches("--write-out '%{http_code}'").count(),
+        3,
+        "all public verification requests must prove an explicit HTTP 200 response"
+    );
+    assert!(
+        !yaml.contains("2>/dev/null || true"),
+        "marker verification must not mask a failed transfer while retaining its response body"
+    );
+}
+
+#[test]
+fn pages_deployments_are_serialized_without_cancelling_in_flight_publish() {
+    let yaml = workflow();
+    assert!(yaml.contains("group: pages"));
+    assert!(yaml.contains("cancel-in-progress: false"));
+    assert!(yaml.contains("needs: build"));
+}
