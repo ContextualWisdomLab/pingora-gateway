@@ -31,6 +31,10 @@ pub struct RequestContext {
 }
 
 impl RequestContext {
+    /// Creates isolation state without consuming an in-flight lease.
+    ///
+    /// Admission is deferred until a non-health application request enters the proxy path so
+    /// process-local health checks remain observable even when the application budget is full.
     fn new(limits: RuntimeIsolationLimits) -> Self {
         Self {
             request_body: RequestBodyBudget::new(limits),
@@ -84,6 +88,10 @@ impl GatewayProxy {
         self.upstream_peer.clone()
     }
 
+    /// Answers process-local health probes without contacting the configured upstream.
+    ///
+    /// Health responses intentionally bypass application admission so operators can distinguish a
+    /// live but saturated gateway from an unavailable process.
     async fn respond_healthy(session: &mut Session) -> pingora::Result<()> {
         let mut response = ResponseHeader::build(200, None)
             .expect("literal HTTP 200 response header must be valid");
@@ -98,6 +106,10 @@ impl GatewayProxy {
             .await
     }
 
+    /// Acquires the shared in-flight lease before application request processing begins.
+    ///
+    /// Saturation fails locally with 503 and records bounded telemetry; no upstream selection or
+    /// connection attempt occurs without a lease.
     fn admit_request(&self, ctx: &mut RequestContext) -> pingora::Result<()> {
         if let Some(admission) = self.admission_budget.acquire() {
             ctx.admission = Some(admission);
@@ -111,6 +123,10 @@ impl GatewayProxy {
         ))
     }
 
+    /// Rejects an oversized declared body before streaming additional request bytes upstream.
+    ///
+    /// Chunked or otherwise undeclared bodies remain bounded independently by `RequestBodyBudget`
+    /// as body progress arrives.
     fn reject_oversize_declared_body(
         session: &Session,
         ctx: &RequestContext,
@@ -130,12 +146,38 @@ impl GatewayProxy {
     }
 }
 
+/// Maps request-body budget violations to the stable downstream 413 contract.
+///
+/// Observed and configured byte counts stay out of the client-visible error text so this adapter
+/// does not expand the gateway's externally observable resource-policy surface.
 fn body_rejection_to_pingora(rejection: BodyLimitExceeded) -> Box<Error> {
     let _ = (rejection.observed, rejection.limit);
     Error::explain(
         ErrorType::HTTPStatus(413),
         "request body exceeds configured max_request_body_bytes",
     )
+}
+
+/// Removes request-controlled proxy identity and emits only the generic-v1 scheme claim.
+///
+/// Generic v1 intentionally makes no client-IP or trusted-proxy provenance claim; those semantics
+/// require a separately characterized and versioned edge contract.
+fn sanitize_forwarding_headers(upstream_request: &mut RequestHeader) -> pingora::Result<()> {
+    for header in [
+        "Forwarded",
+        "X-Forwarded-For",
+        "X-Forwarded-Host",
+        "X-Forwarded-Port",
+        "X-Forwarded-Proto",
+        "X-Forwarded-Server",
+        "X-Real-IP",
+    ] {
+        upstream_request.remove_header(header);
+    }
+    upstream_request
+        .insert_header("Forwarded", "proto=http")
+        .expect("literal gateway-owned Forwarded header must be valid");
+    Ok(())
 }
 
 #[async_trait]
@@ -200,17 +242,7 @@ impl ProxyHttp for GatewayProxy {
     where
         Self::CTX: Send + Sync,
     {
-        for header in [
-            "Forwarded",
-            "X-Forwarded-For",
-            "X-Forwarded-Host",
-            "X-Forwarded-Proto",
-            "X-Real-IP",
-        ] {
-            upstream_request.remove_header(header);
-        }
-        upstream_request.insert_header("Forwarded", "proto=http")?;
-        Ok(())
+        sanitize_forwarding_headers(upstream_request)
     }
 
     async fn logging(&self, session: &mut Session, error: Option<&Error>, ctx: &mut Self::CTX)
@@ -223,11 +255,48 @@ impl ProxyHttp for GatewayProxy {
 
 #[cfg(test)]
 mod tests {
-    use super::{body_rejection_to_pingora, RequestContext};
+    use super::{body_rejection_to_pingora, sanitize_forwarding_headers, RequestContext};
     use crate::runtime_isolation::{
         BodyLimitExceeded, RequestAdmissionBudget, RuntimeIsolationLimits,
     };
-    use pingora::prelude::{ErrorType, ProxyHttp};
+    use pingora::prelude::{ErrorType, ProxyHttp, RequestHeader};
+
+    #[test]
+    fn generic_forwarding_sanitization_removes_all_client_controlled_proxy_identity() {
+        let mut request =
+            RequestHeader::build("GET", b"/", None).expect("fixture request must be valid");
+        for (name, value) in [
+            ("Forwarded", "for=attacker"),
+            ("X-Forwarded-For", "203.0.113.77"),
+            ("X-Forwarded-Host", "attacker.example"),
+            ("X-Forwarded-Port", "4444"),
+            ("X-Forwarded-Proto", "https"),
+            ("X-Forwarded-Server", "attacker-proxy"),
+            ("X-Real-IP", "203.0.113.77"),
+        ] {
+            request
+                .insert_header(name, value)
+                .expect("fixture forwarding header must be valid");
+        }
+
+        sanitize_forwarding_headers(&mut request)
+            .expect("gateway-owned forwarding metadata must remain valid");
+
+        assert_eq!(request.headers["forwarded"].to_str().unwrap(), "proto=http");
+        for name in [
+            "x-forwarded-for",
+            "x-forwarded-host",
+            "x-forwarded-port",
+            "x-forwarded-proto",
+            "x-forwarded-server",
+            "x-real-ip",
+        ] {
+            assert!(
+                !request.headers.contains_key(name),
+                "{name} must not retain client-controlled identity"
+            );
+        }
+    }
 
     #[test]
     fn admission_budget_rejects_at_capacity_and_recovers_after_release() {

@@ -22,7 +22,7 @@ Each upstream has a stable non-empty name, a non-zero concrete socket address, `
 
 ## Request policy
 
-Pingora's standard upstream request policy supplies the pinned supplier's hop-by-hop and `Connection`-nomination sanitation. The generic gateway additionally removes client-provided `Forwarded`, `X-Forwarded-For`, `X-Forwarded-Host`, `X-Forwarded-Proto`, and `X-Real-IP`, then emits only gateway-owned `Forwarded: proto=http` for the v1 clear-text downstream listener. Generic v1 deliberately makes no client-IP identity claim.
+Pingora's standard upstream request policy supplies the pinned supplier's hop-by-hop and `Connection`-nomination sanitation. The generic gateway additionally removes client-provided `Forwarded`, `X-Forwarded-For`, `X-Forwarded-Host`, `X-Forwarded-Port`, `X-Forwarded-Proto`, `X-Forwarded-Server`, and `X-Real-IP`, then emits only gateway-owned `Forwarded: proto=http` for the v1 clear-text downstream listener. Generic v1 deliberately makes no client-IP identity or downstream proxy-provenance claim.
 
 The pg-erd migration adapter also discards request-controlled forwarding identity before rebuilding only the characterized compatibility fields from accepted transport/request authority. The current captured Traefik entry point is clear-text, so its forwarded scheme is explicitly `http`; HTTPS requires a separate TLS-derived contract rather than inference.
 
