@@ -284,9 +284,6 @@ fn raw_request(port: u16, request: &[u8]) -> String {
     stream
         .write_all(request)
         .expect("wire request must be writable");
-    stream
-        .shutdown(std::net::Shutdown::Write)
-        .expect("wire request write side must close cleanly");
 
     let mut response = Vec::new();
     stream
