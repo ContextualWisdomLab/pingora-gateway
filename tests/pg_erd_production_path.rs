@@ -222,7 +222,9 @@ fn compiled_pg_erd_listener_preserves_health_route_header_and_forwarding_boundar
     let metrics_address = reserve_loopback();
     assert_ne!(gateway_address, metrics_address);
 
-    let expected_forwarded_port = gateway_address.port();
+    // Forwarded port follows the original Host authority, not the process bind socket. This is
+    // required for container/Service/NAT deployments where external and listener ports differ.
+    let expected_forwarded_port = 8080_u16;
     let backend_thread = thread::spawn(move || {
         serve_origin(
             backend,
