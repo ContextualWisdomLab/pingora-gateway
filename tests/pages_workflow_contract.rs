@@ -80,6 +80,14 @@ fn pages_artifact_and_public_site_are_bound_to_exact_source() {
         2,
         "both public verification requests must reject cross-origin redirect substitution"
     );
+    assert!(
+        yaml.contains("if observed_sha=\"$(curl"),
+        "marker verification must branch on curl success before trusting response bytes"
+    );
+    assert!(
+        !yaml.contains("2>/dev/null || true"),
+        "marker verification must not mask a failed transfer while retaining its response body"
+    );
 }
 
 #[test]
