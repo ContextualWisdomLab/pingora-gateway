@@ -129,8 +129,12 @@ fn is_supported_header_name(value: &str) -> bool {
 
 fn is_supported_header_value(value: &str) -> bool {
     let bytes = value.as_bytes();
-    let has_boundary_whitespace = matches!(bytes.first(), Some(b' ' | b'\t'))
-        || matches!(bytes.last(), Some(b' ' | b'\t'));
+    let has_boundary_whitespace = bytes
+        .first()
+        .is_some_and(|byte| *byte == b' ' || *byte == b'\t')
+        || bytes
+            .last()
+            .is_some_and(|byte| *byte == b' ' || *byte == b'\t');
 
     !has_boundary_whitespace
         && bytes
