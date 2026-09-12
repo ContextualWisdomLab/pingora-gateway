@@ -16,6 +16,8 @@ jobs:
     permissions:
       contents: read
       pages: read
+    outputs:
+      index_sha256: ${{ steps.artifact_identity.outputs.index_sha256 }}
     steps:
       - name: Require protected default branch
         shell: bash
@@ -47,13 +49,16 @@ jobs:
           build_revision: ${{ github.sha }}
 
       - name: Bind site artifact to source revision and rendered root
+        id: artifact_identity
         shell: bash
         run: |
           set -euo pipefail
           test -f _site/index.html
           printf '%s\n' "$GITHUB_SHA" > _site/source-sha.txt
-          sha256sum _site/index.html | awk '{print $1}' > _site/index-sha256.txt
+          root_sha="$(sha256sum _site/index.html | awk '{print $1}')"
+          printf '%s\n' "$root_sha" > _site/index-sha256.txt
           grep -Eq '^[0-9a-f]{64}$' _site/index-sha256.txt
+          printf 'index_sha256=%s\n' "$root_sha" >> "$GITHUB_OUTPUT"
 
       - name: Upload exact Pages artifact
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5
@@ -80,6 +85,7 @@ jobs:
         env:
           PAGE_URL: ${{ steps.deployment.outputs.page_url }}
           EXPECTED_SHA: ${{ github.sha }}
+          EXPECTED_ROOT_SHA: ${{ needs.build.outputs.index_sha256 }}
         run: |
           set -euo pipefail
           test -n "$PAGE_URL"
@@ -87,6 +93,7 @@ jobs:
             https://*) ;;
             *) echo "Pages URL must use HTTPS" >&2; exit 1 ;;
           esac
+          printf '%s\n' "$EXPECTED_ROOT_SHA" | grep -Eq '^[0-9a-f]{64}$'
           marker_file="$(mktemp)"
           root_digest_file="$(mktemp)"
           root_file="$(mktemp)"
@@ -97,12 +104,12 @@ jobs:
               [ "$(cat "$marker_file")" = "$EXPECTED_SHA" ]; then
               if root_digest_status="$(curl --fail --silent --show-error --location --max-redirs 0 --proto '=https' --proto-redir '=https' --max-time 10 --output "$root_digest_file" --write-out '%{http_code}' "${PAGE_URL%/}/index-sha256.txt" 2>/dev/null)" && \
                 [ "$root_digest_status" = "200" ] && \
-                grep -Eq '^[0-9a-f]{64}$' "$root_digest_file"; then
+                grep -Eq '^[0-9a-f]{64}$' "$root_digest_file" && \
+                [ "$(cat "$root_digest_file")" = "$EXPECTED_ROOT_SHA" ]; then
                 if root_status="$(curl --fail --silent --show-error --location --max-redirs 0 --proto '=https' --proto-redir '=https' --max-time 10 --output "$root_file" --write-out '%{http_code}' "${PAGE_URL%/}/")" && \
                   [ "$root_status" = "200" ]; then
                   observed_root_sha="$(sha256sum "$root_file" | awk '{print $1}')"
-                  expected_root_sha="$(cat "$root_digest_file")"
-                  if [ "$observed_root_sha" = "$expected_root_sha" ]; then
+                  if [ "$observed_root_sha" = "$EXPECTED_ROOT_SHA" ]; then
                     exit 0
                   fi
                 fi
