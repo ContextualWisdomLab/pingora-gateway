@@ -6,9 +6,13 @@
 
 use async_trait::async_trait;
 use bytes::Bytes;
+use log::error;
 use pingora::prelude::{
     Error, ErrorType, HttpPeer, ProxyHttp, RequestHeader, ResponseHeader, Session,
 };
+use pingora::protocols::http::ServerSession;
+use pingora::proxy::FailToProxy;
+use pingora::ErrorSource;
 use thiserror::Error;
 
 use crate::forwarding_policy::{DownstreamScheme, ForwardingContext};
@@ -132,47 +136,14 @@ fn pg_erd_forwarding_context(
     session: &Session,
     upstream_request: &RequestHeader,
 ) -> pingora::Result<ForwardingContext> {
-    let client_ip = session
-        .client_addr()
-        .and_then(|address| address.as_inet())
-        .map(|address| address.ip())
-        .ok_or_else(|| {
-            Error::explain(
-                ErrorType::HTTPStatus(500),
-                "pg-erd migration requires an IP downstream client address",
-            )
-        })?;
-    let downstream_port = session
-        .server_addr()
-        .and_then(|address| address.as_inet())
-        .map(|address| address.port())
-        .ok_or_else(|| {
-            Error::explain(
-                ErrorType::HTTPStatus(500),
-                "pg-erd migration requires an IP downstream listener address",
-            )
-        })?;
-    let original_host = upstream_request
-        .headers
-        .get("host")
-        .or_else(|| session.req_header().headers.get("host"))
-        .and_then(|value| value.to_str().ok())
-        .map(str::to_owned)
-        .ok_or_else(|| {
-            Error::explain(
-                ErrorType::HTTPStatus(400),
-                "pg-erd migration requires a valid downstream Host authority",
-            )
-        })?;
-
     // The characterized pg-erd Traefik configuration exposes only the clear-text `web`
     // entryPoint. Downstream TLS is a separate migration contract and must not be invented here.
-    Ok(ForwardingContext::new(
-        client_ip,
-        original_host,
-        downstream_port,
+    ForwardingContext::from_downstream_transport(
+        session.client_addr(),
+        upstream_request,
+        session.req_header(),
         DownstreamScheme::Http,
-    ))
+    )
 }
 
 fn body_rejection_to_pingora(rejection: BodyLimitExceeded) -> Box<Error> {
@@ -188,6 +159,21 @@ fn unmatched_route_to_pingora(_error: MigrationGatewayProxyError) -> Box<Error> 
         ErrorType::HTTPStatus(404),
         "request path does not match a characterized edge route",
     )
+}
+
+fn proxy_error_status(error: &Error) -> u16 {
+    if let ErrorType::HTTPStatus(code) = error.etype {
+        return code;
+    }
+
+    match error.esource {
+        ErrorSource::Upstream => 502,
+        ErrorSource::Downstream => match error.etype {
+            ErrorType::WriteError | ErrorType::ReadError | ErrorType::ConnectionClosed => 0,
+            _ => 400,
+        },
+        ErrorSource::Internal | ErrorSource::Unset => 500,
+    }
 }
 
 #[async_trait]
@@ -262,6 +248,32 @@ impl ProxyHttp for MigrationGatewayProxy {
         self.apply_response_headers(upstream_response)
     }
 
+    async fn fail_to_proxy(
+        &self,
+        session: &mut Session,
+        error_value: &Error,
+        _ctx: &mut Self::CTX,
+    ) -> FailToProxy {
+        let status = proxy_error_status(error_value);
+        if status > 0 {
+            let mut response = ServerSession::generate_error(status);
+            if let Err(policy_error) = self.apply_response_headers(&mut response) {
+                error!(
+                    "validated pg-erd response policy could not be applied to local error response: {policy_error}"
+                );
+            }
+            if let Err(write_error) = session.write_response_header(Box::new(response), true).await {
+                error!("failed to send policy-complete error response to downstream: {write_error}");
+            }
+        }
+
+        FailToProxy {
+            error_code: status,
+            // Preserve Pingora's conservative default: callback failures never opt into reuse.
+            can_reuse_downstream: false,
+        }
+    }
+
     async fn logging(&self, session: &mut Session, error: Option<&Error>, ctx: &mut Self::CTX)
     where
         Self::CTX: Send + Sync,
@@ -272,11 +284,12 @@ impl ProxyHttp for MigrationGatewayProxy {
 
 #[cfg(test)]
 mod tests {
-    use pingora::prelude::ErrorType;
+    use pingora::prelude::{Error, ErrorType};
+    use pingora::ErrorSource;
 
     use super::{
-        body_rejection_to_pingora, unmatched_route_to_pingora, MigrationGatewayProxyError,
-        MigrationRequestContext,
+        body_rejection_to_pingora, proxy_error_status, unmatched_route_to_pingora,
+        MigrationGatewayProxyError, MigrationRequestContext,
     };
     use crate::runtime_isolation::{BodyLimitExceeded, RuntimeIsolationLimits};
 
@@ -300,5 +313,27 @@ mod tests {
             request_path: "/missing".to_string(),
         });
         assert_eq!(route_error.etype, ErrorType::HTTPStatus(404));
+    }
+
+    #[test]
+    fn proxy_error_status_preserves_pingora_failure_mapping() {
+        let explicit = Error::explain(ErrorType::HTTPStatus(503), "saturated");
+        assert_eq!(proxy_error_status(&explicit), 503);
+
+        let mut upstream = Error::explain(ErrorType::ConnectError, "origin unavailable");
+        upstream.esource = ErrorSource::Upstream;
+        assert_eq!(proxy_error_status(&upstream), 502);
+
+        let mut downstream = Error::explain(ErrorType::InvalidHTTPHeader, "bad request");
+        downstream.esource = ErrorSource::Downstream;
+        assert_eq!(proxy_error_status(&downstream), 400);
+
+        let mut closed = Error::explain(ErrorType::ConnectionClosed, "peer closed");
+        closed.esource = ErrorSource::Downstream;
+        assert_eq!(proxy_error_status(&closed), 0);
+
+        let mut internal = Error::explain(ErrorType::InternalError, "internal failure");
+        internal.esource = ErrorSource::Internal;
+        assert_eq!(proxy_error_status(&internal), 500);
     }
 }
