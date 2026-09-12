@@ -118,12 +118,15 @@ impl ForwardingContext {
 
         let client_ip = self.client_ip.to_string();
         let downstream_port = self.downstream_port.to_string();
-        upstream_request.insert_header("X-Forwarded-For", client_ip.as_str())?;
-        upstream_request.insert_header("X-Real-IP", client_ip.as_str())?;
-        upstream_request.insert_header("X-Forwarded-Host", self.original_host.as_str())?;
-        upstream_request.insert_header("X-Forwarded-Port", downstream_port.as_str())?;
-        upstream_request.insert_header("X-Forwarded-Proto", self.scheme.as_str())?;
-        Ok(())
+        [
+            ("X-Forwarded-For", client_ip.as_str()),
+            ("X-Real-IP", client_ip.as_str()),
+            ("X-Forwarded-Host", self.original_host.as_str()),
+            ("X-Forwarded-Port", downstream_port.as_str()),
+            ("X-Forwarded-Proto", self.scheme.as_str()),
+        ]
+        .into_iter()
+        .try_for_each(|(name, value)| upstream_request.insert_header(name, value))
     }
 }
 
@@ -232,6 +235,54 @@ mod tests {
     }
 
     #[test]
+    fn downstream_host_is_fallback_authority_when_upstream_host_is_absent() {
+        let client = PingoraSocketAddr::from(SocketAddr::from((Ipv4Addr::LOCALHOST, 49152)));
+        let upstream = RequestHeader::build("GET", b"/", None).expect("fixture request is valid");
+        let downstream = request_with_host("fallback.example:8080");
+
+        let context = ForwardingContext::from_downstream_transport(
+            Some(&client),
+            &upstream,
+            &downstream,
+            DownstreamScheme::Http,
+        )
+        .expect("downstream Host must supply fallback authority");
+
+        assert_eq!(context.original_host, "fallback.example:8080");
+        assert_eq!(context.downstream_port, 8080);
+    }
+
+    #[test]
+    fn missing_host_authority_fails_closed() {
+        let client = PingoraSocketAddr::from(SocketAddr::from((Ipv4Addr::LOCALHOST, 49152)));
+        let request = RequestHeader::build("GET", b"/", None).expect("fixture request is valid");
+
+        let error = ForwardingContext::from_downstream_transport(
+            Some(&client),
+            &request,
+            &request,
+            DownstreamScheme::Http,
+        )
+        .expect_err("missing Host authority must fail closed");
+
+        assert_eq!(error.etype, ErrorType::HTTPStatus(400));
+    }
+
+    #[test]
+    fn invalid_forwarding_field_value_fails_closed() {
+        let mut request =
+            RequestHeader::build("GET", b"/", None).expect("fixture request must be valid");
+        let context = ForwardingContext::new(
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+            "bad\nvalue".to_string(),
+            80,
+            DownstreamScheme::Http,
+        );
+
+        assert!(context.apply(&mut request).is_err());
+    }
+
+    #[test]
     fn explicit_and_ipv6_host_ports_are_preserved() {
         assert_eq!(
             authority_port("app.example:8080", DownstreamScheme::Http).unwrap(),
@@ -256,6 +307,7 @@ mod tests {
             "2001:db8::1",
             "[::1",
             "[::1]junk",
+            "app[example",
         ] {
             let error = authority_port(authority, DownstreamScheme::Http)
                 .expect_err("malformed authority must not produce forwarding metadata");
