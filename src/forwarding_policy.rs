@@ -118,7 +118,7 @@ impl ForwardingContext {
 
         let client_ip = self.client_ip.to_string();
         let downstream_port = self.downstream_port.to_string();
-        [
+        let insertion_result = [
             ("X-Forwarded-For", client_ip.as_str()),
             ("X-Real-IP", client_ip.as_str()),
             ("X-Forwarded-Host", self.original_host.as_str()),
@@ -126,7 +126,8 @@ impl ForwardingContext {
             ("X-Forwarded-Proto", self.scheme.as_str()),
         ]
         .into_iter()
-        .try_for_each(|(name, value)| upstream_request.insert_header(name, value))
+        .try_for_each(|(name, value)| upstream_request.insert_header(name, value));
+        insertion_result
     }
 }
 
