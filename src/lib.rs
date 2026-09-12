@@ -6,6 +6,7 @@
 #![deny(missing_docs)]
 
 pub mod edge_contract;
+pub mod edge_routing;
 pub mod gateway_proxy;
 pub mod pingora_delivery;
 pub mod runtime_policy;
