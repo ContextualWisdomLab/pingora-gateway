@@ -10,6 +10,8 @@ The **Edge Routing** bounded context characterizes deterministic request-path se
 
 The **HTTP Policy** bounded context characterizes explicit edge-owned HTTP response mutations independently from route selection and Pingora delivery. The current candidate records response-security fields already emitted by a consumer edge. It does not own application response semantics, authentication/authorization, Wardnet/EgressWeave verdicts, or Keyverse identity, and it is not yet activated in Pingora callbacks.
 
+The **Migration Plan** bounded context composes characterized Edge Routing and HTTP Policy with an explicit upstream-authority set before runtime wiring. It proves that every characterized route points only to an admitted stable upstream identity; it does not grant network authority, construct Pingora peers, or activate traffic.
+
 The **Pingora Delivery** adapter maps admitted values to `HttpPeer`, proxy callbacks, header policy, health responses, and request-body enforcement. Pingora types never cross into the transport-neutral bounded contexts. `GatewayCommand` is the application startup service that reads and validates configuration before the composition root grants network authority.
 
 There is no domain event in immutable startup-only v1 because nothing in the active domain changes after activation. Dynamic reload, if introduced, would require explicit configuration-accepted/rejected lifecycle events rather than retrofitting hidden mutation.
@@ -20,9 +22,12 @@ There is no domain event in immutable startup-only v1 because nothing in the act
 consumer legacy-edge evidence
        |             |
        v             v
- Edge Routing     HTTP Policy       (characterization; not active v1)
+ Edge Routing     HTTP Policy       (characterization)
        \             /
         \           /
+         Migration Plan             (explicit stable upstream authority;
+                                     not active runtime delivery)
+
 operator YAML --> Edge Contract --> startup application service
                                       |
                                       v
@@ -32,8 +37,8 @@ operator YAML --> Edge Contract --> startup application service
                                Cloudflare Pingora
 ```
 
-Consumer repositories depend on documented image/config/deployment contracts, not Rust internals. Product-specific behavior stays upstream or in a separately justified adapter owned by that consumer. Characterization modules may encode only observed shared-edge semantics and do not by themselves grant runtime authority.
+Consumer repositories depend on documented image/config/deployment contracts, not Rust internals. Product-specific behavior stays upstream or in a separately justified adapter owned by that consumer. Characterization and migration-plan modules may encode only observed shared-edge semantics and explicit stable upstream identity authority; they do not by themselves grant runtime network authority.
 
 ## Anti-corruption boundary
 
-`edge_contract`, `edge_routing`, and `http_policy` are transport-neutral anti-corruption boundaries against Pingora-specific delivery semantics. `pingora_delivery` may translate admitted network values to `HttpPeer`; `gateway_proxy` may implement `ProxyHttp`. Reversing these dependencies, importing product-domain authorization/business code, or letting request-controlled destinations become upstream authority is a DDD defect.
+`edge_contract`, `edge_routing`, `http_policy`, and `migration_plan` are transport-neutral anti-corruption boundaries against Pingora-specific delivery semantics. `pingora_delivery` may translate admitted network values to `HttpPeer`; `gateway_proxy` may implement `ProxyHttp`. Reversing these dependencies, importing product-domain authorization/business code, performing implicit service discovery, or letting request-controlled destinations become upstream authority is a DDD defect.
