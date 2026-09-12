@@ -14,6 +14,7 @@ The first publication lane is intentionally `workflow_dispatch` only. Repository
 - The workflow uses GitHub's Jekyll Pages builder because the buyer source is Markdown under `docs/`; uploading the raw directory would not prove the rendered site that users receive.
 - Deployment concurrency does not cancel an in-flight publish. A later publish may queue, but the current production deployment is allowed to finish so the externally observed source identity remains attributable.
 - GitHub's Pages deployment documentation requires `pages: write` and `id-token: write` on the deploy job. Those privileges are therefore scoped to `deploy`; the build job has only `contents: read` and `pages: read`, while workflow-level permissions are empty. This prevents the build/Jekyll steps from minting an OIDC token or creating a Pages deployment.
+- Public verification must remain HTTPS across redirects, not only at the initial `page_url`. `curl --location` permits redirect protocol changes unless they are constrained; both the source-marker request and root request therefore use `--proto '=https' --proto-redir '=https'`. This prevents an HTTPS-to-HTTP redirect from turning a transport-downgraded response into publication evidence.
 
 ## Exact action authority
 
@@ -39,7 +40,8 @@ Source-level acceptance is encoded by `tests/pages_workflow_contract.rs` and req
 - exact-SHA action pins;
 - Jekyll build from `./docs` into `./_site`;
 - a generated `source-sha.txt` containing the protected source SHA;
-- Pages artifact upload, deployment through `github-pages`, and public HTTPS verification of both the source marker and site root; and
+- Pages artifact upload, deployment through `github-pages`, and public HTTPS verification of both the source marker and site root;
+- HTTPS-only initial and redirect protocols on both public verification requests; and
 - serialized deployment without cancelling an in-progress publication.
 
 Operational completion additionally requires repository-owner administration to enable GitHub Pages with GitHub Actions as the publishing source, followed by a successful manual run from protected `main`. Record the deployment run, protected source SHA, returned public URL, and the public `/source-sha.txt` value. Until that happens, the Pages gap remains open.
@@ -54,6 +56,8 @@ GitHub. (n.d.). *Configuring a publishing source for your GitHub Pages site*. Gi
 
 GitHub. (n.d.). *Using custom workflows with GitHub Pages*. GitHub Docs. https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages
 
+GitHub. (n.d.). *Securing your GitHub Pages site with HTTPS*. GitHub Docs. https://docs.github.com/en/pages/getting-started-with-github-pages/securing-your-github-pages-site-with-https
+
 GitHub. (n.d.). *Workflow syntax for GitHub Actions: Defining access for the GITHUB_TOKEN scopes*. GitHub Docs. https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax
 
 GitHub. (2026). *actions/configure-pages v6 action metadata* [Source code, commit 45bfe0192ca1faeb007ade9deae92b16b8254a0d]. https://github.com/actions/configure-pages/blob/45bfe0192ca1faeb007ade9deae92b16b8254a0d/action.yml
@@ -61,3 +65,5 @@ GitHub. (2026). *actions/configure-pages v6 action metadata* [Source code, commi
 GitHub. (2026). *actions/deploy-pages* [Documentation, v5 line]. https://github.com/actions/deploy-pages
 
 GitHub. (2026, April 10). *actions/upload-pages-artifact v5.0.0*. https://github.com/actions/upload-pages-artifact/releases/tag/v5.0.0
+
+The curl project. (n.d.). *curl man page: `--proto` and `--proto-redir`*. https://curl.se/docs/manpage.html
