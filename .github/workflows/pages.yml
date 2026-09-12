@@ -46,12 +46,14 @@ jobs:
           destination: ./_site
           build_revision: ${{ github.sha }}
 
-      - name: Bind site artifact to source revision
+      - name: Bind site artifact to source revision and rendered root
         shell: bash
         run: |
           set -euo pipefail
           test -f _site/index.html
           printf '%s\n' "$GITHUB_SHA" > _site/source-sha.txt
+          sha256sum _site/index.html | awk '{print $1}' > _site/index-sha256.txt
+          grep -Eq '^[0-9a-f]{64}$' _site/index-sha256.txt
 
       - name: Upload exact Pages artifact
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5
@@ -73,7 +75,7 @@ jobs:
         id: deployment
         uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5
 
-      - name: Verify public site source identity
+      - name: Verify public site source identity and rendered root
         shell: bash
         env:
           PAGE_URL: ${{ steps.deployment.outputs.page_url }}
@@ -86,17 +88,27 @@ jobs:
             *) echo "Pages URL must use HTTPS" >&2; exit 1 ;;
           esac
           marker_file="$(mktemp)"
-          trap 'rm -f "$marker_file"' EXIT
+          root_digest_file="$(mktemp)"
+          root_file="$(mktemp)"
+          trap 'rm -f "$marker_file" "$root_digest_file" "$root_file"' EXIT
           for attempt in $(seq 1 12); do
             if marker_status="$(curl --fail --silent --show-error --location --max-redirs 0 --proto '=https' --proto-redir '=https' --max-time 10 --output "$marker_file" --write-out '%{http_code}' "${PAGE_URL%/}/source-sha.txt" 2>/dev/null)" && \
               [ "$marker_status" = "200" ] && \
               [ "$(cat "$marker_file")" = "$EXPECTED_SHA" ]; then
-              if root_status="$(curl --fail --silent --show-error --location --max-redirs 0 --proto '=https' --proto-redir '=https' --max-time 10 --output /dev/null --write-out '%{http_code}' "${PAGE_URL%/}/")" && \
-                [ "$root_status" = "200" ]; then
-                exit 0
+              if root_digest_status="$(curl --fail --silent --show-error --location --max-redirs 0 --proto '=https' --proto-redir '=https' --max-time 10 --output "$root_digest_file" --write-out '%{http_code}' "${PAGE_URL%/}/index-sha256.txt" 2>/dev/null)" && \
+                [ "$root_digest_status" = "200" ] && \
+                grep -Eq '^[0-9a-f]{64}$' "$root_digest_file"; then
+                if root_status="$(curl --fail --silent --show-error --location --max-redirs 0 --proto '=https' --proto-redir '=https' --max-time 10 --output "$root_file" --write-out '%{http_code}' "${PAGE_URL%/}/")" && \
+                  [ "$root_status" = "200" ]; then
+                  observed_root_sha="$(sha256sum "$root_file" | awk '{print $1}')"
+                  expected_root_sha="$(cat "$root_digest_file")"
+                  if [ "$observed_root_sha" = "$expected_root_sha" ]; then
+                    exit 0
+                  fi
+                fi
               fi
             fi
             sleep 5
           done
-          echo "Published Pages source identity did not converge to $EXPECTED_SHA" >&2
+          echo "Published Pages source identity and rendered root did not converge to $EXPECTED_SHA" >&2
           exit 1
