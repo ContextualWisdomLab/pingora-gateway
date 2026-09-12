@@ -15,6 +15,7 @@ The first publication lane is intentionally `workflow_dispatch` only. Repository
 - Deployment concurrency does not cancel an in-flight publish. A later publish may queue, but the current production deployment is allowed to finish so the externally observed source identity remains attributable.
 - GitHub's Pages deployment documentation requires `pages: write` and `id-token: write` on the deploy job. Those privileges are therefore scoped to `deploy`; the build job has only `contents: read` and `pages: read`, while workflow-level permissions are empty. This prevents the build/Jekyll steps from minting an OIDC token or creating a Pages deployment.
 - Public verification must remain HTTPS and must not transfer publication evidence to a redirected origin. `curl --location` follows a redirect to a new location, including another host, while `--proto-redir` constrains only the protocol. Because the expected Git commit SHA is public, an unrelated HTTPS origin could return that marker and create false publication evidence if cross-origin redirects were accepted. Both the source-marker request and root request therefore combine HTTPS-only protocol restrictions with `--max-redirs 0`. Any redirect fails closed; an intentionally redirected Pages topology must first be represented by a canonical `page_url` or an explicit, reviewed origin-binding contract rather than being silently followed.
+- Transfer failure is part of the identity decision. The marker response is trusted only when curl itself succeeds. A previous retry form used command substitution followed by `|| true`; that could mask a redirect/transport failure while retaining response bytes from the failed transfer. If those bytes equalled the public expected SHA, they could be mistaken for successful publication evidence. The current loop branches on the curl assignment's real exit status and compares the marker only after a successful transfer.
 
 ## Exact action authority
 
@@ -41,10 +42,13 @@ Source-level acceptance is encoded by `tests/pages_workflow_contract.rs` and req
 - Jekyll build from `./docs` into `./_site`;
 - a generated `source-sha.txt` containing the protected source SHA;
 - Pages artifact upload, deployment through `github-pages`, and public HTTPS verification of both the source marker and site root;
-- HTTPS-only initial/redirect protocol policy plus zero accepted redirects on both public verification requests, preventing transport downgrade and redirected-origin substitution; and
+- HTTPS-only initial/redirect protocol policy plus zero accepted redirects on both public verification requests, preventing transport downgrade and redirected-origin substitution;
+- preservation of curl failure status before any marker bytes are compared with the expected SHA; and
 - serialized deployment without cancelling an in-progress publication.
 
 The redirected-origin repair was derived from a hostile case in which an initially trusted HTTPS endpoint redirected the marker request to a different HTTPS origin. The historical verifier would follow that redirect because `--proto-redir '=https'` approves the scheme, not the origin. The repaired verifier uses `--max-redirs 0`, so the same topology cannot satisfy the marker check. This is an evidence-identity boundary: the marker must be served directly by the deployment URL returned for the Pages environment, not merely by any HTTPS location reachable from it.
+
+A second hostile boundary follows from shell exit semantics. A failed curl may have emitted response bytes before returning non-zero. Masking that status with `|| true` turns the assignment into success and leaves those bytes available for comparison. The verifier therefore uses the assignment itself as the `if` condition and compares `observed_sha` only on zero exit. Retry remains available because a failed transfer simply advances to the next bounded attempt; failure is not converted into evidence.
 
 Operational completion additionally requires repository-owner administration to enable GitHub Pages with GitHub Actions as the publishing source, followed by a successful manual run from protected `main`. Record the deployment run, protected source SHA, returned public URL, and the public `/source-sha.txt` value. Until that happens, the Pages gap remains open.
 
