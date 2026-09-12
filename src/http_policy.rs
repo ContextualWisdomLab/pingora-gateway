@@ -41,10 +41,10 @@ pub enum HeaderPolicyError {
         /// Field whose configured value is empty after trimming optional whitespace.
         header_name: String,
     },
-    /// CR/LF is rejected to prevent response-splitting/header-injection semantics.
+    /// Field values must satisfy the RFC 9110 field-content boundary before transport activation.
     #[error("invalid HTTP response header value for {header_name}")]
     InvalidHeaderValue {
-        /// Field whose configured value contains prohibited line breaks.
+        /// Field whose configured value contains invalid control or boundary whitespace.
         header_name: String,
     },
 }
@@ -61,7 +61,8 @@ impl ResponseHeaderPolicy {
     /// Field-name uniqueness is ASCII case-insensitive as required by HTTP semantics. The current
     /// migration profile deliberately accepts only alphanumerics and `-`, which covers the captured
     /// consumer contracts while remaining a strict subset of legal HTTP field-name syntax. Values
-    /// reject CR/LF so a migration contract cannot accidentally introduce response splitting.
+    /// reject leading/trailing SP or HTAB and every invalid control octet while allowing interior SP
+    /// and HTAB, visible octets, and opaque obs-text bytes permitted by RFC 9110 field-content.
     pub fn try_new(headers: Vec<ResponseHeaderRule>) -> Result<Self, HeaderPolicyError> {
         if headers.is_empty() {
             return Err(HeaderPolicyError::NoHeaders);
@@ -87,7 +88,7 @@ impl ResponseHeaderPolicy {
                     header_name: header.name.clone(),
                 });
             }
-            if header.value.contains('\r') || header.value.contains('\n') {
+            if !is_supported_header_value(&header.value) {
                 return Err(HeaderPolicyError::InvalidHeaderValue {
                     header_name: header.name.clone(),
                 });
@@ -129,4 +130,19 @@ fn is_supported_header_name(value: &str) -> bool {
         && value
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+}
+
+fn is_supported_header_value(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    let has_boundary_whitespace = bytes
+        .first()
+        .is_some_and(|byte| *byte == b' ' || *byte == b'\t')
+        || bytes
+            .last()
+            .is_some_and(|byte| *byte == b' ' || *byte == b'\t');
+
+    !has_boundary_whitespace
+        && bytes
+            .iter()
+            .all(|byte| *byte == b'\t' || (*byte >= 0x20 && *byte != 0x7f))
 }
