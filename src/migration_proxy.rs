@@ -162,13 +162,13 @@ fn unmatched_route_to_pingora(_error: MigrationGatewayProxyError) -> Box<Error> 
 }
 
 fn proxy_error_status(error: &Error) -> u16 {
-    if let ErrorType::HTTPStatus(code) = error.etype {
-        return code;
+    if let ErrorType::HTTPStatus(code) = &error.etype {
+        return *code;
     }
 
-    match error.esource {
+    match &error.esource {
         ErrorSource::Upstream => 502,
-        ErrorSource::Downstream => match error.etype {
+        ErrorSource::Downstream => match &error.etype {
             ErrorType::WriteError | ErrorType::ReadError | ErrorType::ConnectionClosed => 0,
             _ => 400,
         },
