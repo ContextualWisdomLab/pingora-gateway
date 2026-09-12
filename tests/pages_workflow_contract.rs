@@ -18,7 +18,7 @@ fn pages_publication_is_manual_and_protected_main_only() {
 }
 
 #[test]
-fn pages_actions_are_immutable_and_least_privilege() {
+fn pages_actions_are_immutable_and_permissions_are_job_scoped() {
     let yaml = workflow();
     for expected in [
         "actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803",
@@ -26,9 +26,9 @@ fn pages_actions_are_immutable_and_least_privilege() {
         "actions/jekyll-build-pages@44a6e6beabd48582f863aeeb6cb2151cc1716697",
         "actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9",
         "actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346",
-        "contents: read",
-        "pages: write",
-        "id-token: write",
+        "permissions: {}",
+        "build:\n    name: build-pages\n    runs-on: ubuntu-latest\n    permissions:\n      contents: read\n      pages: read",
+        "deploy:\n    name: deploy-pages\n    runs-on: ubuntu-latest\n    needs: build\n    permissions:\n      pages: write\n      id-token: write",
         "persist-credentials: false",
     ] {
         assert!(
