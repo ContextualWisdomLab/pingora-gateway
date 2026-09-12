@@ -12,7 +12,7 @@ Inbound forwarding identity is deleted before proxying. V1 emits only `Forwarded
 
 Request bodies and upstream connect/read/write/idle time are bounded. The Pingora HTTP parser has finite protocol/header limits, but a smaller configurable header budget remains a documented gap. Process-wide concurrent application traffic is bounded by the mandatory `max_in_flight_requests` admission budget and fails fast with 503 rather than queueing unbounded work.
 
-The transport-neutral `http_policy` candidate characterizes edge-owned response headers without activating them in v1. It treats field names ASCII case-insensitively, rejects duplicate field authority, empty values, and CR/LF values before activation. Its current name profile is deliberately narrower than the full legal HTTP field-name grammar because only observed migration contracts are admitted. This policy does not absorb product authorization/business response semantics, Wardnet/EgressWeave verdicts, or Keyverse identity.
+The transport-neutral `http_policy` candidate characterizes edge-owned response headers without activating them in v1. It treats field names ASCII case-insensitively, rejects duplicate field authority and empty values, and enforces the RFC 9110 field-content boundary before activation: CR, LF, NUL, DEL and other invalid controls fail closed, as do leading or trailing SP/HTAB; valid interior SP/HTAB remains admissible. Its current name profile is deliberately narrower than the full legal HTTP field-name grammar because only observed migration contracts are admitted. This policy does not absorb product authorization/business response semantics, Wardnet/EgressWeave verdicts, or Keyverse identity.
 
 ## Logging and data minimization
 

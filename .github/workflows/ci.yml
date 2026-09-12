@@ -2,20 +2,24 @@ name: CI
 
 on:
   push:
+    branches:
+      - main
   pull_request:
+    types: [opened, synchronize, reopened, converted_to_draft, ready_for_review]
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.repository }}-${{ github.event_name == 'pull_request' && github.run_attempt == 1 && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
 
 jobs:
   test:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout exact revision
@@ -69,6 +73,7 @@ jobs:
           retention-days: 1
 
   load-contract:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -105,24 +110,6 @@ jobs:
           set -euo pipefail
           python3 tests/load/upstream_fixture.py >/tmp/upstream-fixture.log 2>&1 &
           upstream_pid=$!
-          gateway_pid=""
-
-          cleanup() {
-            status=$?
-            if [ -n "$gateway_pid" ]; then
-              kill "$gateway_pid" >/dev/null 2>&1 || true
-              wait "$gateway_pid" >/dev/null 2>&1 || true
-            fi
-            kill "$upstream_pid" >/dev/null 2>&1 || true
-            wait "$upstream_pid" >/dev/null 2>&1 || true
-            if [ "$status" -ne 0 ]; then
-              echo "--- gateway log ---"
-              cat /tmp/gateway-load.log || true
-              echo "--- upstream fixture log ---"
-              cat /tmp/upstream-fixture.log || true
-            fi
-          }
-          trap cleanup EXIT
 
           cat >/tmp/gateway-load.yaml <<'EOF'
           version: 1
@@ -143,22 +130,23 @@ jobs:
                 idle_ms: 5000
           EOF
 
-          # Prove the measured origin has bound before gateway startup and measured traffic.
-          # This is fixture liveness, not a gateway-route warm-up.
-          for _ in $(seq 1 80); do
-            if curl --fail --silent --show-error --max-time 1 http://127.0.0.1:18081/fixture-ready >/dev/null; then
-              break
-            fi
-            if ! kill -0 "$upstream_pid" 2>/dev/null; then
-              echo "upstream fixture exited before becoming ready" >&2
-              exit 1
-            fi
-            sleep 0.05
-          done
-          curl --fail --silent --show-error --max-time 1 http://127.0.0.1:18081/fixture-ready >/dev/null
-
           target/release/cwl-pingora-gateway --config /tmp/gateway-load.yaml >/tmp/gateway-load.log 2>&1 &
           gateway_pid=$!
+          # Invoked indirectly by the EXIT trap.
+          # shellcheck disable=SC2329
+          cleanup() {
+            status=$?
+            kill "$gateway_pid" "$upstream_pid" >/dev/null 2>&1 || true
+            wait "$gateway_pid" >/dev/null 2>&1 || true
+            wait "$upstream_pid" >/dev/null 2>&1 || true
+            if [ "$status" -ne 0 ]; then
+              echo "--- gateway log ---"
+              cat /tmp/gateway-load.log || true
+              echo "--- upstream fixture log ---"
+              cat /tmp/upstream-fixture.log || true
+            fi
+          }
+          trap cleanup EXIT
 
           for _ in $(seq 1 80); do
             if curl --fail --silent --show-error --max-time 1 http://127.0.0.1:18080/livez >/dev/null; then
@@ -183,6 +171,7 @@ jobs:
           retention-days: 7
 
   oci-runtime:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout exact revision
@@ -211,11 +200,7 @@ jobs:
             --mount "type=bind,src=${PWD}/examples/gateway.yaml,dst=/etc/cwl/gateway.yaml,readonly" \
             "${image}" \
             --config /etc/cwl/gateway.yaml)"
-          cleanup() {
-            docker logs "${cid}" || true
-            docker rm --force "${cid}" >/dev/null 2>&1 || true
-          }
-          trap cleanup EXIT
+          trap 'docker logs "${cid}" || true; docker rm --force "${cid}" >/dev/null 2>&1 || true' EXIT
 
           test "$(docker inspect "${cid}" --format '{{.HostConfig.ReadonlyRootfs}}')" = "true"
           test "$(docker inspect "${cid}" --format '{{json .HostConfig.CapDrop}}')" = '["ALL"]'

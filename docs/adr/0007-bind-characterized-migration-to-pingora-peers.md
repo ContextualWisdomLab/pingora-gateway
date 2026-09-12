@@ -2,21 +2,22 @@
 
 - Status: Candidate
 - Date: 2026-09-02
-- Bounded contexts: Edge Routing, Admin Config, Pingora Delivery
+- Bounded contexts: Edge Contract, Edge Routing, HTTP Policy
+- Adapter: Migration Delivery, conforming to Pingora through the existing Pingora Delivery boundary
 
 ## Context
 
-ADR 0006 introduced `EdgeMigrationPlan` so the captured `pg-erd-cloud` route and HTTP-policy contracts cannot name network authorities outside the explicit `backend` / `frontend` migration set. That contract intentionally stops before Pingora transport activation.
+ADR 0006 introduced `EdgeMigrationPlan` so the captured `pg-erd-cloud` route and HTTP-policy contracts cannot name network authorities outside the explicit `backend` / `frontend` migration set. That application composition intentionally stops before Pingora transport activation.
 
 The existing active `GatewayConfig` v1 remains deliberately narrower: one gateway process admits exactly one upstream. Widening that public configuration contract and changing `GatewayProxy` request delivery at the same time would collapse characterization, transport binding, runtime routing, and traffic activation into one change. It would also make it harder to prove that a multi-route migration never obtains implicit service-discovery authority.
 
 ## Decision
 
-Introduce `MigrationDeliveryPlan` as a delivery adapter between a validated `EdgeMigrationPlan` and concrete Pingora `HttpPeer` values.
+Introduce `MigrationDeliveryPlan` as a delivery adapter between a validated `EdgeMigrationPlan`, explicit `UpstreamConfig` values admitted by Edge Contract, and concrete Pingora `HttpPeer` values.
 
 Every upstream admitted by the migration plan must have exactly one explicit `UpstreamConfig`. A concrete configuration whose normalized stable name is duplicated or absent from the migration plan fails closed. Concrete peers are created only through the existing `pingora_delivery::build_peer` path, retaining its TLS identity, trust-bundle, protocol, and timeout validation.
 
-Count equality, unique configured names, and membership in the migration authority set together prove a complete one-to-one binding. Request-path selection remains owned by `EdgeMigrationPlan`; this adapter only resolves the selected stable identity to the prevalidated peer. A path with no characterized route receives no invented fallback destination.
+Count equality, unique configured names, and membership in the migration authority set together prove a complete one-to-one binding. Request-path selection remains owned by Edge Routing through the `EdgeMigrationPlan` composition; this adapter only resolves the selected stable identity to the prevalidated peer. A path with no characterized route receives no invented fallback destination.
 
 For the current `pg-erd-cloud` characterization, transport authority is therefore limited to explicit `backend` and `frontend` configurations. No request header, URI authority, DNS response, service registry, product datum, or runtime payload may introduce another destination.
 

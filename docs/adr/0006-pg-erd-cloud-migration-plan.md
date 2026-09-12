@@ -2,7 +2,7 @@
 
 - Status: Candidate
 - Date: 2026-09-02
-- Bounded contexts: Edge Routing, HTTP Policy, Admin Config
+- Bounded contexts: Edge Routing, HTTP Policy
 
 ## Context
 
@@ -12,13 +12,13 @@ Independent route and header objects are necessary but not sufficient for a migr
 
 ## Decision
 
-Introduce a transport-neutral `EdgeMigrationPlan` that composes three already bounded concerns before any network listener is changed:
+Introduce a transport-neutral `EdgeMigrationPlan` application composition that combines three admitted concerns before any network listener is changed:
 
 1. an explicit normalized set of admitted upstream identities;
-2. a validated `RouteTable`;
-3. a validated `ResponseHeaderPolicy`.
+2. a validated `RouteTable` from Edge Routing;
+3. a validated `ResponseHeaderPolicy` from HTTP Policy.
 
-Every route target must match an admitted upstream identity exactly. Empty upstream sets, empty identities, normalized duplicates, unknown route targets, invalid route tables, and invalid HTTP policies fail closed.
+The upstream-identity set is migration-orchestration input; this ADR does not create a new bounded context or claim the active Admin/Edge Contract lifecycle. Every route target must match an admitted upstream identity exactly. Empty upstream sets, empty identities, normalized duplicates, unknown route targets, invalid route tables, and invalid HTTP policies fail closed.
 
 For the characterized pg-erd-cloud contract, the admitted identities are exactly `backend` and `frontend`. The plan preserves the observed raw Traefik prefix behavior, including `/apiary -> backend`; changing that behavior belongs to a separately reviewed product/edge contract rather than this migration characterization.
 
@@ -26,7 +26,7 @@ For the characterized pg-erd-cloud contract, the admitted identities are exactly
 
 RED commit `eeafaca3a55056be80c92961ff88e1516572c623` adds an executable consumer contract requiring the migration plan and fail-closed upstream-authority validation before the implementation exists.
 
-GREEN begins at `69acd6703ee8918853ce0ff16420a2c21a462b25`, which implements the transport-neutral composition boundary. Commit `92e064d48d40c5ef5e4d3f8b4ab5b521cae0003f` exposes the bounded context through the public library surface.
+GREEN begins at `69acd6703ee8918853ce0ff16420a2c21a462b25`, which implements the transport-neutral composition boundary. Commit `92e064d48d40c5ef5e4d3f8b4ab5b521cae0003f` exposes that application-composition API through the public library surface.
 
 The executable contract proves the exact pg-erd-cloud route/header profile, including `/healthz`, `/api/*`, the raw `/apiary` prefix case, SPA fallback, case-insensitive response-header lookup, missing route/header behavior, and all migration-plan validation branches.
 
