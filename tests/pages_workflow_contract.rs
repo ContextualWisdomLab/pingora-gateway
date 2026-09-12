@@ -51,7 +51,6 @@ fn pages_artifact_and_public_site_are_bound_to_exact_source() {
         "url: ${{ steps.deployment.outputs.page_url }}",
         "EXPECTED_SHA: ${{ github.sha }}",
         "source-sha.txt",
-        "curl --fail --silent --show-error --location",
         "Published Pages source identity did not converge",
     ] {
         assert!(
@@ -59,6 +58,23 @@ fn pages_artifact_and_public_site_are_bound_to_exact_source() {
             "missing source-identity contract: {expected}"
         );
     }
+
+    assert_eq!(
+        yaml.matches("curl --fail --silent --show-error --location")
+            .count(),
+        2,
+        "both public verification requests must stay structurally visible"
+    );
+    assert_eq!(
+        yaml.matches("--proto '=https'").count(),
+        2,
+        "both public verification requests must allow only HTTPS"
+    );
+    assert_eq!(
+        yaml.matches("--proto-redir '=https'").count(),
+        2,
+        "both public verification requests must reject redirect downgrade"
+    );
 }
 
 #[test]
