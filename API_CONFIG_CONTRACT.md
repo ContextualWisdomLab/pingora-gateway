@@ -31,7 +31,7 @@ Unknown fields are rejected. `version` must be `1`. `listener`, `metrics_listene
 
 The generic contract does not include route tables, user-selected destinations, credentials, downstream certificates, ACME, retry counts, static roots, WebSocket switches, or load-balancer policy. Adding one of those fields changes public semantics and requires a versioned contract/ADR plus behavior tests.
 
-Generic v1 downstream transport is cleartext TCP; the generic adapter strips inbound forwarding-identity headers and emits `Forwarded: proto=http` to the upstream. Upstream HTTP remains HTTP/1.1-only in this release line.
+Generic v1 downstream transport is cleartext TCP. Before proxying, the generic adapter removes request-controlled `Forwarded`, `X-Forwarded-For`, `X-Forwarded-Host`, `X-Forwarded-Port`, `X-Forwarded-Proto`, `X-Forwarded-Server`, and `X-Real-IP`, then emits only gateway-owned `Forwarded: proto=http` to the upstream; it does not assert client identity. Upstream HTTP remains HTTP/1.1-only in this release line.
 
 ## Bounded `cwl-pingora-pg-erd-migration` candidate
 
