@@ -262,8 +262,13 @@ impl ProxyHttp for MigrationGatewayProxy {
                     "validated pg-erd response policy could not be applied to local error response: {policy_error}"
                 );
             }
-            if let Err(write_error) = session.write_response_header(Box::new(response), true).await {
-                error!("failed to send policy-complete error response to downstream: {write_error}");
+            if let Err(write_error) = session
+                .write_response_header(Box::new(response), true)
+                .await
+            {
+                error!(
+                    "failed to send policy-complete error response to downstream: {write_error}"
+                );
             }
         }
 
