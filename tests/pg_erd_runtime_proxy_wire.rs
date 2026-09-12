@@ -174,7 +174,9 @@ fn handle_origin(mut stream: TcpStream) {
 }
 
 fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack.windows(needle.len()).position(|window| window == needle)
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
 }
 
 fn port_base() -> u16 {
@@ -195,10 +197,8 @@ fn migration_proxy_wire_server_fixture() {
 
     let mut server = Server::new_with_opt_and_conf(None, build_server_conf(8));
     server.bootstrap();
-    let mut proxy_service = http_proxy_service(
-        &server.configuration,
-        fixture_proxy(origin_port, dead_port),
-    );
+    let mut proxy_service =
+        http_proxy_service(&server.configuration, fixture_proxy(origin_port, dead_port));
     proxy_service.add_tcp(&format!("127.0.0.1:{listener_port}"));
     server.add_service(proxy_service);
     server.run(RunArgs::default());
@@ -304,9 +304,7 @@ fn assert_status_and_policy(response: &str, status: u16) {
     assert!(lower.contains("x-content-type-options: nosniff\r\n"));
     assert!(lower.contains("x-frame-options: deny\r\n"));
     assert!(lower.contains("referrer-policy: no-referrer\r\n"));
-    assert!(lower.contains(
-        "permissions-policy: geolocation=(), microphone=(), camera=()\r\n"
-    ));
+    assert!(lower.contains("permissions-policy: geolocation=(), microphone=(), camera=()\r\n"));
 }
 
 #[test]
@@ -321,17 +319,22 @@ fn migration_proxy_callbacks_run_on_real_http_traffic() {
         b"GET /healthz HTTP/1.1\r\nHost: app.example:8080\r\nConnection: close\r\n\r\n",
     );
     assert_status_and_policy(&ok, 200);
-    assert!(ok.contains("X-Forwarded-Host: app.example:8080\n"));
-    assert!(ok.contains("X-Forwarded-Port: 8080\n"));
-    assert!(ok.contains("X-Forwarded-Proto: http\n"));
-    assert!(ok.contains("X-Real-IP: 127.0.0.1\n"));
+    let ok_lower = ok.to_ascii_lowercase();
+    assert!(ok_lower.contains("x-forwarded-host: app.example:8080\n"));
+    assert!(ok_lower.contains("x-forwarded-port: 8080\n"));
+    assert!(ok_lower.contains("x-forwarded-proto: http\n"));
+    assert!(ok_lower.contains("x-real-ip: 127.0.0.1\n"));
 
     let small_body = raw_request(
         base,
         b"POST /api HTTP/1.1\r\nHost: app.example\r\nContent-Length: 4\r\nConnection: close\r\n\r\ntest",
     );
     assert_status_and_policy(&small_body, 200);
-    assert!(small_body.contains("X-Forwarded-Port: 80\n"));
+    assert!(
+        small_body
+            .to_ascii_lowercase()
+            .contains("x-forwarded-port: 80\n")
+    );
 
     let declared_oversize = raw_request(
         base,
