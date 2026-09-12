@@ -249,7 +249,14 @@ mod tests {
 
     #[test]
     fn malformed_host_authority_fails_closed() {
-        for authority in ["", "app.example:", "app.example:0", "2001:db8::1", "[::1", "[::1]junk"] {
+        for authority in [
+            "",
+            "app.example:",
+            "app.example:0",
+            "2001:db8::1",
+            "[::1",
+            "[::1]junk",
+        ] {
             let error = authority_port(authority, DownstreamScheme::Http)
                 .expect_err("malformed authority must not produce forwarding metadata");
             assert_eq!(error.etype, ErrorType::HTTPStatus(400));
