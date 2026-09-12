@@ -39,58 +39,68 @@ fn pages_actions_are_immutable_and_permissions_are_job_scoped() {
 }
 
 #[test]
-fn pages_artifact_and_public_site_are_bound_to_exact_source() {
+fn pages_artifact_and_public_site_are_bound_to_exact_source_and_rendered_root() {
     let yaml = workflow();
     for expected in [
         "source: ./docs",
         "destination: ./_site",
         "build_revision: ${{ github.sha }}",
         "printf '%s\\n' \"$GITHUB_SHA\" > _site/source-sha.txt",
+        "sha256sum _site/index.html | awk '{print $1}' > _site/index-sha256.txt",
         "path: ./_site",
         "name: github-pages",
         "url: ${{ steps.deployment.outputs.page_url }}",
         "EXPECTED_SHA: ${{ github.sha }}",
         "source-sha.txt",
-        "Published Pages source identity did not converge",
+        "index-sha256.txt",
+        "Published Pages source identity and rendered root did not converge",
         "marker_file=\"$(mktemp)\"",
-        "trap 'rm -f \"$marker_file\"' EXIT",
+        "root_digest_file=\"$(mktemp)\"",
+        "root_file=\"$(mktemp)\"",
+        "trap 'rm -f \"$marker_file\" \"$root_digest_file\" \"$root_file\"' EXIT",
         "marker_status=\"$(curl",
+        "root_digest_status=\"$(curl",
         "root_status=\"$(curl",
         "[ \"$marker_status\" = \"200\" ]",
         "[ \"$(cat \"$marker_file\")\" = \"$EXPECTED_SHA\" ]",
+        "[ \"$root_digest_status\" = \"200\" ]",
+        "grep -Eq '^[0-9a-f]{64}$' \"$root_digest_file\"",
         "[ \"$root_status\" = \"200\" ]",
+        "observed_root_sha=\"$(sha256sum \"$root_file\" | awk '{print $1}')\"",
+        "expected_root_sha=\"$(cat \"$root_digest_file\")\"",
+        "[ \"$observed_root_sha\" = \"$expected_root_sha\" ]",
     ] {
         assert!(
             yaml.contains(expected),
-            "missing source-identity contract: {expected}"
+            "missing source/rendered-root identity contract: {expected}"
         );
     }
 
     assert_eq!(
         yaml.matches("curl --fail --silent --show-error --location")
             .count(),
-        2,
-        "both public verification requests must stay structurally visible"
+        3,
+        "marker, rendered-root digest, and rendered root must stay independently verified"
     );
     assert_eq!(
         yaml.matches("--proto '=https'").count(),
-        2,
-        "both public verification requests must allow only HTTPS"
+        3,
+        "all public verification requests must allow only HTTPS"
     );
     assert_eq!(
         yaml.matches("--proto-redir '=https'").count(),
-        2,
-        "both public verification requests must reject redirect downgrade"
+        3,
+        "all public verification requests must reject redirect downgrade"
     );
     assert_eq!(
         yaml.matches("--max-redirs 0").count(),
-        2,
-        "both public verification requests must reject cross-origin redirect substitution"
+        3,
+        "all public verification requests must reject cross-origin redirect substitution"
     );
     assert_eq!(
         yaml.matches("--write-out '%{http_code}'").count(),
-        2,
-        "both public verification requests must prove an explicit HTTP 200 response"
+        3,
+        "all public verification requests must prove an explicit HTTP 200 response"
     );
     assert!(
         !yaml.contains("2>/dev/null || true"),
