@@ -75,6 +75,11 @@ fn pages_artifact_and_public_site_are_bound_to_exact_source() {
         2,
         "both public verification requests must reject redirect downgrade"
     );
+    assert_eq!(
+        yaml.matches("--max-redirs 0").count(),
+        2,
+        "both public verification requests must reject cross-origin redirect substitution"
+    );
 }
 
 #[test]
