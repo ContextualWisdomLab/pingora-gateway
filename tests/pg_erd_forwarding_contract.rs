@@ -1,7 +1,8 @@
-use std::net::{IpAddr, Ipv4Addr};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 use cwl_pingora_gateway::forwarding_policy::{DownstreamScheme, ForwardingContext};
-use pingora::prelude::RequestHeader;
+use pingora::prelude::{ErrorType, RequestHeader};
+use pingora::protocols::l4::socket::SocketAddr as PingoraSocketAddr;
 
 #[test]
 fn pg_erd_forwarding_rebuilds_transport_identity_instead_of_trusting_request_headers() {
@@ -55,4 +56,24 @@ fn pg_erd_forwarding_rebuilds_transport_identity_instead_of_trusting_request_hea
         "https"
     );
     assert!(request.headers.get("x-forwarded-server").is_none());
+}
+
+#[test]
+fn malformed_host_authority_fails_closed_through_transport_derivation() {
+    let client = PingoraSocketAddr::from(SocketAddr::from((Ipv4Addr::LOCALHOST, 49152)));
+    let mut request =
+        RequestHeader::build("GET", b"/api", None).expect("fixture request must be valid");
+    request
+        .insert_header("Host", "app.example:0")
+        .expect("malformed authority is still valid HTTP field data");
+
+    let error = ForwardingContext::from_downstream_transport(
+        Some(&client),
+        &request,
+        &request,
+        DownstreamScheme::Http,
+    )
+    .expect_err("invalid Host port must fail closed at the transport-derived boundary");
+
+    assert_eq!(error.etype, ErrorType::HTTPStatus(400));
 }
