@@ -94,10 +94,10 @@ impl MigrationGatewayProxy {
 
     /// Applies every characterized edge-owned response header using replacement semantics.
     pub fn apply_response_headers(&self, response: &mut ResponseHeader) -> pingora::Result<()> {
-        for rule in self.delivery.response_header_rules() {
-            response.insert_header(rule.name.clone(), rule.value.as_str())?;
-        }
-        Ok(())
+        self.delivery
+            .response_header_rules()
+            .iter()
+            .try_for_each(|rule| response.insert_header(rule.name.clone(), rule.value.as_str()))
     }
 
     fn admit_request(&self, ctx: &mut MigrationRequestContext) -> pingora::Result<()> {
@@ -289,14 +289,61 @@ impl ProxyHttp for MigrationGatewayProxy {
 
 #[cfg(test)]
 mod tests {
+    use std::net::SocketAddr;
+
     use pingora::prelude::{Error, ErrorType};
     use pingora::ErrorSource;
 
     use super::{
         body_rejection_to_pingora, proxy_error_status, unmatched_route_to_pingora,
-        MigrationGatewayProxyError, MigrationRequestContext,
+        MigrationGatewayProxy, MigrationGatewayProxyError, MigrationRequestContext,
     };
+    use crate::edge_contract::{UpstreamConfig, UpstreamTimeouts};
+    use crate::edge_routing::{RouteMatch, RouteRule};
+    use crate::http_policy::ResponseHeaderRule;
+    use crate::migration_delivery::MigrationDeliveryPlan;
+    use crate::migration_plan::EdgeMigrationPlan;
     use crate::runtime_isolation::{BodyLimitExceeded, RuntimeIsolationLimits};
+
+    fn admission_proxy() -> (MigrationGatewayProxy, RuntimeIsolationLimits) {
+        let plan = EdgeMigrationPlan::try_new(
+            vec!["backend".to_string()],
+            vec![RouteRule {
+                name: "backend".to_string(),
+                priority: 100,
+                matcher: RouteMatch::Exact("/".to_string()),
+                upstream: "backend".to_string(),
+            }],
+            vec![ResponseHeaderRule {
+                name: "X-Content-Type-Options".to_string(),
+                value: "nosniff".to_string(),
+            }],
+        )
+        .expect("admission fixture migration plan must be valid");
+        let delivery = MigrationDeliveryPlan::try_new(
+            plan,
+            vec![UpstreamConfig {
+                name: "backend".to_string(),
+                address: SocketAddr::from(([127, 0, 0, 1], 18081)),
+                tls: false,
+                sni: None,
+                trust_bundle_file: None,
+                timeouts: UpstreamTimeouts {
+                    connection_ms: 100,
+                    total_connection_ms: 200,
+                    read_ms: 200,
+                    write_ms: 200,
+                    idle_ms: 500,
+                },
+            }],
+        )
+        .expect("admission fixture delivery must be valid");
+        let limits = RuntimeIsolationLimits::try_new(8, 1)
+            .expect("admission fixture isolation limits must be valid");
+        let proxy = MigrationGatewayProxy::try_new(delivery, limits)
+            .expect("admission fixture proxy must activate");
+        (proxy, limits)
+    }
 
     #[test]
     fn migration_context_starts_without_an_admission_lease() {
@@ -304,6 +351,28 @@ mod tests {
         let ctx = MigrationRequestContext::new(limits);
         assert_eq!(ctx.request_body.observed(), 0);
         assert!(ctx.admission.is_none());
+    }
+
+    #[test]
+    fn admission_budget_rejects_and_recovers_after_lease_release() {
+        let (proxy, limits) = admission_proxy();
+        let mut held = MigrationRequestContext::new(limits);
+        let mut rejected = MigrationRequestContext::new(limits);
+
+        proxy
+            .admit_request(&mut held)
+            .expect("first request must acquire the single admission lease");
+        let error = proxy
+            .admit_request(&mut rejected)
+            .expect_err("second concurrent request must fail closed");
+        assert_eq!(error.etype, ErrorType::HTTPStatus(503));
+        assert!(rejected.admission.is_none());
+
+        drop(held);
+        proxy
+            .admit_request(&mut rejected)
+            .expect("released admission lease must make capacity reusable");
+        assert!(rejected.admission.is_some());
     }
 
     #[test]
