@@ -19,6 +19,7 @@ use cwl_pingora_gateway::runtime_policy::{V1_GRACE_PERIOD_SECONDS, V1_TERMINATIO
 use tempfile::NamedTempFile;
 
 const MAX_RESPONSE_HEADER_BYTES: usize = 64 * 1024;
+const MAX_ORIGIN_REQUEST_HEADER_BYTES: usize = 64 * 1024;
 
 /// Owns the migration child so every assertion path terminates and reaps the spawned process.
 struct GatewayProcess(Child);
@@ -144,21 +145,30 @@ fn wait_for_exit(process: &mut Child, deadline: Instant) -> std::process::ExitSt
     }
 }
 
-/// Reads through the origin header terminator so SIGTERM is sent only after routing is established.
+/// Reads a bounded origin request through CRLF terminator before SIGTERM is allowed to race drain.
 fn read_request_headers(stream: &mut TcpStream) -> String {
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .expect("origin header read timeout should be configurable");
     let mut bytes = Vec::new();
     let mut buffer = [0_u8; 1024];
     loop {
-        let read = stream
-            .read(&mut buffer)
-            .expect("origin request should be readable");
-        assert!(
-            read > 0,
-            "gateway closed origin request before headers completed"
-        );
-        bytes.extend_from_slice(&buffer[..read]);
-        if bytes.windows(4).any(|window| window == b"\r\n\r\n") {
-            return String::from_utf8_lossy(&bytes).into_owned();
+        match stream.read(&mut buffer) {
+            Ok(0) => panic!("gateway closed origin request before headers completed"),
+            Ok(read) => {
+                bytes.extend_from_slice(&buffer[..read]);
+                assert!(
+                    bytes.len() <= MAX_ORIGIN_REQUEST_HEADER_BYTES,
+                    "origin request headers exceeded the 64 KiB fixture ceiling"
+                );
+                if bytes.windows(4).any(|window| window == b"\r\n\r\n") {
+                    return String::from_utf8_lossy(&bytes).into_owned();
+                }
+            }
+            Err(error) if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {
+                panic!("origin request headers did not complete within 5s")
+            }
+            Err(error) => panic!("origin request headers should be readable: {error}"),
         }
     }
 }
