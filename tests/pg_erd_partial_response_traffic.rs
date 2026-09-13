@@ -15,6 +15,8 @@ use std::time::{Duration, Instant};
 
 use tempfile::NamedTempFile;
 
+const MAX_RESPONSE_HEADER_BYTES: usize = 64 * 1024;
+
 /// Owns the compiled migration child so assertion failures cannot leak a listening test process.
 struct GatewayProcess(Child);
 
@@ -32,22 +34,20 @@ enum DownstreamTermination {
     ConnectionReset,
 }
 
-/// Selects distinct traffic and metrics authorities while both ephemeral reservations remain held.
-fn reserve_distinct_loopback_addresses() -> (SocketAddr, SocketAddr) {
-    // Hold both ephemeral reservations at once so listener and metrics authority cannot
-    // accidentally collapse to the same port before the migration process binds them.
+/// Holds distinct traffic and metrics reservations until the compiled child is ready to bind them.
+fn reserve_distinct_loopback_listeners() -> (TcpListener, TcpListener) {
     let traffic = TcpListener::bind("127.0.0.1:0").expect("traffic port should be reservable");
     let metrics = TcpListener::bind("127.0.0.1:0").expect("metrics port should be reservable");
-    let addresses = (
+    assert_ne!(
         traffic
             .local_addr()
             .expect("traffic reservation should expose an address"),
         metrics
             .local_addr()
             .expect("metrics reservation should expose an address"),
+        "traffic and metrics reservations must remain distinct"
     );
-    assert_ne!(addresses.0, addresses.1);
-    addresses
+    (traffic, metrics)
 }
 
 /// Writes the bounded pg-erd fixture used to separate post-commit truncation from read-stall failure.
@@ -66,28 +66,66 @@ fn write_config(
     file
 }
 
-/// Waits for one gateway listener without treating an early process exit as startup success.
-fn wait_until_listening(address: SocketAddr, process: &mut Child) {
+/// Waits for a bounded complete HTTP 200 response instead of treating bare TCP accept as readiness.
+fn wait_until_http_ok(address: SocketAddr, path: &str, process: &mut Child) {
     let deadline = Instant::now() + Duration::from_secs(10);
+    let request = format!("GET {path} HTTP/1.1\r\nHost: gateway.local\r\nConnection: close\r\n\r\n");
     loop {
         if let Some(status) = process
             .try_wait()
             .expect("gateway process state should be readable")
         {
-            panic!("gateway exited before accepting traffic: {status}");
+            panic!("gateway exited before {path} became ready: {status}");
         }
-        if TcpStream::connect_timeout(&address, Duration::from_millis(100)).is_ok() {
-            return;
+
+        if let Ok(mut stream) = TcpStream::connect_timeout(&address, Duration::from_millis(100)) {
+            stream
+                .set_read_timeout(Some(Duration::from_millis(250)))
+                .expect("readiness read timeout should be configurable");
+            stream
+                .set_write_timeout(Some(Duration::from_millis(250)))
+                .expect("readiness write timeout should be configurable");
+            if stream.write_all(request.as_bytes()).is_ok() {
+                let mut response = Vec::new();
+                let mut buffer = [0_u8; 1024];
+                loop {
+                    match stream.read(&mut buffer) {
+                        Ok(0) => break,
+                        Ok(read) => {
+                            response.extend_from_slice(&buffer[..read]);
+                            if response.len() > MAX_RESPONSE_HEADER_BYTES {
+                                break;
+                            }
+                            if response.windows(4).any(|window| window == b"\r\n\r\n") {
+                                if response.starts_with(b"HTTP/1.1 200 ") {
+                                    return;
+                                }
+                                break;
+                            }
+                        }
+                        Err(error)
+                            if matches!(
+                                error.kind(),
+                                ErrorKind::WouldBlock | ErrorKind::TimedOut
+                            ) =>
+                        {
+                            break;
+                        }
+                        Err(_) => break,
+                    }
+                }
+            }
         }
+
         assert!(
             Instant::now() < deadline,
-            "gateway did not start within 10s"
+            "gateway did not expose HTTP 200 on {path} within 10s"
         );
         thread::sleep(Duration::from_millis(25));
     }
 }
 
-/// Starts the compiled pg-erd binary and requires both traffic and metrics authorities to bind.
+/// Starts the compiled pg-erd binary and requires application-level traffic and metrics readiness.
 fn start_gateway(
     config: &NamedTempFile,
     gateway_address: SocketAddr,
@@ -100,8 +138,8 @@ fn start_gateway(
         .stderr(Stdio::null())
         .spawn()
         .expect("compiled pg-erd migration binary should start");
-    wait_until_listening(gateway_address, &mut child);
-    wait_until_listening(metrics_address, &mut child);
+    wait_until_http_ok(gateway_address, "/readyz", &mut child);
+    wait_until_http_ok(metrics_address, "/metrics", &mut child);
     GatewayProcess(child)
 }
 
@@ -280,13 +318,23 @@ fn compiled_pg_erd_truncated_response_stays_committed_and_preserves_independent_
             .expect("frontend recovery response should be writable");
     });
 
-    let (gateway_address, metrics_address) = reserve_distinct_loopback_addresses();
+    let (gateway_reservation, metrics_reservation) = reserve_distinct_loopback_listeners();
+    let gateway_address = gateway_reservation
+        .local_addr()
+        .expect("traffic reservation should expose an address");
+    let metrics_address = metrics_reservation
+        .local_addr()
+        .expect("metrics reservation should expose an address");
     let config = write_config(
         gateway_address,
         metrics_address,
         backend_address,
         frontend_address,
     );
+    // Release the exact reservations only at the compiled child-bind handoff; retaining them through
+    // config construction prevents another fixture from reclaiming either selected authority early.
+    drop(gateway_reservation);
+    drop(metrics_reservation);
     let _process = start_gateway(&config, gateway_address, metrics_address);
 
     let (partial, termination) = raw_request_until_terminal_after_body_prefix(
