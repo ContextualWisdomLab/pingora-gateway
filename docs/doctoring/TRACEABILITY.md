@@ -14,7 +14,6 @@ This file links material technical/security claims to primary standards or upstr
 | Graceful SIGTERM uses `grace_period_seconds` and `graceful_shutdown_timeout_seconds`, with framework fallbacks when unset | `pingora-core/src/server/mod.rs` and `pingora-core/src/server/configuration/mod.rs` at the candidate commit; CWL v1 sets 5 s grace and 10 s per-runtime graceful timeout explicitly inside a 30 s external termination budget |
 | Standard upstream request policy supports hop-by-hop/connection-nominated stripping and normalized WebSocket-only HTTP/1 upgrade forwarding | Cloudflare Pingora `HttpUpstreamRequestPolicy` / peer implementation at candidate commit `09696b51bc59315353d96686355861604d0bb48c` |
 | Pingora OpenSSL peers support a per-peer CA store; when configured it replaces the verification store for that peer while certificate and hostname verification remain separately enabled | `pingora-core/src/upstreams/peer.rs`, `pingora-core/src/connectors/tls/boringssl_openssl/mod.rs`, and `pingora-core/src/protocols/tls/boringssl_openssl/mod.rs` at candidate commit `09696b51bc59315353d96686355861604d0bb48c` |
-| IPv4-mapped IPv6 addresses represent IPv4 nodes in IPv6 form; Rust `Ipv6Addr::to_ipv4_mapped` provides the mapped-only canonicalization used by the socket-authority invariant. Linux IPv6 sockets can expose IPv4 peers as mapped IPv6 addresses, so mapped/native authority cannot be treated as unrelated textual families | RFC 4291 §2.5.5.2; Rust `std::net::Ipv6Addr` documentation; Linux `ipv6(7)` |
 | Traefik normally adds `X-Forwarded-For`, `X-Real-Ip`, `X-Forwarded-Host`, `X-Forwarded-Port`, `X-Forwarded-Proto`, and `X-Forwarded-Server` when proxying HTTP | Traefik official Getting Started FAQ, revalidated 2026-09-13 KST (2026-09-12 UTC) |
 | Incoming Traefik `X-Forwarded-*` identity is trusted only when an EntryPoint explicitly configures trusted IPs or insecure trust; insecure mode is not recommended for production | Traefik official EntryPoints documentation, revalidated 2026-09-13 KST (2026-09-12 UTC) |
 | `pg-erd-cloud` can use `X-Forwarded-For` for rate-limit/observability client identity only under an explicit trust switch and tells operators to enable it only behind a sanitizing ingress | `ContextualWisdomLab/pg-erd-cloud@8dc746920c12988f082e914879d95e13c9693535`: `.env.example`, `backend/app/rate_limit.py`, `backend/app/observability.py`, `docs/api-security-checklist.md` |
@@ -29,7 +28,6 @@ This file links material technical/security claims to primary standards or upstr
 | `derivative 2.2.0` is unmaintained under RUSTSEC-2024-0388 and remains present in current upstream protected `main`; supplier promotion therefore remains fail-closed until a maintainer-integrated, release-qualified disposition exists | RustSec RUSTSEC-2024-0388; Cloudflare Pingora issue #889; Cloudflare `Cargo.toml@4487f7b2ab50f159e4a2cf4f6a6b813f61bb6e19` |
 | The current gateway CI stack still runs Rust 1.98.0, while Rust 1.98.1 is the latest stable release observed on 2026-09-13 KST (2026-09-12 UTC) and fixes a vtable-generation miscompilation in 1.98.0 that could emit undefined behavior | Rust Release Team, Rust 1.98.1 announcement, 2026-09-03; compiler promotion is owned by gateway PR #56 and is not silently folded into this migration callback slice |
 | OCI runtime-spec 1.3.0 is the latest released runtime specification observed in the current gateway documentation | Open Container Initiative runtime-spec v1.3.0 release notice, 2025-11-04; runtime hardening claims still require executable container evidence |
-| OCI image-spec 1.1.1 is the latest released image specification observed in the current gateway documentation | Open Container Initiative image-spec v1.1.1 release notice, 2025-04-02; image-format conformance does not prove non-root/read-only-root/capability/no-new-privileges runtime behavior |
 | `lru` versions before 0.18.2 are affected by RUSTSEC-2026-0253 | RustSec advisory RUSTSEC-2026-0253; supplier promotion must use a committed audited lock rather than infer safety from a moving upstream branch |
 
 ## References
@@ -58,12 +56,6 @@ Cloudflare. (2026). *HTTP request smuggling via HTTP/1.0 and Transfer-Encoding m
 
 Cloudflare. (2026). *Cache key poisoning advisory* (GHSA-f93w-pcj3-rggc). GitHub Security Advisories. https://github.com/cloudflare/pingora/security/advisories/GHSA-f93w-pcj3-rggc
 
-Hinden, R., & Deering, S. (2006). *IP version 6 addressing architecture* (RFC 4291). RFC Editor. https://www.rfc-editor.org/rfc/rfc4291
-
-The Rust Project Developers. (2026). *Ipv6Addr in std::net*. Rust standard library documentation. https://doc.rust-lang.org/std/net/struct.Ipv6Addr.html
-
-Kerrisk, M. (n.d.). *ipv6(7) — Linux manual page*. Linux man-pages project. https://man7.org/linux/man-pages/man7/ipv6.7.html
-
 Traefik Labs. (n.d.). *Traefik getting started FAQ: Forwarded headers when proxying HTTP requests*. https://doc.traefik.io/traefik/getting-started/faq/
 
 Traefik Labs. (n.d.). *Traefik EntryPoints: Forwarded headers*. https://doc.traefik.io/traefik/reference/install-configuration/entrypoints/
@@ -81,8 +73,6 @@ Rescorla, E. (2026). *The Transport Layer Security (TLS) Protocol Version 1.3* (
 Salz, R., & Aviram, N. (2026). *New protocols using TLS must require TLS 1.3* (RFC 9852, BCP 195). RFC Editor. https://www.rfc-editor.org/rfc/rfc9852
 
 Petersson, A., & Nilsson, M. (2014). *Forwarded HTTP extension* (RFC 7239). RFC Editor. https://www.rfc-editor.org/rfc/rfc7239
-
-Open Container Initiative. (2025, April 2). *OCI image-spec v1.1.1 release notice*. https://opencontainers.org/release-notices/v1-1-1-image-spec/
 
 Open Container Initiative. (2025, November 4). *OCI runtime-spec v1.3.0 release notice*. https://opencontainers.org/release-notices/v1-3-0-runtime-spec/
 
