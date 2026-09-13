@@ -11,9 +11,9 @@ const CI_WORKFLOW: &str = ".github/workflows/ci.yml";
 #[test]
 fn load_contract_proves_origin_readiness_before_gateway_measurement() {
     let source = fs::read_to_string(CI_WORKFLOW).expect("CI workflow should be readable UTF-8");
-    let fixture_start = source
-        .find("python3 tests/load/upstream_fixture.py")
-        .expect("load contract should start the bounded upstream fixture");
+    let origin_start = source
+        .find("/tmp/load_origin >/tmp/upstream-fixture.log 2>&1 &")
+        .expect("load contract should start the bounded Rust upstream fixture");
     let origin_ready = source
         .find("http://127.0.0.1:18081/fixture-ready")
         .expect("load contract must probe the measured origin directly before gateway traffic");
@@ -28,7 +28,7 @@ fn load_contract_proves_origin_readiness_before_gateway_measurement() {
         .expect("load contract should execute measured k6 traffic");
 
     assert!(
-        fixture_start < origin_ready
+        origin_start < origin_ready
             && origin_ready < origin_liveness
             && origin_liveness < gateway_start
             && gateway_start < measured_traffic,
