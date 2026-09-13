@@ -273,11 +273,7 @@ fn raw_request_until_committed_then_reset(
                     response.len() <= MAX_HTTP_HEADER_BYTES,
                     "post-commit fixture response exceeded its bounded evidence envelope"
                 );
-                if !reset_released
-                    && response
-                        .windows(4)
-                        .any(|window| window == b"\r\n\r\n")
-                {
+                if !reset_released && response.windows(4).any(|window| window == b"\r\n\r\n") {
                     reset_release
                         .send(())
                         .expect("backend reset fixture should still await release");
