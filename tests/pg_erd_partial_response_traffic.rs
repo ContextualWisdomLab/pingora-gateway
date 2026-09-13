@@ -1,0 +1,438 @@
+//! Real-listener partial upstream response acceptance for the dedicated pg-erd migration binary.
+//!
+//! This contract distinguishes a response that fails after its status/header block has already
+//! been received from failures that occur before downstream response commitment. It proves that a
+//! truncated characterized origin response is not rewritten into an invented retry/failover,
+//! leaves process health observable, records the transport failure, and does not poison an
+//! independent characterized route.
+
+use std::io::{ErrorKind, Read, Write};
+use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::process::{Child, Command, Stdio};
+use std::sync::mpsc;
+use std::thread;
+use std::time::{Duration, Instant};
+
+use tempfile::NamedTempFile;
+
+const MAX_RESPONSE_HEADER_BYTES: usize = 64 * 1024;
+
+/// Owns the compiled migration child so assertion failures cannot leak a listening test process.
+struct GatewayProcess(Child);
+
+impl Drop for GatewayProcess {
+    /// Terminates and reaps the child on every teardown path, including a partial-response panic.
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DownstreamTermination {
+    Eof,
+    ConnectionReset,
+}
+
+/// Holds distinct traffic and metrics reservations until the compiled child is ready to bind them.
+fn reserve_distinct_loopback_listeners() -> (TcpListener, TcpListener) {
+    let traffic = TcpListener::bind("127.0.0.1:0").expect("traffic port should be reservable");
+    let metrics = TcpListener::bind("127.0.0.1:0").expect("metrics port should be reservable");
+    assert_ne!(
+        traffic
+            .local_addr()
+            .expect("traffic reservation should expose an address"),
+        metrics
+            .local_addr()
+            .expect("metrics reservation should expose an address"),
+        "traffic and metrics reservations must remain distinct"
+    );
+    (traffic, metrics)
+}
+
+/// Writes the bounded pg-erd fixture used to separate post-commit truncation from read-stall failure.
+fn write_config(
+    listener: SocketAddr,
+    metrics_listener: SocketAddr,
+    backend: SocketAddr,
+    frontend: SocketAddr,
+) -> NamedTempFile {
+    let mut file = NamedTempFile::new().expect("temporary config should be writable");
+    writeln!(
+        file,
+        "version: 1\nlistener: {listener}\nmetrics_listener: {metrics_listener}\nmax_request_body_bytes: 8\nmax_in_flight_requests: 8\nupstream_keepalive_pool_size: 4\nupstreams:\n  - name: backend\n    address: {backend}\n    tls: false\n    timeouts:\n      connection_ms: 200\n      total_connection_ms: 400\n      read_ms: 500\n      write_ms: 1000\n      idle_ms: 5000\n  - name: frontend\n    address: {frontend}\n    tls: false\n    timeouts:\n      connection_ms: 200\n      total_connection_ms: 400\n      read_ms: 1000\n      write_ms: 1000\n      idle_ms: 5000"
+    )
+    .expect("migration config should be written");
+    file
+}
+
+/// Waits for a bounded complete HTTP 200 response instead of treating bare TCP accept as readiness.
+fn wait_until_http_ok(address: SocketAddr, path: &str, process: &mut Child) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let request =
+        format!("GET {path} HTTP/1.1\r\nHost: gateway.local\r\nConnection: close\r\n\r\n");
+    loop {
+        if let Some(status) = process
+            .try_wait()
+            .expect("gateway process state should be readable")
+        {
+            panic!("gateway exited before {path} became ready: {status}");
+        }
+
+        if let Ok(mut stream) = TcpStream::connect_timeout(&address, Duration::from_millis(100)) {
+            stream
+                .set_read_timeout(Some(Duration::from_millis(250)))
+                .expect("readiness read timeout should be configurable");
+            stream
+                .set_write_timeout(Some(Duration::from_millis(250)))
+                .expect("readiness write timeout should be configurable");
+            if stream.write_all(request.as_bytes()).is_ok() {
+                let mut response = Vec::new();
+                let mut buffer = [0_u8; 1024];
+                loop {
+                    match stream.read(&mut buffer) {
+                        Ok(0) => break,
+                        Ok(read) => {
+                            response.extend_from_slice(&buffer[..read]);
+                            if response.len() > MAX_RESPONSE_HEADER_BYTES {
+                                break;
+                            }
+                            if response.windows(4).any(|window| window == b"\r\n\r\n") {
+                                if response.starts_with(b"HTTP/1.1 200 ") {
+                                    return;
+                                }
+                                break;
+                            }
+                        }
+                        Err(error)
+                            if matches!(
+                                error.kind(),
+                                ErrorKind::WouldBlock | ErrorKind::TimedOut
+                            ) =>
+                        {
+                            break;
+                        }
+                        Err(_) => break,
+                    }
+                }
+            }
+        }
+
+        assert!(
+            Instant::now() < deadline,
+            "gateway did not expose HTTP 200 on {path} within 10s"
+        );
+        thread::sleep(Duration::from_millis(25));
+    }
+}
+
+/// Starts the compiled pg-erd binary and requires application-level traffic and metrics readiness.
+fn start_gateway(
+    config: &NamedTempFile,
+    gateway_address: SocketAddr,
+    metrics_address: SocketAddr,
+) -> GatewayProcess {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_cwl-pingora-pg-erd-migration"))
+        .args(["--config", config.path().to_str().expect("UTF-8 temp path")])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("compiled pg-erd migration binary should start");
+    wait_until_http_ok(gateway_address, "/readyz", &mut child);
+    wait_until_http_ok(metrics_address, "/metrics", &mut child);
+    GatewayProcess(child)
+}
+
+/// Sends one connection-closing HTTP/1.1 request and captures the complete downstream response.
+fn raw_request(address: SocketAddr, request: &[u8]) -> String {
+    let mut downstream = TcpStream::connect(address).expect("gateway should accept traffic");
+    downstream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .expect("downstream timeout should be configurable");
+    downstream
+        .write_all(request)
+        .expect("downstream request should be writable");
+    let mut response = String::new();
+    downstream
+        .read_to_string(&mut response)
+        .expect("gateway response should be readable");
+    response
+}
+
+/// Releases the origin only after the downstream has observed the committed header and body prefix.
+fn raw_request_until_terminal_after_body_prefix(
+    address: SocketAddr,
+    request: &[u8],
+    expected_body_prefix: &[u8],
+    release_origin: mpsc::Sender<()>,
+) -> (Vec<u8>, DownstreamTermination) {
+    let mut downstream = TcpStream::connect(address).expect("gateway should accept traffic");
+    downstream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .expect("downstream timeout should be configurable");
+    downstream
+        .write_all(request)
+        .expect("downstream request should be writable");
+
+    let mut response = Vec::new();
+    let mut buffer = [0_u8; 1024];
+    let mut origin_released = false;
+    loop {
+        match downstream.read(&mut buffer) {
+            Ok(0) => {
+                assert!(
+                    origin_released,
+                    "downstream terminated before the committed body prefix was observed"
+                );
+                return (response, DownstreamTermination::Eof);
+            }
+            Ok(read) => {
+                response.extend_from_slice(&buffer[..read]);
+                if !origin_released {
+                    if let Some(header_end) = response
+                        .windows(4)
+                        .position(|window| window == b"\r\n\r\n")
+                        .map(|position| position + 4)
+                    {
+                        let expected_end = header_end + expected_body_prefix.len();
+                        if response.len() >= expected_end {
+                            assert_eq!(
+                                &response[header_end..expected_end],
+                                expected_body_prefix,
+                                "downstream must observe the exact committed body prefix before origin termination"
+                            );
+                            release_origin
+                                .send(())
+                                .expect("origin should wait for downstream commit evidence");
+                            origin_released = true;
+                        }
+                    }
+                }
+            }
+            Err(error) if error.kind() == ErrorKind::ConnectionReset => {
+                assert!(
+                    origin_released,
+                    "downstream reset before the committed body prefix was observed"
+                );
+                return (response, DownstreamTermination::ConnectionReset);
+            }
+            Err(error) => {
+                panic!("partial downstream response should terminate, not stall: {error}")
+            }
+        }
+    }
+}
+
+/// Issues a fixture GET with the characterized downstream authority and explicit connection close.
+fn get(address: SocketAddr, path: &str) -> String {
+    raw_request(
+        address,
+        format!("GET {path} HTTP/1.1\r\nHost: app.example:8080\r\nConnection: close\r\n\r\n")
+            .as_bytes(),
+    )
+}
+
+/// Reads only through the origin header terminator so the fixture can control the failure phase.
+fn read_request_headers(stream: &mut TcpStream) -> String {
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .expect("origin request timeout should be configurable");
+    let mut bytes = Vec::new();
+    let mut buffer = [0_u8; 1024];
+    loop {
+        let read = stream
+            .read(&mut buffer)
+            .expect("origin request should complete within the fixture timeout");
+        assert!(
+            read > 0,
+            "gateway closed origin request before headers completed"
+        );
+        bytes.extend_from_slice(&buffer[..read]);
+        assert!(
+            bytes.len() <= MAX_RESPONSE_HEADER_BYTES,
+            "origin request headers exceeded the bounded fixture limit"
+        );
+        if bytes.windows(4).any(|window| window == b"\r\n\r\n") {
+            return String::from_utf8_lossy(&bytes).into_owned();
+        }
+    }
+}
+
+/// Extracts Content-Length field values by case-insensitive field identity and trimmed field value.
+fn content_length_values(headers: &str) -> Vec<&str> {
+    headers
+        .lines()
+        .filter_map(|line| line.trim_end_matches('\r').split_once(':'))
+        .filter(|(name, _)| name.eq_ignore_ascii_case("content-length"))
+        .map(|(_, value)| value.trim())
+        .collect()
+}
+
+/// Parses only an exact HTTP/1.1 three-digit response status line for the wire oracle.
+fn http_1_1_status_code(response: &str) -> Option<u16> {
+    let status_line = response.lines().next()?.trim_end_matches('\r');
+    let mut fields = status_line.splitn(3, ' ');
+    if fields.next()? != "HTTP/1.1" {
+        return None;
+    }
+    let code = fields.next()?;
+    if code.len() != 3 || !code.bytes().all(|byte| byte.is_ascii_digit()) || fields.next().is_none()
+    {
+        return None;
+    }
+    code.parse().ok()
+}
+
+/// Locks the framing oracle against lookalike names and duplicate/conflicting field values.
+#[test]
+fn content_length_parser_preserves_field_identity_and_cardinality_evidence() {
+    assert!(content_length_values("HTTP/1.1 200 OK\r\nX-Content-Length: 20\r\n\r\n").is_empty());
+    assert_eq!(
+        content_length_values("HTTP/1.1 200 OK\r\ncOnTeNt-LeNgTh:\t20\r\n\r\n"),
+        vec!["20"]
+    );
+    assert_eq!(
+        content_length_values(
+            "HTTP/1.1 200 OK\r\nContent-Length: 20\r\ncontent-length: 21\r\n\r\n"
+        ),
+        vec!["20", "21"]
+    );
+}
+
+/// Locks status evidence to exact HTTP/1.1 protocol and a three-digit code.
+#[test]
+fn status_parser_rejects_prefix_and_protocol_lookalikes() {
+    assert_eq!(http_1_1_status_code("HTTP/1.1 200 OK\r\n\r\n"), Some(200));
+    assert_eq!(http_1_1_status_code("HTTP/1.1 2000 Bad\r\n\r\n"), None);
+    assert_eq!(http_1_1_status_code("http/1.1 200 OK\r\n\r\n"), None);
+    assert_eq!(http_1_1_status_code("HTTP/2 200 OK\r\n\r\n"), None);
+}
+
+/// Proves a post-commit origin truncation preserves framing, terminates downstream and keeps recovery usable.
+#[test]
+fn compiled_pg_erd_truncated_response_stays_committed_and_preserves_independent_routing() {
+    let (release_backend_tx, release_backend_rx) = mpsc::channel();
+    let backend = TcpListener::bind("127.0.0.1:0").expect("backend fixture should bind");
+    let backend_address = backend.local_addr().expect("backend address should exist");
+    let backend_origin = thread::spawn(move || {
+        let (mut stream, _) = backend
+            .accept()
+            .expect("routed request should reach the characterized backend authority");
+        let request = read_request_headers(&mut stream);
+        assert!(request.starts_with("GET /api/partial-response HTTP/1.1\r\n"));
+
+        // Keep the upstream open until the downstream has actually observed this committed prefix.
+        // Otherwise an immediate FIN can race proxy forwarding and accidentally exercise a
+        // pre-commit failure phase while still producing the same buffered bytes.
+        stream
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 20\r\nConnection: close\r\n\r\npartial")
+            .expect("partial backend response should be writable");
+        release_backend_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("downstream should observe the committed prefix before backend close");
+    });
+
+    let frontend = TcpListener::bind("127.0.0.1:0").expect("frontend fixture should bind");
+    let frontend_address = frontend
+        .local_addr()
+        .expect("frontend address should exist");
+    let frontend_origin = thread::spawn(move || {
+        let (mut stream, _) = frontend
+            .accept()
+            .expect("fallback request should reach the independent frontend authority");
+        let request = read_request_headers(&mut stream);
+        assert!(request.starts_with("GET /after-partial-response HTTP/1.1\r\n"));
+        stream
+            .write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Length: 9\r\nConnection: close\r\n\r\nrecovered",
+            )
+            .expect("frontend recovery response should be writable");
+    });
+
+    let (gateway_reservation, metrics_reservation) = reserve_distinct_loopback_listeners();
+    let gateway_address = gateway_reservation
+        .local_addr()
+        .expect("traffic reservation should expose an address");
+    let metrics_address = metrics_reservation
+        .local_addr()
+        .expect("metrics reservation should expose an address");
+    let config = write_config(
+        gateway_address,
+        metrics_address,
+        backend_address,
+        frontend_address,
+    );
+    // Release the exact reservations only at the compiled child-bind handoff; retaining them through
+    // config construction prevents another fixture from reclaiming either selected authority early.
+    drop(gateway_reservation);
+    drop(metrics_reservation);
+    let _process = start_gateway(&config, gateway_address, metrics_address);
+
+    let (partial, termination) = raw_request_until_terminal_after_body_prefix(
+        gateway_address,
+        b"GET /api/partial-response HTTP/1.1\r\nHost: app.example:8080\r\nConnection: close\r\n\r\n",
+        b"partial",
+        release_backend_tx,
+    );
+    assert!(
+        matches!(
+            termination,
+            DownstreamTermination::Eof | DownstreamTermination::ConnectionReset
+        ),
+        "a committed truncated response must terminate the downstream connection"
+    );
+    let header_end = partial
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .map(|position| position + 4)
+        .expect("committed partial response must contain a complete header block");
+    let raw_headers = String::from_utf8_lossy(&partial[..header_end]);
+    assert_eq!(
+        http_1_1_status_code(raw_headers.as_ref()),
+        Some(200),
+        "a post-header upstream failure cannot be rewritten as a new status: {raw_headers:?}"
+    );
+    let content_lengths = content_length_values(raw_headers.as_ref());
+    assert_eq!(
+        content_lengths,
+        vec!["20"],
+        "the committed response must retain exactly one Content-Length field whose value is 20: {raw_headers:?}"
+    );
+    let body = &partial[header_end..];
+    assert_eq!(body, b"partial");
+    assert!(
+        body.len() < 20,
+        "fixture must terminate before its declared response body completes"
+    );
+
+    let readiness = get(gateway_address, "/readyz");
+    assert_eq!(
+        http_1_1_status_code(&readiness),
+        Some(200),
+        "one truncated upstream response must not poison process readiness: {readiness:?}"
+    );
+
+    let metrics = get(metrics_address, "/metrics");
+    assert!(
+        metrics
+            .lines()
+            .any(|line| line == "cwl_pingora_gateway_request_errors_total 1"),
+        "the post-header upstream framing failure must expose exactly one request error through low-cardinality telemetry: {metrics:?}"
+    );
+
+    let recovered = get(gateway_address, "/after-partial-response");
+    assert_eq!(
+        http_1_1_status_code(&recovered),
+        Some(200),
+        "an independent characterized route must remain usable after a truncated response: {recovered:?}"
+    );
+    assert!(recovered.ends_with("\r\n\r\nrecovered"));
+
+    frontend_origin
+        .join()
+        .expect("frontend recovery fixture should complete");
+    backend_origin
+        .join()
+        .expect("partial backend fixture should complete");
+}
