@@ -1,0 +1,220 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    types: [opened, synchronize, reopened, converted_to_draft, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.repository }}-${{ github.event_name == 'pull_request' && github.run_attempt == 1 && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+
+jobs:
+  test:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          ref: ${{ env.EXPECTED_SHA }}
+          persist-credentials: false
+      - name: Verify checkout identity
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - name: Install native dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends pkg-config libssl-dev openssl
+      - name: Install Rust 1.98.0
+        run: |
+          rustup toolchain install 1.98.0 --profile minimal --component clippy,rustfmt
+          rustup default 1.98.0
+      - name: Verify formatting
+        run: cargo fmt --all -- --check
+      - name: Compile and test
+        run: cargo test --all-targets --locked
+      - name: Lint
+        run: cargo clippy --all-targets --locked -- -D warnings
+      - name: Prove public Rust API documentation
+        run: RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --locked
+      - name: Install pinned coverage tooling
+        run: |
+          rustup component add llvm-tools-preview --toolchain 1.98.0
+          cargo install cargo-llvm-cov --version 0.9.0 --locked
+      - name: Run owned production coverage workload
+        run: cargo llvm-cov --all-targets --locked --no-report
+      - name: Export owned production coverage diagnostics
+        run: cargo llvm-cov report --json --output-path coverage.json
+      - name: Upload owned production coverage diagnostics
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: coverage-${{ env.EXPECTED_SHA }}
+          path: coverage.json
+          if-no-files-found: error
+          retention-days: 1
+      - name: Enforce complete owned production coverage
+        run: cargo llvm-cov report --show-missing-lines --fail-under-lines 100 --fail-under-regions 100
+      - name: Verify resolved dependency lock
+        run: |
+          test -s Cargo.lock
+          git diff --exit-code -- Cargo.lock
+      - name: Upload resolved dependency lock evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: cargo-lock-${{ env.EXPECTED_SHA }}
+          path: Cargo.lock
+          if-no-files-found: error
+          retention-days: 1
+
+  load-contract:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          ref: ${{ env.EXPECTED_SHA }}
+          persist-credentials: false
+      - name: Verify checkout identity
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - name: Install native dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ca-certificates cmake curl libssl-dev pkg-config
+      - name: Install Rust 1.98.0
+        run: |
+          rustup toolchain install 1.98.0 --profile minimal
+          rustup default 1.98.0
+      - name: Build exact gateway candidate
+        run: cargo build --release --locked --bin cwl-pingora-gateway
+      - name: Install checksum-pinned k6 2.2.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="k6-v2.2.0-linux-amd64.tar.gz"
+          curl --fail --location --silent --show-error \
+            "https://github.com/grafana/k6/releases/download/v2.2.0/${archive}" \
+            --output "/tmp/${archive}"
+          echo "b5a8003c86f35f5cd5ceef1490312c48e587696c94d998cefc6d7b3b4cb1597d  /tmp/${archive}" | sha256sum --check --strict
+          tar -xzf "/tmp/${archive}" -C /tmp
+          sudo install -m 0755 /tmp/k6-v2.2.0-linux-amd64/k6 /usr/local/bin/k6
+          k6 version
+      - name: Exercise concurrent loopback traffic contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tests/load/upstream_fixture.py >/tmp/upstream-fixture.log 2>&1 &
+          upstream_pid=$!
+
+          cat >/tmp/gateway-load.yaml <<'EOF'
+          version: 1
+          listener: 127.0.0.1:18080
+          metrics_listener: 127.0.0.1:18082
+          max_request_body_bytes: 1048576
+          max_in_flight_requests: 128
+          upstream_keepalive_pool_size: 32
+          upstreams:
+            - name: load-fixture
+              address: 127.0.0.1:18081
+              tls: false
+              timeouts:
+                connection_ms: 500
+                total_connection_ms: 1000
+                read_ms: 2000
+                write_ms: 2000
+                idle_ms: 5000
+          EOF
+
+          target/release/cwl-pingora-gateway --config /tmp/gateway-load.yaml >/tmp/gateway-load.log 2>&1 &
+          gateway_pid=$!
+          # Invoked indirectly by the EXIT trap.
+          # shellcheck disable=SC2329
+          cleanup() {
+            status=$?
+            kill "$gateway_pid" "$upstream_pid" >/dev/null 2>&1 || true
+            wait "$gateway_pid" >/dev/null 2>&1 || true
+            wait "$upstream_pid" >/dev/null 2>&1 || true
+            if [ "$status" -ne 0 ]; then
+              echo "--- gateway log ---"
+              cat /tmp/gateway-load.log || true
+              echo "--- upstream fixture log ---"
+              cat /tmp/upstream-fixture.log || true
+            fi
+          }
+          trap cleanup EXIT
+
+          for _ in $(seq 1 80); do
+            if curl --fail --silent --show-error --max-time 1 http://127.0.0.1:18080/livez >/dev/null; then
+              break
+            fi
+            if ! kill -0 "$gateway_pid" 2>/dev/null; then
+              echo "gateway exited before the load contract became live" >&2
+              exit 1
+            fi
+            sleep 0.1
+          done
+          curl --fail --silent --show-error --max-time 1 http://127.0.0.1:18080/livez >/dev/null
+
+          GATEWAY_URL=http://127.0.0.1:18080 k6 run --quiet tests/load/gateway_smoke.js
+      - name: Upload loopback latency evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: k6-loopback-${{ env.EXPECTED_SHA }}
+          path: k6-summary.json
+          if-no-files-found: error
+          retention-days: 7
+
+  oci-runtime:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          ref: ${{ env.EXPECTED_SHA }}
+          persist-credentials: false
+      - name: Verify checkout identity
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - name: Build candidate image
+        run: docker build --tag "cwl-pingora-gateway:${EXPECTED_SHA}" .
+      - name: Verify declared non-root identity
+        run: |
+          test "$(docker image inspect "cwl-pingora-gateway:${EXPECTED_SHA}" --format '{{.Config.User}}')" = "65532:65532"
+      - name: Exercise read-only least-privilege runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="cwl-pingora-gateway:${EXPECTED_SHA}"
+          cid="$(docker run --detach \
+            --read-only \
+            --user 65532:65532 \
+            --cap-drop ALL \
+            --security-opt no-new-privileges:true \
+            --publish 127.0.0.1:6188:6188 \
+            --mount "type=bind,src=${PWD}/examples/gateway.yaml,dst=/etc/cwl/gateway.yaml,readonly" \
+            "${image}" \
+            --config /etc/cwl/gateway.yaml)"
+          trap 'docker logs "${cid}" || true; docker rm --force "${cid}" >/dev/null 2>&1 || true' EXIT
+
+          test "$(docker inspect "${cid}" --format '{{.HostConfig.ReadonlyRootfs}}')" = "true"
+          test "$(docker inspect "${cid}" --format '{{json .HostConfig.CapDrop}}')" = '["ALL"]'
+          docker inspect "${cid}" --format '{{json .HostConfig.SecurityOpt}}' | grep -Fq 'no-new-privileges'
+
+          for _ in $(seq 1 80); do
+            if curl --fail --silent --show-error --max-time 1 http://127.0.0.1:6188/livez >/dev/null; then
+              exit 0
+            fi
+            if ! docker inspect "${cid}" --format '{{.State.Running}}' | grep -qx true; then
+              echo "gateway container exited before becoming live" >&2
+              exit 1
+            fi
+            sleep 0.25
+          done
+          echo "gateway container did not become live under read-only least-privilege runtime" >&2
+          exit 1
