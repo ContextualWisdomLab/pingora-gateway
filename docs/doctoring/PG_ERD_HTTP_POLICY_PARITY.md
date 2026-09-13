@@ -17,7 +17,7 @@ The executable parity contract maps these to exact HTTP response values: `X-Cont
 
 RFC 9110 defines HTTP field names as case-insensitive and field names using the HTTP token grammar. The candidate policy therefore compares names ASCII case-insensitively. Its accepted field-name syntax is intentionally a stricter alphanumeric/hyphen subset because the current migration evidence does not require the full token character set. Broadening the policy without a consumer contract is not necessary for parity.
 
-Configured values reject CR/LF before activation. This is a local fail-closed configuration invariant; it does not claim that the transport-neutral model is already connected to Pingora's response callbacks.
+RFC 9110 §5.5 defines field content from visible octets or `obs-text`, with SP/HTAB only inside content, and states that CR, LF, NUL and other control characters are invalid. The configuration boundary now fails closed on NUL, every other invalid control octet including DEL, and leading/trailing SP or HTAB while preserving valid interior SP/HTAB. This is transport-neutral admission; it does not claim that the model is already connected to Pingora's response callbacks.
 
 ## Executable source trail
 
@@ -26,6 +26,8 @@ Configured values reject CR/LF before activation. This is a local fail-closed co
 - Public module exposure: `a0af9544850ed578248f069966295d77207c21e1`
 - Validation-profile repair: `f48fd423a37f1c6a579375da9e7471d2543f588e`
 - Coverage-contract expansion: `acd0e4adeb8916dad6d853cf71e06ce983da1bb4`
+- RFC 9110 field-value RED: `c34e4f55f8ca2d3a6d5abf816fa791f40cd98fee`
+- Minimal field-value GREEN: `1c9cca37225e229d0b9cdbe678ee7e46b911fe21`
 
 Every subsequent head must reacquire exact-head CI, owned-production 100% line/region coverage, public rustdoc and applicable supply-chain/security/review evidence. Predecessor checks do not transfer.
 

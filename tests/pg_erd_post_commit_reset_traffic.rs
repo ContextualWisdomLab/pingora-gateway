@@ -3,10 +3,10 @@
 //! Real-listener post-commit upstream TCP reset acceptance for the dedicated pg-erd migration.
 //!
 //! This contract distinguishes an abortive upstream close after a valid response header and partial
-//! body have already crossed the proxy from both the pre-header reset and orderly truncation cases.
-//! Once downstream response commitment exists, the gateway must preserve that status/framing,
-//! terminate the incomplete response, record the transport failure, and keep unrelated routing
-//! healthy rather than inventing retry/failover or a second HTTP status.
+//! body have crossed the proxy from both the pre-header reset and orderly truncation cases. Once
+//! downstream response commitment exists, the gateway must preserve that status/framing, terminate
+//! the incomplete response, record the transport failure, and keep unrelated routing healthy rather
+//! than inventing retry/failover or a second HTTP status.
 
 use core::ffi::c_void;
 use std::io::{ErrorKind, Read, Write};
@@ -21,7 +21,7 @@ use tempfile::NamedTempFile;
 
 const SOL_SOCKET: i32 = 1;
 const SO_LINGER: i32 = 13;
-const MAX_ORIGIN_REQUEST_HEADER_BYTES: usize = 64 * 1024;
+const MAX_HTTP_HEADER_BYTES: usize = 64 * 1024;
 
 #[repr(C)]
 struct Linger {
@@ -89,8 +89,91 @@ fn write_config(
     file
 }
 
-/// Waits for one listener while failing immediately if the child exits, so a
-/// startup defect cannot be misreported as post-commit transport behavior.
+/// Parses only an exact HTTP/1.1 three-digit status token so case changes or
+/// numeric-prefix lookalikes cannot satisfy the response-status oracle.
+fn exact_http_1_1_status_code(response: &str) -> Option<u16> {
+    let status_line = response.split("\r\n").next()?;
+    let mut fields = status_line.split_ascii_whitespace();
+    if fields.next()? != "HTTP/1.1" {
+        return None;
+    }
+    let status = fields.next()?;
+    if status.len() != 3 || !status.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    status.parse().ok()
+}
+
+/// Attempts one bounded application-level readiness exchange. A successful TCP
+/// handshake alone is not sufficient to admit the failure fixture.
+fn probe_readyz(address: SocketAddr) -> bool {
+    let Ok(mut stream) = TcpStream::connect_timeout(&address, Duration::from_millis(100)) else {
+        return false;
+    };
+    if stream
+        .set_read_timeout(Some(Duration::from_millis(250)))
+        .is_err()
+        || stream
+            .set_write_timeout(Some(Duration::from_millis(250)))
+            .is_err()
+    {
+        return false;
+    }
+    if stream
+        .write_all(b"GET /readyz HTTP/1.1\r\nHost: readiness.local\r\nConnection: close\r\n\r\n")
+        .is_err()
+    {
+        return false;
+    }
+
+    let mut response = Vec::new();
+    let mut buffer = [0_u8; 1024];
+    loop {
+        match stream.read(&mut buffer) {
+            Ok(0) => return false,
+            Ok(read) => {
+                response.extend_from_slice(&buffer[..read]);
+                if response.len() > MAX_HTTP_HEADER_BYTES {
+                    return false;
+                }
+                if let Some(header_end) = response
+                    .windows(4)
+                    .position(|window| window == b"\r\n\r\n")
+                    .map(|position| position + 4)
+                {
+                    let headers = String::from_utf8_lossy(&response[..header_end]);
+                    return exact_http_1_1_status_code(&headers) == Some(200);
+                }
+            }
+            Err(_) => return false,
+        }
+    }
+}
+
+/// Waits for complete `/readyz` HTTP/1.1 200 while failing immediately if the
+/// child exits, preventing a bare listener from manufacturing startup evidence.
+fn wait_until_http_ready(address: SocketAddr, process: &mut Child) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if let Some(status) = process
+            .try_wait()
+            .expect("gateway process state should be readable")
+        {
+            panic!("gateway exited before application readiness: {status}");
+        }
+        if probe_readyz(address) {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "gateway did not become application-ready within 10s"
+        );
+        thread::sleep(Duration::from_millis(25));
+    }
+}
+
+/// Waits only for metrics-listener presence. The later real `/metrics` request
+/// remains the application-level identity oracle for that separate service.
 fn wait_until_listening(address: SocketAddr, process: &mut Child) {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
@@ -98,26 +181,30 @@ fn wait_until_listening(address: SocketAddr, process: &mut Child) {
             .try_wait()
             .expect("gateway process state should be readable")
         {
-            panic!("gateway exited before accepting traffic: {status}");
+            panic!("gateway exited before metrics listener startup: {status}");
         }
         if TcpStream::connect_timeout(&address, Duration::from_millis(100)).is_ok() {
             return;
         }
         assert!(
             Instant::now() < deadline,
-            "gateway did not start within 10s"
+            "metrics listener did not start within 10s"
         );
         thread::sleep(Duration::from_millis(25));
     }
 }
 
-/// Starts the compiled pg-erd composition root and proves both traffic and
-/// metrics listeners are live before the characterized reset is injected.
+/// Starts the compiled pg-erd composition root after retaining both socket
+/// reservations through config construction and until the child-bind handoff.
 fn start_gateway(
     config: &NamedTempFile,
+    gateway_reservation: TcpListener,
+    metrics_reservation: TcpListener,
     gateway_address: SocketAddr,
     metrics_address: SocketAddr,
 ) -> GatewayProcess {
+    drop(gateway_reservation);
+    drop(metrics_reservation);
     let mut child = Command::new(env!("CARGO_BIN_EXE_cwl-pingora-pg-erd-migration"))
         .args(["--config", config.path().to_str().expect("UTF-8 temp path")])
         .stdin(Stdio::null())
@@ -125,18 +212,22 @@ fn start_gateway(
         .stderr(Stdio::null())
         .spawn()
         .expect("compiled pg-erd migration binary should start");
-    wait_until_listening(gateway_address, &mut child);
+    wait_until_http_ready(gateway_address, &mut child);
     wait_until_listening(metrics_address, &mut child);
     GatewayProcess(child)
 }
 
 /// Sends a small raw HTTP/1.1 request with a finite downstream read budget for
-/// readiness, metrics and independent-route recovery probes.
+/// metrics, readiness re-checks, and independent-route recovery probes.
 fn raw_request(address: SocketAddr, request: &[u8]) -> String {
-    let mut downstream = TcpStream::connect(address).expect("gateway should accept traffic");
+    let mut downstream = TcpStream::connect_timeout(&address, Duration::from_secs(1))
+        .expect("gateway should accept traffic");
     downstream
         .set_read_timeout(Some(Duration::from_secs(5)))
         .expect("downstream timeout should be configurable");
+    downstream
+        .set_write_timeout(Some(Duration::from_secs(1)))
+        .expect("downstream write timeout should be configurable");
     downstream
         .write_all(request)
         .expect("downstream request should be writable");
@@ -154,10 +245,14 @@ fn raw_request_until_committed_then_reset(
     request: &[u8],
     reset_release: mpsc::Sender<()>,
 ) -> (Vec<u8>, DownstreamTermination) {
-    let mut downstream = TcpStream::connect(address).expect("gateway should accept traffic");
+    let mut downstream = TcpStream::connect_timeout(&address, Duration::from_secs(1))
+        .expect("gateway should accept traffic");
     downstream
         .set_read_timeout(Some(Duration::from_secs(5)))
         .expect("downstream timeout should be configurable");
+    downstream
+        .set_write_timeout(Some(Duration::from_secs(1)))
+        .expect("downstream write timeout should be configurable");
     downstream
         .write_all(request)
         .expect("downstream request should be writable");
@@ -170,6 +265,10 @@ fn raw_request_until_committed_then_reset(
             Ok(0) => return (response, DownstreamTermination::Eof),
             Ok(read) => {
                 response.extend_from_slice(&buffer[..read]);
+                assert!(
+                    response.len() <= MAX_HTTP_HEADER_BYTES,
+                    "post-commit fixture response exceeded its bounded evidence envelope"
+                );
                 if !reset_released {
                     if let Some(header_end) = response
                         .windows(4)
@@ -225,7 +324,7 @@ fn read_request_headers(stream: &mut TcpStream) -> String {
         );
         bytes.extend_from_slice(&buffer[..read]);
         assert!(
-            bytes.len() <= MAX_ORIGIN_REQUEST_HEADER_BYTES,
+            bytes.len() <= MAX_HTTP_HEADER_BYTES,
             "gateway origin request headers exceeded the fixture bound"
         );
         if bytes.windows(4).any(|window| window == b"\r\n\r\n") {
@@ -248,21 +347,6 @@ fn header_values<'a>(headers: &'a str, name: &str) -> Vec<&'a str> {
                 .then_some(value.trim())
         })
         .collect()
-}
-
-/// Parses only an exact HTTP/1.1 three-digit status token so case changes or
-/// numeric-prefix lookalikes cannot satisfy the response-status oracle.
-fn exact_http_1_1_status_code(response: &str) -> Option<u16> {
-    let status_line = response.split("\r\n").next()?;
-    let mut fields = status_line.split_ascii_whitespace();
-    if fields.next()? != "HTTP/1.1" {
-        return None;
-    }
-    let status = fields.next()?;
-    if status.len() != 3 || !status.bytes().all(|byte| byte.is_ascii_digit()) {
-        return None;
-    }
-    status.parse().ok()
 }
 
 /// Requires a complete Prometheus sample line so numeric-prefix values cannot
@@ -380,9 +464,13 @@ fn compiled_pg_erd_post_commit_reset_preserves_committed_status_and_independent_
         backend_address,
         frontend_address,
     );
-    drop(gateway_reservation);
-    drop(metrics_reservation);
-    let _process = start_gateway(&config, gateway_address, metrics_address);
+    let _process = start_gateway(
+        &config,
+        gateway_reservation,
+        metrics_reservation,
+        gateway_address,
+        metrics_address,
+    );
 
     let (partial, termination) = raw_request_until_committed_then_reset(
         gateway_address,
