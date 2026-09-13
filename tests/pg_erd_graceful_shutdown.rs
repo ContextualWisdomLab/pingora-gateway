@@ -106,7 +106,10 @@ fn wait_until_ready(address: SocketAddr, process: &mut Child) {
                             }
                         }
                         Err(error)
-                            if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) =>
+                            if matches!(
+                                error.kind(),
+                                ErrorKind::WouldBlock | ErrorKind::TimedOut
+                            ) =>
                         {
                             break;
                         }
