@@ -8,7 +8,7 @@
 //! readiness, or affecting the independent characterized route.
 
 use core::ffi::c_void;
-use std::io::{Read, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::os::fd::AsRawFd;
 use std::process::{Child, Command, Stdio};
@@ -20,6 +20,7 @@ use tempfile::NamedTempFile;
 const SOL_SOCKET: i32 = 1;
 const SO_LINGER: i32 = 13;
 const MAX_ORIGIN_REQUEST_HEADER_BYTES: usize = 64 * 1024;
+const MAX_RESPONSE_HEADER_BYTES: usize = 64 * 1024;
 
 #[repr(C)]
 struct Linger {
@@ -81,8 +82,72 @@ fn write_config(
     file
 }
 
-/// Waits for one listener while also failing immediately if the child exits,
-/// preventing startup failures from being misreported as traffic timeouts.
+/// Waits for complete application readiness on the traffic listener so reset
+/// timing cannot be confused with a socket that accepts before HTTP serving is ready.
+fn wait_until_ready(address: SocketAddr, process: &mut Child) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if let Some(status) = process
+            .try_wait()
+            .expect("gateway process state should be readable")
+        {
+            panic!("gateway exited before becoming ready: {status}");
+        }
+
+        if let Ok(mut stream) = TcpStream::connect_timeout(&address, Duration::from_millis(100)) {
+            stream
+                .set_read_timeout(Some(Duration::from_millis(250)))
+                .expect("readiness read timeout should be configurable");
+            stream
+                .set_write_timeout(Some(Duration::from_millis(250)))
+                .expect("readiness write timeout should be configurable");
+            if stream
+                .write_all(
+                    b"GET /readyz HTTP/1.1\r\nHost: gateway.local\r\nConnection: close\r\n\r\n",
+                )
+                .is_ok()
+            {
+                let mut response = Vec::new();
+                let mut buffer = [0_u8; 1024];
+                loop {
+                    match stream.read(&mut buffer) {
+                        Ok(0) => break,
+                        Ok(read) => {
+                            response.extend_from_slice(&buffer[..read]);
+                            if response.len() > MAX_RESPONSE_HEADER_BYTES {
+                                break;
+                            }
+                            if response.windows(4).any(|window| window == b"\r\n\r\n") {
+                                if response.starts_with(b"HTTP/1.1 200 ") {
+                                    return;
+                                }
+                                break;
+                            }
+                        }
+                        Err(error)
+                            if matches!(
+                                error.kind(),
+                                ErrorKind::WouldBlock | ErrorKind::TimedOut
+                            ) =>
+                        {
+                            break;
+                        }
+                        Err(_) => break,
+                    }
+                }
+            }
+        }
+
+        assert!(
+            Instant::now() < deadline,
+            "gateway did not become ready within 10s"
+        );
+        thread::sleep(Duration::from_millis(25));
+    }
+}
+
+/// Waits only for the metrics listener socket while also failing immediately if
+/// the child exits; the later real `/metrics` request proves application service.
 fn wait_until_listening(address: SocketAddr, process: &mut Child) {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
@@ -90,21 +155,21 @@ fn wait_until_listening(address: SocketAddr, process: &mut Child) {
             .try_wait()
             .expect("gateway process state should be readable")
         {
-            panic!("gateway exited before accepting traffic: {status}");
+            panic!("gateway exited before accepting metrics traffic: {status}");
         }
         if TcpStream::connect_timeout(&address, Duration::from_millis(100)).is_ok() {
             return;
         }
         assert!(
             Instant::now() < deadline,
-            "gateway did not start within 10s"
+            "metrics listener did not start within 10s"
         );
         thread::sleep(Duration::from_millis(25));
     }
 }
 
-/// Starts the compiled pg-erd composition root and proves both traffic and
-/// metrics listeners are live before the characterized failure is injected.
+/// Starts the compiled pg-erd composition root, requiring HTTP readiness on the
+/// traffic listener before the characterized reset can be injected.
 fn start_gateway(
     config: &NamedTempFile,
     gateway_address: SocketAddr,
@@ -117,7 +182,7 @@ fn start_gateway(
         .stderr(Stdio::null())
         .spawn()
         .expect("compiled pg-erd migration binary should start");
-    wait_until_listening(gateway_address, &mut child);
+    wait_until_ready(gateway_address, &mut child);
     wait_until_listening(metrics_address, &mut child);
     GatewayProcess(child)
 }
