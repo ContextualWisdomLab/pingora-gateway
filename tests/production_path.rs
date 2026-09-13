@@ -13,6 +13,8 @@ use std::time::{Duration, Instant};
 
 use tempfile::NamedTempFile;
 
+const MAX_HTTP_HEADER_BYTES: usize = 64 * 1024;
+
 struct GatewayProcess(Child);
 
 impl Drop for GatewayProcess {
@@ -22,19 +24,19 @@ impl Drop for GatewayProcess {
     }
 }
 
-fn reserve_distinct_loopback_addresses() -> (SocketAddr, SocketAddr) {
+/// Keeps both loopback ports exclusively reserved through configuration
+/// construction so another concurrent test cannot steal either listener.
+fn reserve_distinct_loopback_addresses() -> (TcpListener, TcpListener, SocketAddr, SocketAddr) {
     let traffic = TcpListener::bind("127.0.0.1:0").expect("traffic port should be available");
     let metrics = TcpListener::bind("127.0.0.1:0").expect("metrics port should be available");
-    let addresses = (
-        traffic
-            .local_addr()
-            .expect("traffic reservation has an address"),
-        metrics
-            .local_addr()
-            .expect("metrics reservation has an address"),
-    );
-    assert_ne!(addresses.0, addresses.1);
-    addresses
+    let traffic_address = traffic
+        .local_addr()
+        .expect("traffic reservation has an address");
+    let metrics_address = metrics
+        .local_addr()
+        .expect("metrics reservation has an address");
+    assert_ne!(traffic_address, metrics_address);
+    (traffic, metrics, traffic_address, metrics_address)
 }
 
 fn write_gateway_config_with_limit(
@@ -60,6 +62,85 @@ fn write_gateway_config(
     write_gateway_config_with_limit(listener, metrics_listener, upstream, 8)
 }
 
+/// Attempts one bounded application-level readiness exchange. A successful TCP
+/// handshake alone cannot prove that the traffic socket belongs to this gateway.
+fn probe_readyz(address: SocketAddr) -> bool {
+    let Ok(mut stream) = TcpStream::connect_timeout(&address, Duration::from_millis(100)) else {
+        return false;
+    };
+    if stream
+        .set_read_timeout(Some(Duration::from_millis(250)))
+        .is_err()
+        || stream
+            .set_write_timeout(Some(Duration::from_millis(250)))
+            .is_err()
+    {
+        return false;
+    }
+    if stream
+        .write_all(b"GET /readyz HTTP/1.1\r\nHost: gateway.test\r\nConnection: close\r\n\r\n")
+        .is_err()
+    {
+        return false;
+    }
+
+    let mut response = Vec::new();
+    let mut buffer = [0_u8; 1024];
+    loop {
+        match stream.read(&mut buffer) {
+            Ok(0) => return false,
+            Ok(read) => {
+                response.extend_from_slice(&buffer[..read]);
+                if response.len() > MAX_HTTP_HEADER_BYTES {
+                    return false;
+                }
+                let Some(header_end) = response
+                    .windows(4)
+                    .position(|window| window == b"\r\n\r\n")
+                    .map(|position| position + 4)
+                else {
+                    continue;
+                };
+                let headers = String::from_utf8_lossy(&response[..header_end]);
+                let mut lines = headers.split("\r\n");
+                if lines.next() != Some("HTTP/1.1 200 OK") {
+                    return false;
+                }
+                return lines.filter_map(|line| line.split_once(':')).any(
+                    |(name, value)| {
+                        name.eq_ignore_ascii_case("cache-control") && value.trim() == "no-store"
+                    },
+                );
+            }
+            Err(_) => return false,
+        }
+    }
+}
+
+/// Waits for the actual health contract while failing immediately if the child
+/// exits. This prevents a bare or stolen listener from manufacturing startup.
+fn wait_until_http_ready(address: SocketAddr, process: &mut Child) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if let Some(status) = process
+            .try_wait()
+            .expect("gateway process state should be readable")
+        {
+            panic!("gateway exited before application readiness: {status}");
+        }
+        if probe_readyz(address) {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "gateway did not become application-ready within 10s"
+        );
+        thread::sleep(Duration::from_millis(25));
+    }
+}
+
+/// The metrics socket gets a later real `/metrics` identity assertion, so this
+/// startup check only proves that the separate service has bound its listener.
 fn wait_until_listening(address: SocketAddr, process: &mut Child) {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
@@ -180,7 +261,8 @@ fn compiled_gateway_enforces_health_limits_forwarding_proxy_and_telemetry_paths(
     let fixture_listener = upstream_listener
         .try_clone()
         .expect("fixture listener should be clonable so the upstream stays available for streaming-limit characterization");
-    let (gateway_address, metrics_address) = reserve_distinct_loopback_addresses();
+    let (traffic_reservation, metrics_reservation, gateway_address, metrics_address) =
+        reserve_distinct_loopback_addresses();
     let config = write_gateway_config(gateway_address, metrics_address, upstream_address);
 
     let fixture = thread::spawn(move || {
@@ -218,6 +300,8 @@ fn compiled_gateway_enforces_health_limits_forwarding_proxy_and_telemetry_paths(
         }
     });
 
+    drop(traffic_reservation);
+    drop(metrics_reservation);
     let mut child = Command::new(env!("CARGO_BIN_EXE_cwl-pingora-gateway"))
         .args(["--config", config.path().to_str().expect("UTF-8 temp path")])
         .env("RUST_LOG", "info")
@@ -227,7 +311,7 @@ fn compiled_gateway_enforces_health_limits_forwarding_proxy_and_telemetry_paths(
         .spawn()
         .expect("compiled gateway binary should start");
 
-    wait_until_listening(gateway_address, &mut child);
+    wait_until_http_ready(gateway_address, &mut child);
     wait_until_listening(metrics_address, &mut child);
     let mut process = GatewayProcess(child);
 
@@ -336,7 +420,8 @@ fn exhausted_in_flight_budget_rejects_with_503_and_recovers_without_poisoning_he
     let upstream_address = upstream_listener
         .local_addr()
         .expect("fixture upstream should expose its address");
-    let (gateway_address, metrics_address) = reserve_distinct_loopback_addresses();
+    let (traffic_reservation, metrics_reservation, gateway_address, metrics_address) =
+        reserve_distinct_loopback_addresses();
     let config =
         write_gateway_config_with_limit(gateway_address, metrics_address, upstream_address, 1);
 
@@ -373,6 +458,8 @@ fn exhausted_in_flight_budget_rejects_with_503_and_recovers_without_poisoning_he
             .expect("recovery response should be writable");
     });
 
+    drop(traffic_reservation);
+    drop(metrics_reservation);
     let mut child = Command::new(env!("CARGO_BIN_EXE_cwl-pingora-gateway"))
         .args(["--config", config.path().to_str().expect("UTF-8 temp path")])
         .stdin(Stdio::null())
@@ -380,7 +467,7 @@ fn exhausted_in_flight_budget_rejects_with_503_and_recovers_without_poisoning_he
         .stderr(Stdio::null())
         .spawn()
         .expect("compiled gateway binary should start");
-    wait_until_listening(gateway_address, &mut child);
+    wait_until_http_ready(gateway_address, &mut child);
     wait_until_listening(metrics_address, &mut child);
     let mut process = GatewayProcess(child);
 
@@ -433,8 +520,11 @@ fn upstream_connection_failure_is_bounded_and_does_not_poison_readiness() {
         .expect("reserved upstream should expose its address");
     drop(unavailable_upstream);
 
-    let (gateway_address, metrics_address) = reserve_distinct_loopback_addresses();
+    let (traffic_reservation, metrics_reservation, gateway_address, metrics_address) =
+        reserve_distinct_loopback_addresses();
     let config = write_gateway_config(gateway_address, metrics_address, upstream_address);
+    drop(traffic_reservation);
+    drop(metrics_reservation);
     let mut child = Command::new(env!("CARGO_BIN_EXE_cwl-pingora-gateway"))
         .args(["--config", config.path().to_str().expect("UTF-8 temp path")])
         .stdin(Stdio::null())
@@ -443,7 +533,7 @@ fn upstream_connection_failure_is_bounded_and_does_not_poison_readiness() {
         .spawn()
         .expect("compiled gateway binary should start");
 
-    wait_until_listening(gateway_address, &mut child);
+    wait_until_http_ready(gateway_address, &mut child);
     let mut process = GatewayProcess(child);
 
     let started = Instant::now();
