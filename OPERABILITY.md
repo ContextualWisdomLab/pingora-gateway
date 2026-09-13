@@ -6,9 +6,11 @@ Run `cwl-pingora-gateway --config /path/to/gateway.yaml`. Configuration is read 
 
 The trust bundle is deployment input, not certificate-authority ownership. Mount it read-only from the platform or canonical secret/certificate owner and rotate it by replacing the deployment revision. The gateway does not issue certificates, manage ACME, or write trust material.
 
+The current active v1 configuration still admits one upstream and does not expose the characterized `edge_routing` or `http_policy` models. Do not configure or operate the process as though `pg-erd-cloud` multi-route selection or response-security-header mutation were active. Those contracts are executable characterization for a later versioned runtime/config transition, not hidden runtime flags.
+
 ## Health and backpressure
 
-`/livez` and `/readyz` return 200 with `Cache-Control: no-store` through the Pingora serving path. In v1 readiness is process/configuration readiness, not upstream reachability. Do not use it as proof that a dependent application is healthy.
+`/livez` and `/readyz` return 200 with `Cache-Control: no-store` through the Pingora serving path. In v1 readiness is process/configuration readiness, not upstream reachability. Do not use it as proof that a dependent application is healthy. A consumer `/healthz` route characterized from a legacy proxy is application routing evidence and must not be conflated with these gateway-local probes.
 
 `max_in_flight_requests` limits concurrently admitted non-health requests for one gateway process. At capacity the gateway fails new application traffic fast with HTTP 503 and increments `cwl_pingora_gateway_backpressure_rejections_total`; it does not queue unbounded work. Health probes bypass that admission budget so operators can distinguish process health from traffic saturation. The request lease is released when the Pingora request context ends, including error paths, and a subsequent request is admissible again.
 
@@ -26,8 +28,10 @@ SIGTERM uses Pingora graceful termination with an explicit 5-second request-drai
 
 Run as a non-root user and prefer a read-only root filesystem. Mount only the versioned config and any required upstream trust bundle read-only. The runtime does not intentionally write logs or state files; stdout/stderr should be collected by the platform. Do not bake secrets or private keys into the image or config.
 
-## Rollback
+## Cutover and rollback
 
-A consumer migration must keep the last known-good deployment manifest/image digest and its behavior characterization. Roll back by restoring that exact protected deployment revision, not by editing a live container. Certificate management must remain with its existing bounded owner during edge-runtime rollback.
+A consumer migration must keep the last known-good deployment manifest/image digest and its executable legacy characterization. Route and HTTP-policy parity must first be exercised through the compiled candidate, then through explicit shadow/canary evidence before production cutover. Do not infer traffic state from a characterization PR.
+
+Roll back by restoring the exact protected prior deployment revision, not by editing a live container. Certificate management, identity, product authorization/business policy, and security-verdict ownership must remain with their existing bounded owners during edge-runtime rollback.
 
 No consumer may pin `pingora-gateway` until a protected release publishes an immutable image digest and rollback has been rehearsed. The current Dockerfile alone is not a releasable artifact.
