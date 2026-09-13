@@ -1,8 +1,9 @@
 //! Real-listener acceptance for the fail-closed HTTP/1 protocol-transition boundary.
 //!
 //! WebSocket/Upgrade is intentionally outside the current generic and pg-erd contracts. These
-//! tests prove an Upgrade attempt is rejected before either composition root contacts an origin,
-//! while gateway-local readiness remains available.
+//! tests verify exact HTTP 501 and observe no origin connection during a fixed 500 ms post-response
+//! window. Source callback ordering separately enforces rejection before upstream work, while
+//! gateway-local readiness must remain available.
 
 use std::io::{ErrorKind, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
@@ -15,6 +16,7 @@ use tempfile::NamedTempFile;
 
 const MAX_RESPONSE_HEADER_BYTES: usize = 64 * 1024;
 const ORIGIN_CONTACT_OBSERVATION_WINDOW: Duration = Duration::from_millis(500);
+const STARTUP_DEADLINE: Duration = Duration::from_secs(10);
 
 // Each real-listener case must release an ephemeral reservation before its child process can bind
 // that exact address. Serializing those handoffs prevents sibling tests in this binary from
@@ -81,7 +83,7 @@ fn write_migration_config(
 }
 
 fn wait_until_listening(address: SocketAddr, process: &mut Child) {
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + STARTUP_DEADLINE;
     loop {
         if let Some(status) = process
             .try_wait()
@@ -100,6 +102,66 @@ fn wait_until_listening(address: SocketAddr, process: &mut Child) {
     }
 }
 
+/// Admits traffic only after the actual HTTP health path returns an exact 200 response.
+fn wait_until_ready(address: SocketAddr, process: &mut Child) {
+    let deadline = Instant::now() + STARTUP_DEADLINE;
+    loop {
+        if let Some(status) = process
+            .try_wait()
+            .expect("gateway process state should be readable")
+        {
+            panic!("gateway exited before /readyz became healthy: {status}");
+        }
+
+        if let Ok(mut stream) = TcpStream::connect_timeout(&address, Duration::from_millis(100)) {
+            let _ = stream.set_write_timeout(Some(Duration::from_millis(250)));
+            let _ = stream.set_read_timeout(Some(Duration::from_millis(250)));
+            if stream
+                .write_all(
+                    b"GET /readyz HTTP/1.1\r\nHost: gateway.local\r\nConnection: close\r\n\r\n",
+                )
+                .is_ok()
+            {
+                let mut response = Vec::new();
+                let mut buffer = [0_u8; 1024];
+                loop {
+                    match stream.read(&mut buffer) {
+                        Ok(0) => break,
+                        Ok(read) => {
+                            response.extend_from_slice(&buffer[..read]);
+                            if response.len() > MAX_RESPONSE_HEADER_BYTES {
+                                break;
+                            }
+                            if response.windows(4).any(|window| window == b"\r\n\r\n") {
+                                let response = String::from_utf8_lossy(&response);
+                                if http1_status_code(&response) == Some(200) {
+                                    return;
+                                }
+                                break;
+                            }
+                        }
+                        Err(error)
+                            if matches!(
+                                error.kind(),
+                                ErrorKind::WouldBlock | ErrorKind::TimedOut
+                            ) =>
+                        {
+                            break;
+                        }
+                        Err(_) => break,
+                    }
+                }
+            }
+        }
+
+        assert!(
+            Instant::now() < deadline,
+            "gateway /readyz did not return HTTP/1.1 200 within 10s"
+        );
+        thread::sleep(Duration::from_millis(25));
+    }
+}
+
 fn start_gateway(
     binary: &str,
     config: &NamedTempFile,
@@ -113,7 +175,7 @@ fn start_gateway(
         .stderr(Stdio::null())
         .spawn()
         .expect("compiled gateway binary should start");
-    wait_until_listening(listener, &mut child);
+    wait_until_ready(listener, &mut child);
     wait_until_listening(metrics_listener, &mut child);
     GatewayProcess(child)
 }
@@ -185,7 +247,7 @@ fn assert_ready(address: SocketAddr) {
     );
 }
 
-/// Observes the origin for a fixed post-response window so delayed connection attempts cannot pass.
+/// Observes the origin only inside the explicit post-response evidence window.
 fn assert_origin_untouched(origin: &TcpListener) {
     origin
         .set_nonblocking(true)
