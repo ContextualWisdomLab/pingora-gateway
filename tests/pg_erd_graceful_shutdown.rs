@@ -8,7 +8,7 @@
 
 #![cfg(unix)]
 
-use std::io::{Read, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
@@ -17,6 +17,8 @@ use std::time::{Duration, Instant};
 
 use cwl_pingora_gateway::runtime_policy::{V1_GRACE_PERIOD_SECONDS, V1_TERMINATION_BUDGET_SECONDS};
 use tempfile::NamedTempFile;
+
+const MAX_RESPONSE_HEADER_BYTES: usize = 64 * 1024;
 
 /// Owns the migration child so every assertion path terminates and reaps the spawned process.
 struct GatewayProcess(Child);
@@ -29,22 +31,20 @@ impl Drop for GatewayProcess {
     }
 }
 
-/// Selects traffic and metrics authorities while both ephemeral loopback reservations remain held.
-fn reserve_distinct_loopback_addresses() -> (SocketAddr, SocketAddr) {
-    // Hold both ephemeral reservations at once so the kernel cannot hand the just-released traffic
-    // port back to the metrics reservation and manufacture an invalid listener-authority config.
+/// Holds traffic and metrics reservations simultaneously until the child is ready to bind them.
+fn reserve_distinct_loopback_listeners() -> (TcpListener, TcpListener) {
     let traffic = TcpListener::bind("127.0.0.1:0").expect("traffic port should be reservable");
     let metrics = TcpListener::bind("127.0.0.1:0").expect("metrics port should be reservable");
-    let addresses = (
+    assert_ne!(
         traffic
             .local_addr()
             .expect("traffic reservation should expose an address"),
         metrics
             .local_addr()
             .expect("metrics reservation should expose an address"),
+        "traffic and metrics reservations must remain distinct"
     );
-    assert_ne!(addresses.0, addresses.1);
-    addresses
+    (traffic, metrics)
 }
 
 /// Writes the bounded pg-erd fixture with read budgets longer than the shared graceful-drain window.
@@ -63,22 +63,65 @@ fn write_config(
     file
 }
 
-/// Waits for the traffic listener without allowing an early process exit to look like startup success.
-fn wait_until_listening(address: SocketAddr, process: &mut Child) {
+/// Waits for a complete process-local readiness response instead of treating bare TCP accept as ready.
+fn wait_until_ready(address: SocketAddr, process: &mut Child) {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         if let Some(status) = process
             .try_wait()
             .expect("migration process state should be readable")
         {
-            panic!("migration process exited before accepting traffic: {status}");
+            panic!("migration process exited before becoming ready: {status}");
         }
-        if TcpStream::connect_timeout(&address, Duration::from_millis(100)).is_ok() {
-            return;
+
+        if let Ok(mut stream) = TcpStream::connect_timeout(&address, Duration::from_millis(100)) {
+            stream
+                .set_read_timeout(Some(Duration::from_millis(250)))
+                .expect("readiness read timeout should be configurable");
+            stream
+                .set_write_timeout(Some(Duration::from_millis(250)))
+                .expect("readiness write timeout should be configurable");
+
+            if stream
+                .write_all(
+                    b"GET /readyz HTTP/1.1\r\nHost: gateway.local\r\nConnection: close\r\n\r\n",
+                )
+                .is_ok()
+            {
+                let mut response = Vec::new();
+                let mut buffer = [0_u8; 1024];
+                loop {
+                    match stream.read(&mut buffer) {
+                        Ok(0) => break,
+                        Ok(read) => {
+                            response.extend_from_slice(&buffer[..read]);
+                            if response.len() > MAX_RESPONSE_HEADER_BYTES {
+                                break;
+                            }
+                            if response.windows(4).any(|window| window == b"\r\n\r\n") {
+                                if response.starts_with(b"HTTP/1.1 200 ") {
+                                    return;
+                                }
+                                break;
+                            }
+                        }
+                        Err(error)
+                            if matches!(
+                                error.kind(),
+                                ErrorKind::WouldBlock | ErrorKind::TimedOut
+                            ) =>
+                        {
+                            break;
+                        }
+                        Err(_) => break,
+                    }
+                }
+            }
         }
+
         assert!(
             Instant::now() < deadline,
-            "migration process did not start within 10s"
+            "migration process did not become ready within 10s"
         );
         thread::sleep(Duration::from_millis(25));
     }
@@ -133,7 +176,13 @@ fn sigterm_drains_routed_pg_erd_request_before_process_exit() {
     let frontend_address = frontend_listener
         .local_addr()
         .expect("frontend authority should expose its address");
-    let (gateway_address, metrics_address) = reserve_distinct_loopback_addresses();
+    let (gateway_reservation, metrics_reservation) = reserve_distinct_loopback_listeners();
+    let gateway_address = gateway_reservation
+        .local_addr()
+        .expect("traffic reservation should expose an address");
+    let metrics_address = metrics_reservation
+        .local_addr()
+        .expect("metrics reservation should expose an address");
     let config = write_config(
         gateway_address,
         metrics_address,
@@ -160,6 +209,10 @@ fn sigterm_drains_routed_pg_erd_request_before_process_exit() {
             .expect("held backend response should be writable");
     });
 
+    // Release the exact reserved sockets only at the child-bind handoff. Keeping them alive through
+    // config construction prevents an unrelated fixture from reclaiming either selected authority.
+    drop(gateway_reservation);
+    drop(metrics_reservation);
     let child = Command::new(env!("CARGO_BIN_EXE_cwl-pingora-pg-erd-migration"))
         .args(["--config", config.path().to_str().expect("UTF-8 temp path")])
         .env("RUST_LOG", "info")
@@ -169,7 +222,7 @@ fn sigterm_drains_routed_pg_erd_request_before_process_exit() {
         .spawn()
         .expect("compiled pg-erd migration binary should start");
     let mut process = GatewayProcess(child);
-    wait_until_listening(gateway_address, &mut process.0);
+    wait_until_ready(gateway_address, &mut process.0);
 
     let downstream = thread::spawn(move || {
         let mut stream = TcpStream::connect(gateway_address)
