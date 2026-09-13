@@ -25,24 +25,20 @@ impl Drop for GatewayProcess {
     }
 }
 
-/// Selects distinct loopback authorities while the temporary selection sockets are still held.
-///
-/// The listeners are released when this function returns; any later bind collision is therefore a
-/// fixture-startup error, not evidence that these addresses stay reserved until gateway startup.
-fn select_distinct_loopbacks() -> (SocketAddr, SocketAddr) {
-    let traffic = TcpListener::bind("127.0.0.1:0").expect("traffic port should be selectable");
-    let metrics = TcpListener::bind("127.0.0.1:0").expect("metrics port should be selectable");
-    let traffic_address = traffic
-        .local_addr()
-        .expect("traffic selection should expose an address");
-    let metrics_address = metrics
-        .local_addr()
-        .expect("metrics selection should expose an address");
+/// Holds traffic and metrics reservations simultaneously until the child-bind handoff.
+fn reserve_distinct_loopback_listeners() -> (TcpListener, TcpListener) {
+    let traffic = TcpListener::bind("127.0.0.1:0").expect("traffic port should be reservable");
+    let metrics = TcpListener::bind("127.0.0.1:0").expect("metrics port should be reservable");
     assert_ne!(
-        traffic_address, metrics_address,
-        "traffic and metrics authorities must be distinct at selection time"
+        traffic
+            .local_addr()
+            .expect("traffic reservation should expose an address"),
+        metrics
+            .local_addr()
+            .expect("metrics reservation should expose an address"),
+        "traffic and metrics reservations must remain distinct"
     );
-    (traffic_address, metrics_address)
+    (traffic, metrics)
 }
 
 /// Writes the bounded pg-erd fixture with a 100 ms backend read budget and independent frontend.
@@ -186,13 +182,24 @@ fn compiled_pg_erd_silent_backend_hits_read_timeout_and_preserves_independent_ro
             .expect("frontend recovery response should be writable");
     });
 
-    let (gateway_address, metrics_address) = select_distinct_loopbacks();
+    let (gateway_reservation, metrics_reservation) = reserve_distinct_loopback_listeners();
+    let gateway_address = gateway_reservation
+        .local_addr()
+        .expect("traffic reservation should expose an address");
+    let metrics_address = metrics_reservation
+        .local_addr()
+        .expect("metrics reservation should expose an address");
     let config = write_config(
         gateway_address,
         metrics_address,
         backend_address,
         frontend_address,
     );
+
+    // Keep both selected authorities owned through config construction, then release them only at
+    // the child-bind handoff. This narrows ephemeral-port reuse to the unavoidable spawn boundary.
+    drop(gateway_reservation);
+    drop(metrics_reservation);
     let _process = start_gateway(&config, gateway_address, metrics_address);
 
     let started = Instant::now();
