@@ -106,11 +106,11 @@ fn probe_readyz(address: SocketAddr) -> bool {
                 if lines.next() != Some("HTTP/1.1 200 OK") {
                     return false;
                 }
-                return lines.filter_map(|line| line.split_once(':')).any(
-                    |(name, value)| {
+                return lines
+                    .filter_map(|line| line.split_once(':'))
+                    .any(|(name, value)| {
                         name.eq_ignore_ascii_case("cache-control") && value.trim() == "no-store"
-                    },
-                );
+                    });
             }
             Err(_) => return false,
         }
