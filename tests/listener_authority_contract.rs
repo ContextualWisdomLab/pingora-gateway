@@ -118,7 +118,7 @@ fn gateway_profiles_reject_ephemeral_or_wildcard_upstream_authority() {
         })
     );
 
-    for wildcard_address in ["0.0.0.0:8080", "[::]:8080"] {
+    for wildcard_address in ["0.0.0.0:8080", "[::]:8080", "[::ffff:0.0.0.0]:8080"] {
         let wildcard_upstream = generic_gateway_yaml("127.0.0.1:6188", "127.0.0.1:6192")
             .replace("address: 127.0.0.1:8080", &format!("address: \"{wildcard_address}\""));
         assert_eq!(
