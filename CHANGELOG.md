@@ -6,6 +6,7 @@ All notable changes are tracked here. No release has been published yet.
 
 - Bootstrapped an executable Rust Pingora proxy through pull-request governance.
 - Added strict v1 configuration, explicit one-upstream network authority, TLS identity verification, and explicit upstream I/O budgets.
+- Added a transport-neutral Edge Routing characterization for the live `pg-erd-cloud` Traefik contract: exact `/healthz`, raw-prefix `/api`, fallback `/`, explicit numeric precedence, and fail-closed ambiguous-priority/malformed-route rejection. This does not yet activate multi-upstream Pingora routing or claim traffic cutover.
 - Added mandatory positive `max_in_flight_requests` and `upstream_keepalive_pool_size` capacity budgets; Pingora's framework keepalive default is overridden from the validated edge contract.
 - Added process-local fail-fast backpressure: non-health requests above the in-flight budget receive HTTP 503, health remains observable, rejection telemetry increments, and capacity is released after request completion or failure.
 - Added optional per-upstream absolute PEM trust-bundle consumption without taking ownership of certificate issuance/rotation; trust material is loaded fail-closed before listeners open.
