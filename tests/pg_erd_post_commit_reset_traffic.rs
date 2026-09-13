@@ -3,19 +3,18 @@
 //! Real-listener post-commit upstream TCP reset acceptance for the dedicated pg-erd migration.
 //!
 //! This contract distinguishes an abortive upstream close after a valid response header has crossed
-//! the proxy from both the pre-header reset and orderly truncation cases. The origin emits a partial
-//! body before the reset, but downstream body delivery is deliberately not a prerequisite for
-//! releasing the abort because proxy buffering is not response-commit authority. Once downstream
-//! response commitment exists, the gateway must preserve that status/framing, terminate the
-//! incomplete response, record the transport failure, and keep unrelated routing healthy rather
-//! than inventing retry/failover or a second HTTP status.
+//! the origin-side TCP connection from both the pre-header reset and orderly truncation cases. The
+//! origin emits a partial body, waits for the peer TCP stack to acknowledge all emitted bytes, and
+//! only then resets. Downstream body delivery is deliberately not a prerequisite for releasing the
+//! abort because proxy buffering is not response-commit authority. The gateway must preserve the
+//! first downstream status/framing, terminate the incomplete response, record the transport failure,
+//! and keep unrelated routing healthy rather than inventing retry/failover or a second HTTP status.
 
 use core::ffi::c_void;
 use std::io::{ErrorKind, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::os::fd::AsRawFd;
 use std::process::{Child, Command, Stdio};
-use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -23,6 +22,7 @@ use tempfile::NamedTempFile;
 
 const SOL_SOCKET: i32 = 1;
 const SO_LINGER: i32 = 13;
+const SIOCOUTQ: usize = 0x5411;
 const MAX_HTTP_HEADER_BYTES: usize = 64 * 1024;
 
 #[repr(C)]
@@ -39,6 +39,7 @@ unsafe extern "C" {
         option_value: *const c_void,
         option_len: u32,
     ) -> i32;
+    fn ioctl(socket: i32, request: usize, ...) -> i32;
 }
 
 struct GatewayProcess(Child);
@@ -240,14 +241,12 @@ fn raw_request(address: SocketAddr, request: &[u8]) -> String {
     response
 }
 
-/// Releases the backend reset as soon as downstream has observed the complete
-/// response header, then records EOF versus propagated RST. Body forwarding is
-/// intentionally not part of the release handshake because an intermediary may
-/// buffer body bytes after response commitment without changing HTTP authority.
+/// Reads the incomplete downstream response until EOF or propagated RST. The
+/// origin independently controls when the reset is released, avoiding a cycle
+/// where downstream forwarding becomes a prerequisite for upstream failure.
 fn raw_request_until_committed_then_reset(
     address: SocketAddr,
     request: &[u8],
-    reset_release: mpsc::Sender<()>,
 ) -> (Vec<u8>, DownstreamTermination) {
     let mut downstream = TcpStream::connect_timeout(&address, Duration::from_secs(1))
         .expect("gateway should accept traffic");
@@ -263,7 +262,6 @@ fn raw_request_until_committed_then_reset(
 
     let mut response = Vec::new();
     let mut buffer = [0_u8; 1024];
-    let mut reset_released = false;
     loop {
         match downstream.read(&mut buffer) {
             Ok(0) => return (response, DownstreamTermination::Eof),
@@ -273,12 +271,6 @@ fn raw_request_until_committed_then_reset(
                     response.len() <= MAX_HTTP_HEADER_BYTES,
                     "post-commit fixture response exceeded its bounded evidence envelope"
                 );
-                if !reset_released && response.windows(4).any(|window| window == b"\r\n\r\n") {
-                    reset_release
-                        .send(())
-                        .expect("backend reset fixture should still await release");
-                    reset_released = true;
-                }
             }
             Err(error) if error.kind() == ErrorKind::ConnectionReset => {
                 return (response, DownstreamTermination::ConnectionReset);
@@ -348,8 +340,39 @@ fn contains_exact_metric_sample(metrics: &str, sample: &str) -> bool {
         .any(|line| line.trim_end_matches('\r') == sample)
 }
 
+/// Waits until Linux reports no response bytes outstanding in the origin TCP
+/// send queue. Linux implements SIOCOUTQ as `write_seq - snd_una`, so zero means
+/// the peer TCP stack has acknowledged every byte emitted before the abort.
+fn wait_until_peer_acknowledged_response(stream: &TcpStream) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let mut pending_bytes = 0_i32;
+        // SAFETY: SIOCOUTQ expects a live socket fd and a writable `int *` result buffer.
+        // `pending_bytes` remains valid for the duration of this synchronous ioctl call.
+        let result = unsafe { ioctl(stream.as_raw_fd(), SIOCOUTQ, &mut pending_bytes as *mut i32) };
+        assert_eq!(
+            result,
+            0,
+            "Linux SIOCOUTQ should expose the origin send queue: {}",
+            std::io::Error::last_os_error()
+        );
+        assert!(
+            pending_bytes >= 0,
+            "Linux SIOCOUTQ cannot report a negative send-queue size: {pending_bytes}"
+        );
+        if pending_bytes == 0 {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "origin response bytes were not acknowledged before the fixture deadline: {pending_bytes} bytes remain"
+        );
+        thread::sleep(Duration::from_millis(5));
+    }
+}
+
 /// Configures Linux abortive-close semantics on the established origin socket
-/// so this phase exercises a real TCP reset after response commitment.
+/// so this phase exercises a real TCP reset after response bytes were acknowledged.
 fn reset_on_close(stream: &TcpStream) {
     let linger = Linger {
         onoff: 1,
@@ -402,13 +425,12 @@ fn exact_metric_sample_rejects_numeric_prefix_lookalikes() {
     ));
 }
 
-/// Proves an origin RST after downstream commitment preserves the first status
-/// and framing, terminates the short body, records one error and spares sibling routing.
+/// Proves an origin RST after the response bytes were acknowledged by the peer
+/// preserves the first downstream status/framing and spares sibling routing.
 #[test]
 fn compiled_pg_erd_post_commit_reset_preserves_committed_status_and_independent_routing() {
     let backend = TcpListener::bind("127.0.0.1:0").expect("backend fixture should bind");
     let backend_address = backend.local_addr().expect("backend address should exist");
-    let (reset_release, reset_wait) = mpsc::channel();
     let backend_origin = thread::spawn(move || {
         let (mut stream, _) = backend
             .accept()
@@ -420,12 +442,11 @@ fn compiled_pg_erd_post_commit_reset_preserves_committed_status_and_independent_
             .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 20\r\nConnection: close\r\n\r\npartial")
             .expect("committed backend response should be writable");
 
-        // Release the abort after downstream has committed the response header. The origin has
-        // already emitted the partial body bytes, but requiring those bytes to cross an intermediary
-        // before RST creates a buffering-dependent cycle and is not part of HTTP commitment.
-        reset_wait
-            .recv_timeout(Duration::from_secs(10))
-            .expect("downstream should observe the committed header before fixture timeout");
+        // Waiting on downstream delivery formed a circular oracle under slower instrumented runs:
+        // origin waited for downstream header forwarding while the intermediary could wait for
+        // origin completion. Instead, require Linux transport evidence that every emitted header
+        // and partial-body byte reached and was acknowledged by the peer TCP stack before the RST.
+        wait_until_peer_acknowledged_response(&stream);
         reset_on_close(&stream);
         drop(stream);
     });
@@ -466,7 +487,6 @@ fn compiled_pg_erd_post_commit_reset_preserves_committed_status_and_independent_
     let (partial, termination) = raw_request_until_committed_then_reset(
         gateway_address,
         b"GET /api/post-commit-reset HTTP/1.1\r\nHost: app.example:8080\r\nConnection: close\r\n\r\n",
-        reset_release,
     );
     assert!(
         matches!(
