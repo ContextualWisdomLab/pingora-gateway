@@ -14,6 +14,8 @@ use std::time::{Duration, Instant};
 
 use tempfile::NamedTempFile;
 
+const MAX_REQUEST_HEADER_BYTES: usize = 64 * 1024;
+
 /// Owns the compiled gateway child so every assertion path tears the process down.
 struct GatewayProcess(Child);
 
@@ -121,19 +123,26 @@ fn get(address: SocketAddr, path: &str) -> String {
     )
 }
 
-/// Reads only through the HTTP header terminator so the silent fixture never emits response bytes.
+/// Reads one bounded origin request through the header terminator; no body is needed by this fixture.
 fn read_request_headers(stream: &mut TcpStream) -> String {
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .expect("origin header timeout should be configurable");
     let mut bytes = Vec::new();
     let mut buffer = [0_u8; 1024];
     loop {
         let read = stream
             .read(&mut buffer)
-            .expect("origin request should be readable");
+            .expect("origin request headers should complete within five seconds");
         assert!(
             read > 0,
             "gateway closed origin request before headers completed"
         );
         bytes.extend_from_slice(&buffer[..read]);
+        assert!(
+            bytes.len() <= MAX_REQUEST_HEADER_BYTES,
+            "origin request headers exceeded the 64 KiB fixture bound without a terminator"
+        );
         if bytes.windows(4).any(|window| window == b"\r\n\r\n") {
             return String::from_utf8_lossy(&bytes).into_owned();
         }
