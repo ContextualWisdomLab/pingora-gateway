@@ -25,6 +25,13 @@ impl DownstreamScheme {
             Self::Https => "https",
         }
     }
+
+    fn default_port(self) -> u16 {
+        match self {
+            Self::Http => 80,
+            Self::Https => 443,
+        }
+    }
 }
 
 /// Trusted transport metadata used to reconstruct legacy forwarding fields.
@@ -52,16 +59,14 @@ impl ForwardingContext {
         }
     }
 
-    /// Derives forwarding authority from an accepted Pingora transport and request Host authority.
+    /// Derives forwarding identity from the accepted client socket and original request authority.
     ///
-    /// The client and listener must both be IP sockets. Host is taken from the request that Pingora
-    /// will send upstream when present, otherwise from the accepted downstream request. Missing,
-    /// non-IP, or non-text authority fails closed before any compatibility forwarding field is
-    /// emitted. This keeps Unix/custom transports and malformed Host bytes from being mistaken for
-    /// pg-erd's characterized TCP edge authority.
+    /// The listener socket is intentionally not an input. Container, Service, NAT, or port-publish
+    /// layers may expose a different external authority than the process bind address. An explicit
+    /// Host port is therefore authoritative for `X-Forwarded-Port`; otherwise the admitted
+    /// downstream scheme supplies its well-known port. Malformed authority fails closed.
     pub fn from_downstream_transport(
         client_addr: Option<&PingoraSocketAddr>,
-        listener_addr: Option<&PingoraSocketAddr>,
         upstream_request: &RequestHeader,
         downstream_request: &RequestHeader,
         scheme: DownstreamScheme,
@@ -73,15 +78,6 @@ impl ForwardingContext {
                 Error::explain(
                     ErrorType::HTTPStatus(500),
                     "pg-erd migration requires an IP downstream client address",
-                )
-            })?;
-        let downstream_port = listener_addr
-            .and_then(PingoraSocketAddr::as_inet)
-            .map(|address| address.port())
-            .ok_or_else(|| {
-                Error::explain(
-                    ErrorType::HTTPStatus(500),
-                    "pg-erd migration requires an IP downstream listener address",
                 )
             })?;
         let original_host = upstream_request
@@ -96,6 +92,7 @@ impl ForwardingContext {
                     "pg-erd migration requires a valid downstream Host authority",
                 )
             })?;
+        let downstream_port = authority_port(original_host.as_str(), scheme)?;
 
         Ok(Self::new(client_ip, original_host, downstream_port, scheme))
     }
@@ -121,30 +118,80 @@ impl ForwardingContext {
 
         let client_ip = self.client_ip.to_string();
         let downstream_port = self.downstream_port.to_string();
-        upstream_request
-            .insert_header("X-Forwarded-For", client_ip.as_str())
-            .expect("IP text and the static forwarding field name are valid HTTP header data");
-        upstream_request
-            .insert_header("X-Real-IP", client_ip.as_str())
-            .expect("IP text and the static real-IP field name are valid HTTP header data");
-        upstream_request.insert_header("X-Forwarded-Host", self.original_host.as_str())?;
-        upstream_request
-            .insert_header("X-Forwarded-Port", downstream_port.as_str())
-            .expect("decimal TCP port text is valid HTTP header data");
-        upstream_request
-            .insert_header("X-Forwarded-Proto", self.scheme.as_str())
-            .expect("the bounded downstream scheme is valid HTTP header data");
-        Ok(())
+        let insertion_result = [
+            ("X-Forwarded-For", client_ip.as_str()),
+            ("X-Real-IP", client_ip.as_str()),
+            ("X-Forwarded-Host", self.original_host.as_str()),
+            ("X-Forwarded-Port", downstream_port.as_str()),
+            ("X-Forwarded-Proto", self.scheme.as_str()),
+        ]
+        .into_iter()
+        .try_for_each(|(name, value)| upstream_request.insert_header(name, value));
+        insertion_result
     }
+}
+
+fn authority_port(authority: &str, scheme: DownstreamScheme) -> pingora::Result<u16> {
+    if authority.is_empty() {
+        return Err(invalid_authority());
+    }
+
+    if let Some(rest) = authority.strip_prefix('[') {
+        let closing = rest.find(']').ok_or_else(invalid_authority)?;
+        let suffix = &rest[closing + 1..];
+        return match suffix {
+            "" => Ok(scheme.default_port()),
+            _ if suffix.starts_with(':') => parse_port(&suffix[1..]),
+            _ => Err(invalid_authority()),
+        };
+    }
+
+    if authority.contains('[') || authority.contains(']') {
+        return Err(invalid_authority());
+    }
+
+    if let Some((host, port)) = authority.rsplit_once(':') {
+        if host.is_empty() || host.contains(':') {
+            return Err(invalid_authority());
+        }
+        return parse_port(port);
+    }
+
+    Ok(scheme.default_port())
+}
+
+fn parse_port(port: &str) -> pingora::Result<u16> {
+    let parsed = port.parse::<u16>().map_err(|_| invalid_authority())?;
+    if parsed == 0 {
+        return Err(invalid_authority());
+    }
+    Ok(parsed)
+}
+
+fn invalid_authority() -> Box<Error> {
+    Error::explain(
+        ErrorType::HTTPStatus(400),
+        "pg-erd migration requires a valid downstream Host authority",
+    )
 }
 
 #[cfg(test)]
 mod tests {
-    use std::net::{IpAddr, Ipv6Addr};
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
-    use pingora::prelude::RequestHeader;
+    use pingora::prelude::{ErrorType, RequestHeader};
+    use pingora::protocols::l4::socket::SocketAddr as PingoraSocketAddr;
 
-    use super::{DownstreamScheme, ForwardingContext};
+    use super::{authority_port, DownstreamScheme, ForwardingContext};
+
+    fn request_with_host(host: &str) -> RequestHeader {
+        let mut request =
+            RequestHeader::build("GET", b"/", None).expect("fixture request must be valid");
+        request
+            .insert_header("host", host)
+            .expect("fixture Host must be valid HTTP field data");
+        request
+    }
 
     #[test]
     fn ipv6_forwarding_uses_ip_without_socket_port() {
@@ -163,5 +210,139 @@ mod tests {
 
         assert_eq!(request.headers["x-forwarded-for"].to_str().unwrap(), "::1");
         assert_eq!(request.headers["x-real-ip"].to_str().unwrap(), "::1");
+    }
+
+    #[test]
+    fn host_authority_port_is_external_authority_not_listener_bind_port() {
+        let client = PingoraSocketAddr::from(SocketAddr::from((Ipv4Addr::LOCALHOST, 49152)));
+        let downstream = request_with_host("app.example");
+        let upstream = downstream.clone();
+        let context = ForwardingContext::from_downstream_transport(
+            Some(&client),
+            &upstream,
+            &downstream,
+            DownstreamScheme::Http,
+        )
+        .expect("valid clear-text authority must derive forwarding metadata");
+        let mut emitted = upstream.clone();
+
+        context
+            .apply(&mut emitted)
+            .expect("derived forwarding metadata must remain representable");
+
+        assert_eq!(emitted.headers["x-forwarded-host"], "app.example");
+        assert_eq!(emitted.headers["x-forwarded-port"], "80");
+        assert_eq!(emitted.headers["x-forwarded-proto"], "http");
+    }
+
+    #[test]
+    fn downstream_host_is_fallback_authority_when_upstream_host_is_absent() {
+        let client = PingoraSocketAddr::from(SocketAddr::from((Ipv4Addr::LOCALHOST, 49152)));
+        let upstream = RequestHeader::build("GET", b"/", None).expect("fixture request is valid");
+        let downstream = request_with_host("fallback.example:8080");
+
+        let context = ForwardingContext::from_downstream_transport(
+            Some(&client),
+            &upstream,
+            &downstream,
+            DownstreamScheme::Http,
+        )
+        .expect("downstream Host must supply fallback authority");
+
+        assert_eq!(context.original_host, "fallback.example:8080");
+        assert_eq!(context.downstream_port, 8080);
+    }
+
+    #[test]
+    fn missing_host_authority_fails_closed() {
+        let client = PingoraSocketAddr::from(SocketAddr::from((Ipv4Addr::LOCALHOST, 49152)));
+        let request = RequestHeader::build("GET", b"/", None).expect("fixture request is valid");
+
+        let error = ForwardingContext::from_downstream_transport(
+            Some(&client),
+            &request,
+            &request,
+            DownstreamScheme::Http,
+        )
+        .expect_err("missing Host authority must fail closed");
+
+        assert_eq!(error.etype, ErrorType::HTTPStatus(400));
+    }
+
+    #[test]
+    fn malformed_host_authority_fails_closed_through_transport_derivation() {
+        let client = PingoraSocketAddr::from(SocketAddr::from((Ipv4Addr::LOCALHOST, 49152)));
+        let request = request_with_host("app.example:0");
+
+        let error = ForwardingContext::from_downstream_transport(
+            Some(&client),
+            &request,
+            &request,
+            DownstreamScheme::Http,
+        )
+        .expect_err("invalid Host port must fail closed at the transport-derived boundary");
+
+        assert_eq!(error.etype, ErrorType::HTTPStatus(400));
+    }
+
+    #[test]
+    fn invalid_forwarding_field_value_fails_closed() {
+        let mut request =
+            RequestHeader::build("GET", b"/", None).expect("fixture request must be valid");
+        let context = ForwardingContext::new(
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+            "bad\nvalue".to_string(),
+            80,
+            DownstreamScheme::Http,
+        );
+
+        assert!(context.apply(&mut request).is_err());
+    }
+
+    #[test]
+    fn explicit_and_ipv6_host_ports_are_preserved() {
+        assert_eq!(
+            authority_port("app.example:8080", DownstreamScheme::Http).unwrap(),
+            8080
+        );
+        assert_eq!(
+            authority_port("[2001:db8::1]:8443", DownstreamScheme::Https).unwrap(),
+            8443
+        );
+        assert_eq!(
+            authority_port("[2001:db8::1]", DownstreamScheme::Https).unwrap(),
+            443
+        );
+    }
+
+    #[test]
+    fn malformed_host_authority_fails_closed() {
+        for authority in [
+            "",
+            "app.example:",
+            "app.example:0",
+            "2001:db8::1",
+            "[::1",
+            "[::1]junk",
+            "app[example",
+            "app]example",
+        ] {
+            let error = authority_port(authority, DownstreamScheme::Http)
+                .expect_err("malformed authority must not produce forwarding metadata");
+            assert_eq!(error.etype, ErrorType::HTTPStatus(400));
+        }
+    }
+
+    #[test]
+    fn missing_ip_client_fails_closed() {
+        let downstream = request_with_host("app.example:8080");
+        let error = ForwardingContext::from_downstream_transport(
+            None,
+            &downstream,
+            &downstream,
+            DownstreamScheme::Http,
+        )
+        .expect_err("missing accepted IP client address must fail closed");
+        assert_eq!(error.etype, ErrorType::HTTPStatus(500));
     }
 }
