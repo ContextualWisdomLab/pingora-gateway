@@ -25,19 +25,22 @@ impl Drop for GatewayProcess {
     }
 }
 
-/// Selects traffic and metrics loopback authorities while both ephemeral reservations remain held.
-fn reserve_distinct_loopbacks() -> (SocketAddr, SocketAddr) {
-    let traffic = TcpListener::bind("127.0.0.1:0").expect("traffic port should be reservable");
-    let metrics = TcpListener::bind("127.0.0.1:0").expect("metrics port should be reservable");
+/// Selects distinct loopback authorities while the temporary selection sockets are still held.
+///
+/// The listeners are released when this function returns; any later bind collision is therefore a
+/// fixture-startup error, not evidence that these addresses stay reserved until gateway startup.
+fn select_distinct_loopbacks() -> (SocketAddr, SocketAddr) {
+    let traffic = TcpListener::bind("127.0.0.1:0").expect("traffic port should be selectable");
+    let metrics = TcpListener::bind("127.0.0.1:0").expect("metrics port should be selectable");
     let traffic_address = traffic
         .local_addr()
-        .expect("traffic reservation should expose an address");
+        .expect("traffic selection should expose an address");
     let metrics_address = metrics
         .local_addr()
-        .expect("metrics reservation should expose an address");
+        .expect("metrics selection should expose an address");
     assert_ne!(
         traffic_address, metrics_address,
-        "traffic and metrics reservations must remain distinct while both sockets are held"
+        "traffic and metrics authorities must be distinct at selection time"
     );
     (traffic_address, metrics_address)
 }
@@ -155,8 +158,8 @@ fn compiled_pg_erd_silent_backend_hits_read_timeout_and_preserves_independent_ro
         let request = read_request_headers(&mut stream);
         assert!(request.starts_with("GET /api/read-stall HTTP/1.1\r\n"));
         backend_connected_tx
-            .send(())
-            .expect("test should observe the connected silent backend");
+            .send(Instant::now())
+            .expect("test should observe when the connected backend becomes silent");
 
         // Keep the accepted connection open and send no response bytes until the gateway has
         // already produced its downstream failure. This prevents fixture closure from masquerading
@@ -183,7 +186,7 @@ fn compiled_pg_erd_silent_backend_hits_read_timeout_and_preserves_independent_ro
             .expect("frontend recovery response should be writable");
     });
 
-    let (gateway_address, metrics_address) = reserve_distinct_loopbacks();
+    let (gateway_address, metrics_address) = select_distinct_loopbacks();
     let config = write_config(
         gateway_address,
         metrics_address,
@@ -194,13 +197,21 @@ fn compiled_pg_erd_silent_backend_hits_read_timeout_and_preserves_independent_ro
 
     let started = Instant::now();
     let failed = get(gateway_address, "/api/read-stall");
+    let failure_observed_at = Instant::now();
     let failure_elapsed = started.elapsed();
-    backend_connected_rx
+    let silence_started_at = backend_connected_rx
         .recv_timeout(Duration::from_secs(1))
         .expect("the failure case must have connected to the characterized backend");
+    let silent_elapsed = failure_observed_at
+        .checked_duration_since(silence_started_at)
+        .expect("gateway failure must occur after the characterized backend becomes silent");
     assert!(
         failed.starts_with("HTTP/1.1 502"),
         "a characterized upstream read timeout must fail as Bad Gateway: {failed:?}"
+    );
+    assert!(
+        silent_elapsed >= Duration::from_millis(50),
+        "the downstream failure must not precede a conservative lower bound for the configured 100 ms read-inactivity path; silent_elapsed={silent_elapsed:?}"
     );
     assert!(
         failure_elapsed < Duration::from_secs(1),
