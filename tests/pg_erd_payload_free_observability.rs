@@ -6,7 +6,7 @@
 //! sensitive request material is actually present on the proxied request path.
 
 use std::fs;
-use std::io::{Read, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::process::{Child, Command, Stdio};
 use std::thread;
@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 use tempfile::NamedTempFile;
 
 const MAX_ORIGIN_REQUEST_HEADER_BYTES: usize = 64 * 1024;
+const MAX_RESPONSE_HEADER_BYTES: usize = 64 * 1024;
 
 struct GatewayProcess {
     child: Option<Child>,
@@ -106,31 +107,70 @@ fn write_config(
     file
 }
 
-fn wait_until_listening(address: SocketAddr, process: &mut Child) {
+/// Waits for a complete process-local readiness response instead of treating bare TCP accept as ready.
+fn wait_until_ready(address: SocketAddr, process: &mut Child) {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         if let Some(status) = process
             .try_wait()
             .expect("gateway process state should be readable")
         {
-            panic!("gateway exited before accepting traffic: {status}");
+            panic!("gateway exited before becoming ready: {status}");
         }
-        if TcpStream::connect_timeout(&address, Duration::from_millis(100)).is_ok() {
-            return;
+
+        if let Ok(mut stream) = TcpStream::connect_timeout(&address, Duration::from_millis(100)) {
+            stream
+                .set_read_timeout(Some(Duration::from_millis(250)))
+                .expect("readiness read timeout should be configurable");
+            stream
+                .set_write_timeout(Some(Duration::from_millis(250)))
+                .expect("readiness write timeout should be configurable");
+            if stream
+                .write_all(
+                    b"GET /readyz HTTP/1.1\r\nHost: gateway.local\r\nConnection: close\r\n\r\n",
+                )
+                .is_ok()
+            {
+                let mut response = Vec::new();
+                let mut buffer = [0_u8; 1024];
+                loop {
+                    match stream.read(&mut buffer) {
+                        Ok(0) => break,
+                        Ok(read) => {
+                            response.extend_from_slice(&buffer[..read]);
+                            if response.len() > MAX_RESPONSE_HEADER_BYTES {
+                                break;
+                            }
+                            if response.windows(4).any(|window| window == b"\r\n\r\n") {
+                                if response.starts_with(b"HTTP/1.1 200 ") {
+                                    return;
+                                }
+                                break;
+                            }
+                        }
+                        Err(error)
+                            if matches!(
+                                error.kind(),
+                                ErrorKind::WouldBlock | ErrorKind::TimedOut
+                            ) =>
+                        {
+                            break;
+                        }
+                        Err(_) => break,
+                    }
+                }
+            }
         }
+
         assert!(
             Instant::now() < deadline,
-            "gateway did not start within 10s"
+            "gateway did not become ready within 10s"
         );
         thread::sleep(Duration::from_millis(25));
     }
 }
 
-fn start_gateway(
-    config: &NamedTempFile,
-    gateway_address: SocketAddr,
-    metrics_address: SocketAddr,
-) -> GatewayProcess {
+fn start_gateway(config: &NamedTempFile, gateway_address: SocketAddr) -> GatewayProcess {
     let stderr = NamedTempFile::new().expect("gateway stderr capture should be writable");
     let stderr_writer = stderr
         .reopen()
@@ -143,8 +183,7 @@ fn start_gateway(
         .stderr(Stdio::from(stderr_writer))
         .spawn()
         .expect("compiled pg-erd migration binary should start");
-    wait_until_listening(gateway_address, &mut child);
-    wait_until_listening(metrics_address, &mut child);
+    wait_until_ready(gateway_address, &mut child);
     GatewayProcess {
         child: Some(child),
         stderr,
@@ -285,7 +324,7 @@ fn compiled_pg_erd_shared_access_log_excludes_request_sensitive_material() {
     );
     drop(gateway_reservation);
     drop(metrics_reservation);
-    let mut process = start_gateway(&config, gateway_address, metrics_address);
+    let mut process = start_gateway(&config, gateway_address);
 
     let response = raw_request(
         gateway_address,
