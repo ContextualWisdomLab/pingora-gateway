@@ -69,7 +69,8 @@ fn write_config(
 /// Waits for a bounded complete HTTP 200 response instead of treating bare TCP accept as readiness.
 fn wait_until_http_ok(address: SocketAddr, path: &str, process: &mut Child) {
     let deadline = Instant::now() + Duration::from_secs(10);
-    let request = format!("GET {path} HTTP/1.1\r\nHost: gateway.local\r\nConnection: close\r\n\r\n");
+    let request =
+        format!("GET {path} HTTP/1.1\r\nHost: gateway.local\r\nConnection: close\r\n\r\n");
     loop {
         if let Some(status) = process
             .try_wait()
@@ -276,9 +277,7 @@ fn http_1_1_status_code(response: &str) -> Option<u16> {
         return None;
     }
     let code = fields.next()?;
-    if code.len() != 3
-        || !code.bytes().all(|byte| byte.is_ascii_digit())
-        || fields.next().is_none()
+    if code.len() != 3 || !code.bytes().all(|byte| byte.is_ascii_digit()) || fields.next().is_none()
     {
         return None;
     }
