@@ -32,6 +32,7 @@ All notable changes are tracked here. No release has been published yet.
 - Added low-cardinality metrics plus credential/cookie-safe access logging through the production path.
 - Overrode Pingora framework retry/drain defaults with one total upstream attempt, a 5-second SIGTERM grace period, and a 30-second graceful-shutdown timeout.
 - Added non-root/read-only-root OCI packaging with a fail-closed build-time allowlist for the generic and bounded pg-erd process identities; exact-head OCI acceptance builds and starts both profiles under uid/gid 65532, dropped capabilities and `no-new-privileges`, while the supply-chain lane builds and vulnerability-scans both candidate images.
+- Extended the pg-erd OCI acceptance so the least-privilege migration container is not accepted until process `/livez` responds and the separately published `/metrics` listener identifies the Pingora Prometheus service through exact base media type `text/plain` after stripping only optional semicolon parameters. A bare HTTP 200 or prefix-wildcard media-type match is insufficient.
 - Added a committed dependency lock, fail-closed license/source/advisory policy, exact-source SBOM and image-vulnerability evidence.
 - Added an exact-head owned-production coverage gate that requires 100% lines and regions without filename/function/branch exclusions; repaired compiler-generated generic startup coverage and structurally impossible literal-header error regions rather than weakening the gate.
 - Added missing-public-rustdoc enforcement and documentation builds with warnings denied.
