@@ -276,7 +276,10 @@ fn http_1_1_status_code(response: &str) -> Option<u16> {
         return None;
     }
     let code = fields.next()?;
-    if code.len() != 3 || !code.bytes().all(|byte| byte.is_ascii_digit()) || fields.next().is_none() {
+    if code.len() != 3
+        || !code.bytes().all(|byte| byte.is_ascii_digit())
+        || fields.next().is_none()
+    {
         return None;
     }
     code.parse().ok()
