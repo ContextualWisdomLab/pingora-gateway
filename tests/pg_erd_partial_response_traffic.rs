@@ -234,17 +234,24 @@ fn get(address: SocketAddr, path: &str) -> String {
 
 /// Reads only through the origin header terminator so the fixture can control the failure phase.
 fn read_request_headers(stream: &mut TcpStream) -> String {
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .expect("origin request timeout should be configurable");
     let mut bytes = Vec::new();
     let mut buffer = [0_u8; 1024];
     loop {
         let read = stream
             .read(&mut buffer)
-            .expect("origin request should be readable");
+            .expect("origin request should complete within the fixture timeout");
         assert!(
             read > 0,
             "gateway closed origin request before headers completed"
         );
         bytes.extend_from_slice(&buffer[..read]);
+        assert!(
+            bytes.len() <= MAX_RESPONSE_HEADER_BYTES,
+            "origin request headers exceeded the bounded fixture limit"
+        );
         if bytes.windows(4).any(|window| window == b"\r\n\r\n") {
             return String::from_utf8_lossy(&bytes).into_owned();
         }
@@ -261,6 +268,20 @@ fn content_length_values(headers: &str) -> Vec<&str> {
         .collect()
 }
 
+/// Parses only an exact HTTP/1.1 three-digit response status line for the wire oracle.
+fn http_1_1_status_code(response: &str) -> Option<u16> {
+    let status_line = response.lines().next()?.trim_end_matches('\r');
+    let mut fields = status_line.splitn(3, ' ');
+    if fields.next()? != "HTTP/1.1" {
+        return None;
+    }
+    let code = fields.next()?;
+    if code.len() != 3 || !code.bytes().all(|byte| byte.is_ascii_digit()) || fields.next().is_none() {
+        return None;
+    }
+    code.parse().ok()
+}
+
 /// Locks the framing oracle against lookalike names and duplicate/conflicting field values.
 #[test]
 fn content_length_parser_preserves_field_identity_and_cardinality_evidence() {
@@ -275,6 +296,15 @@ fn content_length_parser_preserves_field_identity_and_cardinality_evidence() {
         ),
         vec!["20", "21"]
     );
+}
+
+/// Locks status evidence to exact HTTP/1.1 protocol and a three-digit code.
+#[test]
+fn status_parser_rejects_prefix_and_protocol_lookalikes() {
+    assert_eq!(http_1_1_status_code("HTTP/1.1 200 OK\r\n\r\n"), Some(200));
+    assert_eq!(http_1_1_status_code("HTTP/1.1 2000 Bad\r\n\r\n"), None);
+    assert_eq!(http_1_1_status_code("http/1.1 200 OK\r\n\r\n"), None);
+    assert_eq!(http_1_1_status_code("HTTP/2 200 OK\r\n\r\n"), None);
 }
 
 /// Proves a post-commit origin truncation preserves framing, terminates downstream and keeps recovery usable.
@@ -356,10 +386,10 @@ fn compiled_pg_erd_truncated_response_stays_committed_and_preserves_independent_
         .map(|position| position + 4)
         .expect("committed partial response must contain a complete header block");
     let raw_headers = String::from_utf8_lossy(&partial[..header_end]);
-    let headers = raw_headers.to_ascii_lowercase();
-    assert!(
-        headers.starts_with("http/1.1 200"),
-        "a post-header upstream failure cannot be rewritten as a new status: {headers:?}"
+    assert_eq!(
+        http_1_1_status_code(raw_headers.as_ref()),
+        Some(200),
+        "a post-header upstream failure cannot be rewritten as a new status: {raw_headers:?}"
     );
     let content_lengths = content_length_values(raw_headers.as_ref());
     assert_eq!(
@@ -375,8 +405,9 @@ fn compiled_pg_erd_truncated_response_stays_committed_and_preserves_independent_
     );
 
     let readiness = get(gateway_address, "/readyz");
-    assert!(
-        readiness.starts_with("HTTP/1.1 200"),
+    assert_eq!(
+        http_1_1_status_code(&readiness),
+        Some(200),
         "one truncated upstream response must not poison process readiness: {readiness:?}"
     );
 
@@ -389,8 +420,9 @@ fn compiled_pg_erd_truncated_response_stays_committed_and_preserves_independent_
     );
 
     let recovered = get(gateway_address, "/after-partial-response");
-    assert!(
-        recovered.starts_with("HTTP/1.1 200"),
+    assert_eq!(
+        http_1_1_status_code(&recovered),
+        Some(200),
         "an independent characterized route must remain usable after a truncated response: {recovered:?}"
     );
     assert!(recovered.ends_with("\r\n\r\nrecovered"));
