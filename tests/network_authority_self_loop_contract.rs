@@ -32,7 +32,7 @@ fn config_file(yaml: &str) -> NamedTempFile {
     file
 }
 
-/// Generic v1 rejects exact, wildcard, and conservative dual-stack aliases of owned listeners.
+/// Generic v1 rejects exact, wildcard, mapped/native, and conservative dual-stack aliases.
 #[test]
 fn generic_config_rejects_recursive_gateway_authority() {
     for (listener, metrics, upstream, expected) in [
@@ -64,6 +64,22 @@ fn generic_config_rejects_recursive_gateway_authority() {
             "127.0.0.1:6188",
             "[::]:6192",
             "127.0.0.1:6192",
+            GatewayConfigError::UpstreamMetricsListenerCollision {
+                upstream_name: "api".to_string(),
+            },
+        ),
+        (
+            "127.0.0.1:6188",
+            "127.0.0.1:6192",
+            "[::ffff:127.0.0.1]:6188",
+            GatewayConfigError::UpstreamListenerCollision {
+                upstream_name: "api".to_string(),
+            },
+        ),
+        (
+            "127.0.0.1:6188",
+            "127.0.0.1:6192",
+            "[::ffff:127.0.0.1]:6192",
             GatewayConfigError::UpstreamMetricsListenerCollision {
                 upstream_name: "api".to_string(),
             },
@@ -117,6 +133,24 @@ fn pg_erd_config_rejects_gateway_owned_socket_as_transport_authority() {
             "127.0.0.1:3000",
             GatewayConfigError::UpstreamListenerCollision {
                 upstream_name: "backend".to_string(),
+            },
+        ),
+        (
+            "127.0.0.1:8080",
+            "127.0.0.1:9090",
+            "[::ffff:127.0.0.1]:8080",
+            "127.0.0.1:3000",
+            GatewayConfigError::UpstreamListenerCollision {
+                upstream_name: "backend".to_string(),
+            },
+        ),
+        (
+            "127.0.0.1:8080",
+            "127.0.0.1:9090",
+            "127.0.0.1:8000",
+            "[::ffff:127.0.0.1]:9090",
+            GatewayConfigError::UpstreamMetricsListenerCollision {
+                upstream_name: "frontend".to_string(),
             },
         ),
     ] {
