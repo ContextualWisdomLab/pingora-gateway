@@ -276,6 +276,23 @@ pub(crate) fn socket_authorities_overlap(left: SocketAddr, right: SocketAddr) ->
     }
 }
 
+/// Returns true when an upstream IP is a bind wildcard rather than concrete remote authority.
+///
+/// Rust intentionally does not assign the embedded IPv4 semantics to IPv4-mapped IPv6 addresses
+/// when evaluating IPv6 address properties, so `::ffff:0.0.0.0` must be canonicalized before the
+/// unspecified-address check.
+fn upstream_ip_is_unspecified(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(ipv4) => ipv4.is_unspecified(),
+        IpAddr::V6(ipv6) => {
+            ipv6.is_unspecified()
+                || ipv6
+                    .to_ipv4_mapped()
+                    .is_some_and(|ipv4| ipv4.is_unspecified())
+        }
+    }
+}
+
 impl UpstreamConfig {
     /// Validates the invariants required before this upstream can become network authority.
     pub fn validate(&self) -> Result<(), GatewayConfigError> {
@@ -288,7 +305,7 @@ impl UpstreamConfig {
                 upstream_name: normalized_name.to_string(),
             });
         }
-        if self.address.ip().is_unspecified() {
+        if upstream_ip_is_unspecified(self.address.ip()) {
             return Err(GatewayConfigError::UnspecifiedUpstreamAddress {
                 upstream_name: normalized_name.to_string(),
             });
