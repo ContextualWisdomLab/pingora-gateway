@@ -16,6 +16,7 @@ use tempfile::NamedTempFile;
 
 const MAX_ORIGIN_REQUEST_HEADER_BYTES: usize = 64 * 1024;
 const MAX_RESPONSE_HEADER_BYTES: usize = 64 * 1024;
+const COMPLETION_LOG: &str = "gateway_request status=200 outcome=ok request_body_bytes=0";
 
 struct GatewayProcess {
     child: Option<Child>,
@@ -23,12 +24,12 @@ struct GatewayProcess {
 }
 
 impl GatewayProcess {
-    fn wait_until_stderr_contains(&mut self, needle: &str) {
+    fn wait_until_stderr_count(&mut self, needle: &str, expected_count: usize) {
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
             let captured = fs::read_to_string(self.stderr.path())
                 .expect("gateway stderr capture should remain readable");
-            if captured.contains(needle) {
+            if captured.matches(needle).count() >= expected_count {
                 return;
             }
             if let Some(status) = self
@@ -39,12 +40,12 @@ impl GatewayProcess {
                 .expect("gateway process state should be readable")
             {
                 panic!(
-                    "gateway exited before expected log {needle:?}: {status}; stderr={captured:?}"
+                    "gateway exited before {expected_count} expected logs {needle:?}: {status}; stderr={captured:?}"
                 );
             }
             assert!(
                 Instant::now() < deadline,
-                "gateway did not emit expected log {needle:?} within 10s; stderr={captured:?}"
+                "gateway did not emit {expected_count} expected logs {needle:?} within 10s; stderr={captured:?}"
             );
             thread::sleep(Duration::from_millis(10));
         }
@@ -326,6 +327,19 @@ fn compiled_pg_erd_shared_access_log_excludes_request_sensitive_material() {
     drop(metrics_reservation);
     let mut process = start_gateway(&config, gateway_address);
 
+    process.wait_until_stderr_count(COMPLETION_LOG, 1);
+    let metrics_before = raw_request(
+        metrics_address,
+        b"GET /metrics HTTP/1.1\r\nHost: metrics\r\nConnection: close\r\n\r\n",
+    );
+    assert!(
+        contains_exact_metric_sample(
+            &metrics_before,
+            "cwl_pingora_gateway_requests_total 1"
+        ),
+        "the bounded /readyz admission request should establish an exact single-completion baseline: {metrics_before:?}"
+    );
+
     let response = raw_request(
         gateway_address,
         b"GET /api/log-contract?customer=query-secret HTTP/1.1\r\nHost: tenant-secret.example:8080\r\nAuthorization: Bearer authorization-secret\r\nCookie: session=cookie-secret\r\nX-Product-Context: product-secret\r\nConnection: close\r\n\r\n",
@@ -338,16 +352,15 @@ fn compiled_pg_erd_shared_access_log_excludes_request_sensitive_material() {
         .join()
         .expect("backend sensitive-material fixture should complete");
 
-    let metrics = raw_request(
+    let metrics_after = raw_request(
         metrics_address,
         b"GET /metrics HTTP/1.1\r\nHost: metrics\r\nConnection: close\r\n\r\n",
     );
     assert!(
-        contains_exact_metric_sample(&metrics, "cwl_pingora_gateway_requests_total 1"),
-        "metrics scrape should prove exactly one proxied request reached shared completion recording: {metrics:?}"
+        contains_exact_metric_sample(&metrics_after, "cwl_pingora_gateway_requests_total 2"),
+        "one routed request must advance the readiness baseline by exactly one completion: {metrics_after:?}"
     );
-    process
-        .wait_until_stderr_contains("gateway_request status=200 outcome=ok request_body_bytes=0");
+    process.wait_until_stderr_count(COMPLETION_LOG, 2);
 
     let stderr = process.capture_stderr();
     let request_logs: Vec<_> = stderr
@@ -356,18 +369,19 @@ fn compiled_pg_erd_shared_access_log_excludes_request_sensitive_material() {
         .collect();
     assert_eq!(
         request_logs.len(),
-        1,
-        "the shared observability target should emit one completion record: {stderr:?}"
+        2,
+        "readiness plus the routed request should emit exactly two shared completion records: {stderr:?}"
     );
-    let access_log = request_logs[0];
-    let completion = access_log
-        .split_once("gateway_request ")
-        .expect("shared access log should contain the completion message")
-        .1;
-    assert_eq!(
-        completion, "status=200 outcome=ok request_body_bytes=0",
-        "shared access logging should contain only bounded transport facts: {access_log:?}"
-    );
+    for access_log in request_logs {
+        let completion = access_log
+            .split_once("gateway_request ")
+            .expect("shared access log should contain the completion message")
+            .1;
+        assert_eq!(
+            completion, "status=200 outcome=ok request_body_bytes=0",
+            "shared access logging should contain only bounded transport facts: {access_log:?}"
+        );
+    }
 
     for forbidden in [
         "/api/log-contract",
