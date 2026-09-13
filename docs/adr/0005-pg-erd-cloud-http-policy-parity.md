@@ -26,14 +26,16 @@ Introduce a transport-neutral HTTP Policy bounded context that can characterize 
 - A characterized field name may occur only once; duplicate authority fails closed.
 - The current migration profile accepts only non-empty alphanumeric/hyphen field names. This deliberately narrow subset covers the captured consumer contract; broader legal HTTP field-name syntax is not added without evidence that a migrated consumer needs it.
 - Empty response values fail closed for this explicit policy profile.
-- CR or LF in configured values fails closed to prevent response-splitting/header-injection semantics.
-- Values are otherwise preserved exactly; the gateway does not normalize product policy into a different value.
+- Configured field values must satisfy the RFC 9110 field-content boundary before transport activation: CR, LF, NUL, DEL and other control octets fail closed; SP and HTAB are accepted only within field content, not as leading or trailing boundary whitespace.
+- Values that pass admission are preserved exactly; the gateway does not normalize product policy into a different value.
 
 The policy remains independent of Pingora types and is not wired into `GatewayConfig` or `GatewayProxy` in this slice. Runtime activation must follow separate exact-head evidence and versioned configuration/runtime work.
 
 ## Test-first evidence
 
 RED commit `f0e32d3630e676c494995e9c4cc94082372a3287` added the executable `pg-erd-cloud` contract before `http_policy` existed. GREEN implementation begins at `4182bb629749e9c2acc3e9d575e7598aebfa7e66`; public bounded-context exposure follows at `a0af9544850ed578248f069966295d77207c21e1`. Validation/profile repair `f48fd423a37f1c6a579375da9e7471d2543f588e` removes syntax ambiguity and makes the deliberately narrow header-name profile explicit. Coverage-focused contract expansion at `acd0e4adeb8916dad6d853cf71e06ce983da1bb4` exercises absent lookup, non-empty collection semantics, empty/invalid names, duplicate case variants, empty values and both CR/LF injection paths.
+
+A later standards review found that the policy still admitted NUL, other control octets, DEL, and leading/trailing SP or HTAB even though RFC 9110 field values exclude those forms. Test-first commit `c34e4f55f8ca2d3a6d5abf816fa791f40cd98fee` captures those invalid values plus the valid interior SP/HTAB boundary. Minimal causal fix `1c9cca37225e229d0b9cdbe678ee7e46b911fe21` adds transport-neutral field-value admission without weakening the deliberately narrow field-name profile or changing the four observed `pg-erd-cloud` values.
 
 Every later source or documentation head must reacquire the repository's 100% owned production line/region coverage, public rustdoc and then-applicable CI/supply-chain/security/review evidence. Predecessor results do not transfer.
 
