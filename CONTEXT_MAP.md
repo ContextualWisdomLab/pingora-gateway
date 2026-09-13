@@ -12,4 +12,6 @@
 | Keyverse | External identity context | Canonical identity/credential authority | Referenced boundary only; not reimplemented here |
 | Certificate Management | External operational context | Issuance, renewal, storage, rotation | Supplies trust material/platform TLS as appropriate; not owned by this runtime |
 
-The active v1 shared kernel is the public versioned configuration vocabulary. `edge_routing` and `http_policy` are executable migration characterizations until a later versioned runtime/config transition explicitly admits them. There is no shared Rust domain model with consumer products, Context Graph, Enterprise Architecture, Wardnet/EgressWeave, or Keyverse.
+`migration_plan` is an application-level composition across validated Edge Routing, HTTP Policy, and an explicit stable upstream-identity set. It is not an additional bounded context and does not grant network authority. Its job is to fail closed when characterized route targets fall outside the migration authority admitted by orchestration, before a later delivery adapter constructs or activates transport.
+
+The active v1 shared kernel is the public versioned configuration vocabulary. `edge_routing` and `http_policy` remain executable migration characterizations until a later versioned runtime/config transition explicitly admits them. `migration_plan` composes those contracts without creating a shared Rust domain model with consumer products, Context Graph, Enterprise Architecture, Wardnet/EgressWeave, or Keyverse.
