@@ -190,7 +190,10 @@ fn is_valid_ip_literal(literal: &str) -> bool {
 /// Validates the forward-compatible bracket-literal form from RFC 3986 without interpreting it.
 fn is_valid_ipv_future(literal: &str) -> bool {
     let bytes = literal.as_bytes();
-    if bytes.first().is_none_or(|byte| !matches!(*byte, b'v' | b'V')) {
+    if bytes
+        .first()
+        .is_none_or(|byte| !matches!(*byte, b'v' | b'V'))
+    {
         return false;
     }
 

@@ -111,7 +111,9 @@ impl GatewayProxy {
         response
             .insert_header("Cache-Control", "no-store")
             .expect("literal Cache-Control response header must be valid");
-        session.write_response_header(Box::new(response), true).await
+        session
+            .write_response_header(Box::new(response), true)
+            .await
     }
 
     /// Terminates an exhausted TRACE/OPTIONS forwarding budget at this gateway.
@@ -128,7 +130,9 @@ impl GatewayProxy {
         response
             .insert_header("Cache-Control", "no-store")
             .expect("literal Cache-Control response header must be valid");
-        session.write_response_header(Box::new(response), true).await
+        session
+            .write_response_header(Box::new(response), true)
+            .await
     }
 
     /// Acquires the shared in-flight lease before application request processing begins.
@@ -236,9 +240,7 @@ fn max_forwards_action(request: &RequestHeader) -> pingora::Result<MaxForwardsAc
             .saturating_add(u32::from(*digit - b'0'))
     });
     Ok(MaxForwardsAction::Forward(
-        received
-            .saturating_sub(1)
-            .min(MAX_SUPPORTED_MAX_FORWARDS),
+        received.saturating_sub(1).min(MAX_SUPPORTED_MAX_FORWARDS),
     ))
 }
 
@@ -581,7 +583,8 @@ mod tests {
 
     #[test]
     fn response_via_preserves_received_chain_and_appends_gateway() {
-        let mut response = ResponseHeader::build(200, None).expect("fixture response must be valid");
+        let mut response =
+            ResponseHeader::build(200, None).expect("fixture response must be valid");
         response.set_version(Version::HTTP_11);
         response
             .insert_header("Via", "1.0 origin-proxy")

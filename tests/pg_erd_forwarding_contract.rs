@@ -18,7 +18,10 @@ fn pg_erd_forwarding_rebuilds_transport_identity_instead_of_trusting_request_hea
         ("X-Forwarded-Port", "80"),
         ("X-Forwarded-Proto", "http"),
         ("X-Forwarded-Server", "attacker-proxy"),
-        ("X-Forwarded-Client-Cert", "By=spiffe://attacker.example;Hash=spoofed"),
+        (
+            "X-Forwarded-Client-Cert",
+            "By=spiffe://attacker.example;Hash=spoofed",
+        ),
         ("X-Forwarded-Prefix", "/attacker-prefix"),
         ("X-Forwarded-PathBase", "/attacker-path-base"),
         ("X-Real-IP", "203.0.113.7"),
