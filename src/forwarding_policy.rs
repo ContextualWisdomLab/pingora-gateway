@@ -20,6 +20,7 @@ pub enum DownstreamScheme {
 }
 
 impl DownstreamScheme {
+    /// Returns the forwarding-protocol token derived from the accepted downstream transport.
     fn as_str(self) -> &'static str {
         match self {
             Self::Http => "http",
@@ -27,6 +28,7 @@ impl DownstreamScheme {
         }
     }
 
+    /// Returns the external default port used only when Host omits an explicit port.
     fn default_port(self) -> u16 {
         match self {
             Self::Http => 80,
@@ -139,6 +141,7 @@ impl ForwardingContext {
     }
 }
 
+/// Resolves the external forwarding port from a syntactically valid Host authority and scheme.
 fn authority_port(authority: &str, scheme: DownstreamScheme) -> pingora::Result<u16> {
     if authority.is_empty() {
         return Err(invalid_authority());
@@ -168,6 +171,7 @@ fn authority_port(authority: &str, scheme: DownstreamScheme) -> pingora::Result<
     Ok(scheme.default_port())
 }
 
+/// Parses an explicit Host port and rejects zero because it is not valid external authority.
 fn parse_port(port: &str) -> pingora::Result<u16> {
     let parsed = port.parse::<u16>().map_err(|_| invalid_authority())?;
     if parsed == 0 {
@@ -176,6 +180,7 @@ fn parse_port(port: &str) -> pingora::Result<u16> {
     Ok(parsed)
 }
 
+/// Builds the stable fail-closed error used for malformed downstream Host authority.
 fn invalid_authority() -> Box<Error> {
     Error::explain(
         ErrorType::HTTPStatus(400),
