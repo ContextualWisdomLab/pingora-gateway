@@ -54,6 +54,37 @@ upstreams:
     )
 }
 
+fn self_routing_alias_cases() -> [(&'static str, &'static str, &'static str); 10] {
+    [
+        ("127.0.0.1:6188", "127.0.0.1:6192", "127.0.0.1:6188"),
+        ("0.0.0.0:6188", "127.0.0.1:6192", "127.0.0.1:6188"),
+        ("[::]:6188", "127.0.0.1:6192", "127.0.0.1:6188"),
+        (
+            "127.0.0.1:6188",
+            "127.0.0.1:6192",
+            "[::ffff:127.0.0.1]:6188",
+        ),
+        (
+            "[::ffff:127.0.0.1]:6188",
+            "127.0.0.1:6192",
+            "127.0.0.1:6188",
+        ),
+        ("127.0.0.1:6188", "127.0.0.1:6192", "127.0.0.1:6192"),
+        ("127.0.0.1:6188", "0.0.0.0:6192", "127.0.0.1:6192"),
+        ("127.0.0.1:6188", "[::]:6192", "127.0.0.1:6192"),
+        (
+            "127.0.0.1:6188",
+            "127.0.0.1:6192",
+            "[::ffff:127.0.0.1]:6192",
+        ),
+        (
+            "127.0.0.1:6188",
+            "[::ffff:127.0.0.1]:6192",
+            "127.0.0.1:6192",
+        ),
+    ]
+}
+
 #[test]
 fn generic_gateway_rejects_overlapping_listener_authority() {
     for (listener, metrics_listener) in [
@@ -146,12 +177,7 @@ fn gateway_profiles_reject_ephemeral_or_wildcard_upstream_authority() {
 
 #[test]
 fn gateway_profiles_reject_upstreams_that_overlap_process_owned_listeners() {
-    for (listener, metrics_listener, upstream_address) in [
-        ("127.0.0.1:6188", "127.0.0.1:6192", "127.0.0.1:6188"),
-        ("0.0.0.0:6188", "127.0.0.1:6192", "127.0.0.1:6188"),
-        ("[::]:6188", "127.0.0.1:6192", "127.0.0.1:6188"),
-        ("127.0.0.1:6188", "127.0.0.1:6192", "127.0.0.1:6192"),
-    ] {
+    for (listener, metrics_listener, upstream_address) in self_routing_alias_cases() {
         let self_routing = generic_gateway_yaml(listener, metrics_listener).replace(
             "address: 127.0.0.1:8080",
             &format!("address: \"{upstream_address}\""),
@@ -165,27 +191,7 @@ fn gateway_profiles_reject_upstreams_that_overlap_process_owned_listeners() {
         );
     }
 
-    for (listener, metrics_listener, upstream_address) in [
-        ("127.0.0.1:6188", "127.0.0.1:6192", "127.0.0.1:6188"),
-        ("0.0.0.0:6188", "127.0.0.1:6192", "127.0.0.1:6188"),
-        ("[::]:6188", "127.0.0.1:6192", "127.0.0.1:6188"),
-        (
-            "127.0.0.1:6188",
-            "127.0.0.1:6192",
-            "[::ffff:127.0.0.1]:6188",
-        ),
-        (
-            "[::ffff:127.0.0.1]:6188",
-            "127.0.0.1:6192",
-            "127.0.0.1:6188",
-        ),
-        ("127.0.0.1:6188", "127.0.0.1:6192", "127.0.0.1:6192"),
-        (
-            "127.0.0.1:6188",
-            "[::ffff:127.0.0.1]:6192",
-            "127.0.0.1:6192",
-        ),
-    ] {
+    for (listener, metrics_listener, upstream_address) in self_routing_alias_cases() {
         let pg_erd = pg_erd_gateway_yaml(upstream_address)
             .replace(
                 "listener: 127.0.0.1:6188",
