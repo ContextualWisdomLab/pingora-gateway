@@ -2,7 +2,7 @@
 //!
 //! These endpoints report only that the gateway process is alive and able to serve through its
 //! listener. They deliberately do not probe or claim readiness for consumer product dependencies.
-//! Only payload-free GET requests receive the privileged admission bypass; application-shaped
+//! Only payload-free GET/HEAD requests receive the privileged admission bypass; application-shaped
 //! traffic that happens to reuse a health path remains subject to runtime-isolation capacity.
 
 use pingora::prelude::{Error, ErrorType, RequestHeader, ResponseHeader, Session};
@@ -17,7 +17,7 @@ pub const READINESS_PATH: &str = "/readyz";
 pub(crate) enum ProcessHealthAction {
     /// The request is not addressed to a process-health path.
     NotHealth,
-    /// A payload-free GET may bypass application admission and receive the local health response.
+    /// A payload-free GET/HEAD may bypass application admission and receive the local response.
     Probe,
     /// A health path used with another method is not a process probe.
     RejectMethod,
@@ -48,11 +48,13 @@ fn has_request_body_framing(request: &RequestHeader) -> bool {
 
 /// Classifies whether a request is entitled to the process-health admission bypass.
 ///
-/// A privileged probe is deliberately narrow: exact `/livez` or `/readyz`, method GET, and no
-/// request-body framing other than one valid `Content-Length: 0`. `Transfer-Encoding`, duplicate or
-/// malformed content lengths, and positive lengths are application-shaped traffic and therefore do
-/// not receive the bypass. Body framing is classified before the method so a body-bearing request
-/// is always rejected through the non-reusable HTTP error path rather than leaving unread bytes.
+/// A privileged probe is deliberately narrow: exact `/livez` or `/readyz`, GET or HEAD, and no
+/// request-body framing other than one valid `Content-Length: 0`. RFC 9110 defines HEAD as GET
+/// without response content and requires general-purpose HTTP servers to support both methods.
+/// `Transfer-Encoding`, duplicate or malformed content lengths, and positive lengths are
+/// application-shaped traffic and therefore do not receive the bypass. Body framing is classified
+/// before the method so a body-bearing request is rejected through the ordinary HTTP error path
+/// rather than receiving a successful process-health response with unread bytes.
 pub(crate) fn classify_process_health_request(request: &RequestHeader) -> ProcessHealthAction {
     if !matches!(request.uri.path(), LIVENESS_PATH | READINESS_PATH) {
         return ProcessHealthAction::NotHealth;
@@ -60,7 +62,7 @@ pub(crate) fn classify_process_health_request(request: &RequestHeader) -> Proces
     if has_request_body_framing(request) {
         return ProcessHealthAction::RejectPayload;
     }
-    if request.method.as_str() != "GET" {
+    if !matches!(request.method.as_str(), "GET" | "HEAD") {
         return ProcessHealthAction::RejectMethod;
     }
     ProcessHealthAction::Probe
@@ -69,7 +71,7 @@ pub(crate) fn classify_process_health_request(request: &RequestHeader) -> Proces
 async fn respond_empty(
     session: &mut Session,
     status: u16,
-    allow_get: bool,
+    advertise_retrieval_methods: bool,
 ) -> pingora::Result<()> {
     let mut response = ResponseHeader::build(status, None)
         .expect("literal process-health response status must be valid");
@@ -79,9 +81,9 @@ async fn respond_empty(
     response
         .insert_header("Cache-Control", "no-store")
         .expect("literal Cache-Control response header must be valid");
-    if allow_get {
+    if advertise_retrieval_methods {
         response
-            .insert_header("Allow", "GET")
+            .insert_header("Allow", "GET, HEAD")
             .expect("literal Allow response header must be valid");
     }
     session.write_response_header(Box::new(response), true).await
@@ -92,7 +94,7 @@ pub(crate) async fn respond_healthy(session: &mut Session) -> pingora::Result<()
     respond_empty(session, 200, false).await
 }
 
-/// Rejects a non-GET health-path request while advertising the only admitted probe method.
+/// Rejects another method while advertising the supported process-health retrieval methods.
 pub(crate) async fn respond_method_not_allowed(session: &mut Session) -> pingora::Result<()> {
     respond_empty(session, 405, true).await
 }
@@ -122,38 +124,42 @@ mod tests {
             classify_process_health_request(&request("GET", b"/application-health")),
             ProcessHealthAction::NotHealth
         );
-        assert_eq!(
-            classify_process_health_request(&request("GET", b"/livez")),
-            ProcessHealthAction::Probe
-        );
-        assert_eq!(
-            classify_process_health_request(&request("GET", b"/readyz")),
-            ProcessHealthAction::Probe
-        );
+        for method in ["GET", "HEAD"] {
+            assert_eq!(
+                classify_process_health_request(&request(method, b"/livez")),
+                ProcessHealthAction::Probe
+            );
+            assert_eq!(
+                classify_process_health_request(&request(method, b"/readyz")),
+                ProcessHealthAction::Probe
+            );
+        }
     }
 
     #[test]
     fn unsupported_health_methods_are_not_privileged_probes() {
         assert_eq!(
-            classify_process_health_request(&request("HEAD", b"/readyz")),
+            classify_process_health_request(&request("POST", b"/livez")),
             ProcessHealthAction::RejectMethod
         );
         assert_eq!(
-            classify_process_health_request(&request("POST", b"/livez")),
+            classify_process_health_request(&request("DELETE", b"/readyz")),
             ProcessHealthAction::RejectMethod
         );
     }
 
     #[test]
     fn zero_content_length_remains_payload_free() {
-        let mut probe = request("GET", b"/readyz");
-        probe
-            .insert_header("Content-Length", "0")
-            .expect("fixture content length should be valid");
-        assert_eq!(
-            classify_process_health_request(&probe),
-            ProcessHealthAction::Probe
-        );
+        for method in ["GET", "HEAD"] {
+            let mut probe = request(method, b"/readyz");
+            probe
+                .insert_header("Content-Length", "0")
+                .expect("fixture content length should be valid");
+            assert_eq!(
+                classify_process_health_request(&probe),
+                ProcessHealthAction::Probe
+            );
+        }
     }
 
     #[test]
@@ -167,7 +173,7 @@ mod tests {
             ProcessHealthAction::RejectPayload
         );
 
-        let mut transfer_encoding = request("GET", b"/livez");
+        let mut transfer_encoding = request("HEAD", b"/livez");
         transfer_encoding
             .insert_header("Transfer-Encoding", "chunked")
             .expect("fixture transfer encoding should be valid");
@@ -199,7 +205,7 @@ mod tests {
             ProcessHealthAction::RejectPayload
         );
 
-        let mut non_text = request("GET", b"/readyz");
+        let mut non_text = request("HEAD", b"/readyz");
         non_text.headers.insert(
             "content-length",
             HeaderValue::from_bytes(b"\xff").expect("non-text header value should be representable"),
