@@ -167,7 +167,7 @@ fn gateway_via_value(version: Version) -> pingora::Result<&'static str> {
         Version::HTTP_3 => Ok("3 cwl-pingora-gateway"),
         _ => Err(Error::explain(
             ErrorType::InvalidHTTPHeader,
-            "unsupported downstream HTTP version for RFC 9110 Via",
+            "unsupported HTTP version for RFC 9110 Via",
         )),
     }
 }
@@ -202,6 +202,12 @@ fn sanitize_forwarding_headers(
     }
     upstream_request.insert_header("Forwarded", "proto=http")?;
     upstream_request.append_header("Via", gateway_via_value(downstream_version)?)?;
+    Ok(())
+}
+
+/// Appends this intermediary to a forwarded upstream response without rewriting the received chain.
+fn append_response_via(upstream_response: &mut ResponseHeader) -> pingora::Result<()> {
+    upstream_response.append_header("Via", gateway_via_value(upstream_response.version)?)?;
     Ok(())
 }
 
@@ -270,6 +276,18 @@ impl ProxyHttp for GatewayProxy {
         sanitize_forwarding_headers(upstream_request, session.req_header().version)
     }
 
+    async fn upstream_response_filter(
+        &self,
+        _session: &mut Session,
+        upstream_response: &mut ResponseHeader,
+        _ctx: &mut Self::CTX,
+    ) -> pingora::Result<()>
+    where
+        Self::CTX: Send + Sync,
+    {
+        append_response_via(upstream_response)
+    }
+
     async fn logging(&self, session: &mut Session, error: Option<&Error>, ctx: &mut Self::CTX)
     where
         Self::CTX: Send + Sync,
@@ -280,12 +298,14 @@ impl ProxyHttp for GatewayProxy {
 
 #[cfg(test)]
 mod tests {
-    use super::{body_rejection_to_pingora, sanitize_forwarding_headers, RequestContext};
+    use super::{
+        append_response_via, body_rejection_to_pingora, sanitize_forwarding_headers, RequestContext,
+    };
     use crate::runtime_isolation::{
         BodyLimitExceeded, RequestAdmissionBudget, RuntimeIsolationLimits,
     };
     use pingora::http::Version;
-    use pingora::prelude::{ErrorType, ProxyHttp, RequestHeader};
+    use pingora::prelude::{ErrorType, ProxyHttp, RequestHeader, ResponseHeader};
 
     #[test]
     fn generic_forwarding_sanitization_removes_all_client_controlled_proxy_identity() {
@@ -352,7 +372,7 @@ mod tests {
     }
 
     #[test]
-    fn via_hop_uses_the_received_http_version() {
+    fn request_via_hop_uses_the_received_http_version() {
         let mut request =
             RequestHeader::build("GET", b"/", None).expect("fixture request must be valid");
 
@@ -362,6 +382,28 @@ mod tests {
         assert_eq!(
             request.headers["via"].to_str().unwrap(),
             "1.0 cwl-pingora-gateway"
+        );
+    }
+
+    #[test]
+    fn response_via_preserves_received_chain_and_appends_gateway() {
+        let mut response = ResponseHeader::build(200, None).expect("fixture response must be valid");
+        response.set_version(Version::HTTP_11);
+        response
+            .insert_header("Via", "1.0 origin-proxy")
+            .expect("fixture Via header must be valid");
+
+        append_response_via(&mut response).expect("gateway Via header must remain valid");
+
+        let via_values = response
+            .headers
+            .get_all("via")
+            .iter()
+            .map(|value| value.to_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            via_values,
+            vec!["1.0 origin-proxy", "1.1 cwl-pingora-gateway"]
         );
     }
 
