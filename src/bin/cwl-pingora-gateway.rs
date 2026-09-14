@@ -4,6 +4,8 @@
 //! validated. Product policy stays outside this process boundary; this file only wires the
 //! transport-neutral contract to the Pingora delivery adapter.
 
+#![cfg_attr(not(test), deny(clippy::missing_docs_in_private_items))]
+
 use std::env;
 use std::fmt::Display;
 use std::process::ExitCode;
