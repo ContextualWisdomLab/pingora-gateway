@@ -165,9 +165,38 @@ fn gateway_profiles_reject_upstreams_that_overlap_process_owned_listeners() {
         );
     }
 
-    for upstream_address in ["127.0.0.1:6188", "127.0.0.1:6192"] {
+    for (listener, metrics_listener, upstream_address) in [
+        ("127.0.0.1:6188", "127.0.0.1:6192", "127.0.0.1:6188"),
+        ("0.0.0.0:6188", "127.0.0.1:6192", "127.0.0.1:6188"),
+        ("[::]:6188", "127.0.0.1:6192", "127.0.0.1:6188"),
+        (
+            "127.0.0.1:6188",
+            "127.0.0.1:6192",
+            "[::ffff:127.0.0.1]:6188",
+        ),
+        (
+            "[::ffff:127.0.0.1]:6188",
+            "127.0.0.1:6192",
+            "127.0.0.1:6188",
+        ),
+        ("127.0.0.1:6188", "127.0.0.1:6192", "127.0.0.1:6192"),
+        (
+            "127.0.0.1:6188",
+            "[::ffff:127.0.0.1]:6192",
+            "127.0.0.1:6192",
+        ),
+    ] {
+        let pg_erd = pg_erd_gateway_yaml(upstream_address)
+            .replace(
+                "listener: 127.0.0.1:6188",
+                &format!("listener: \"{listener}\""),
+            )
+            .replace(
+                "metrics_listener: 127.0.0.1:6192",
+                &format!("metrics_listener: \"{metrics_listener}\""),
+            );
         assert_eq!(
-            PgErdMigrationConfig::from_yaml(&pg_erd_gateway_yaml(upstream_address)),
+            PgErdMigrationConfig::from_yaml(&pg_erd),
             Err(PgErdMigrationConfigError::UpstreamConfiguration(
                 GatewayConfigError::UpstreamListenerCollision {
                     upstream_name: "backend".to_string(),
