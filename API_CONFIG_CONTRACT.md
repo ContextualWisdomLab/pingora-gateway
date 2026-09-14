@@ -55,7 +55,7 @@ upstreams:
       total_connection_ms: 2000
       read_ms: 5000
       write_ms: 5000
-      idle_ms: 10000
+      idle_ms: 5000
   - name: frontend
     address: 10.0.0.21:3000
     tls: false
@@ -64,7 +64,7 @@ upstreams:
       total_connection_ms: 2000
       read_ms: 5000
       write_ms: 5000
-      idle_ms: 10000
+      idle_ms: 5000
 ```
 
 This is not a generic multi-route configuration language. Operator input can bind only concrete transport/TLS values for the compiled `backend` and `frontend` identities. Missing, extra, duplicate, renamed, port-zero, unspecified-address, listener-overlapping, or otherwise invalid listener/metrics/upstream transport authorities fail closed before listener activation. Listener, metrics, and upstream sockets consume the same effective-authority invariant as generic v1, including native/IPv4-mapped aliases and wildcard overlap, while the migration profile keeps its specific zero-transport-authority error contract. Routes and edge-owned response fields are not configurable: the characterized profile fixes exact `/healthz -> backend`, raw `PathPrefix(`/api`) -> backend` semantics including `/apiary`, fallback `/ -> frontend`, and the four captured response fields `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, and `Permissions-Policy: geolocation=(), microphone=(), camera=()`.
@@ -72,6 +72,8 @@ This is not a generic multi-route configuration language. Operator input can bin
 Admin parsing validates only deterministic configuration and authority invariants. It does not read custom trust-bundle bytes. If an admitted TLS upstream supplies `trust_bundle_file`, the canonical Pingora peer adapter reads and parses that material exactly once during `build_proxy`, still before listeners are registered. An unreadable or invalid bundle therefore blocks activation without a validate-then-reload trust-file window.
 
 The migration adapter reserves `/livez` and `/readyz` as process-local Pingora health endpoints and does not route them to either consumer origin. The legacy consumer `/healthz` remains distinct routed application traffic to `backend`. Hostile request-controlled `Forwarded`, `X-Forwarded-*`, `X-Real-IP`, and `X-Forwarded-Server` identity is not trusted. `X-Forwarded-For` and `X-Real-IP` are rebuilt from the accepted client socket; `X-Forwarded-Host` preserves the original Host authority; `X-Forwarded-Port` uses the explicit Host port when present or the admitted scheme default otherwise. Before Host is promoted into trusted compatibility metadata, it must satisfy RFC 9110 `Host = uri-host [ ":" port ]` using RFC 3986 host syntax; userinfo, path/query delimiters, malformed percent escapes, non-IP bracket literals, empty/zero/invalid explicit ports, and unbracketed IPv6 therefore fail closed with HTTP 400. Valid bracketed IPv6/IPvFuture literals and valid `reg-name` syntax remain admissible. The process listener bind port is deliberately not external authority because container, Service, NAT, and port-publish layers may expose a different public port. Before any admitted pg-erd request is forwarded, the adapter preserves the received RFC 9110 `Via` chain and appends one pseudonymous `cwl-pingora-gateway` hop using the actual downstream session protocol. This request-side trace is required HTTP-to-HTTP intermediary metadata and is never trusted as identity, authentication, authorization, or proxy provenance. The pg-erd response path does not add `Via` in this increment; response-side Via is optional for an HTTP gateway. The current captured Traefik entryPoint is cleartext `web`, so this candidate emits downstream scheme `http`. HTTPS/TLS listener behavior requires a separate executable contract.
+
+Pg-erd now consumes the same shared RFC 9110 `Max-Forwards` intermediary policy as generic v1. TRACE/OPTIONS with one positive decimal value are decremented immediately before upstream forwarding and capped at 255. Zero is never forwarded; after ordinary in-flight and declared-body admission the migration gateway answers locally with empty HTTP 501 and still applies its characterized response-security fields. Malformed or duplicate TRACE/OPTIONS values fail closed with HTTP 400 after application admission. `Max-Forwards` on other methods is not interpreted as intermediary control and is forwarded unchanged. This policy changes no route, product OPTIONS semantics, authentication, authorization, or upstream authority.
 
 The migration profile cannot configure product authentication/business rules, Keyverse identity, Wardnet/EgressWeave verdicts, certificate issuance/rotation, service discovery, arbitrary destinations, or Context Graph/EA state. Source-level listener capability is not release, deployment, parity, canary, cutover, or legacy-removal evidence.
 
