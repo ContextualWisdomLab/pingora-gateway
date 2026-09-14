@@ -6,6 +6,8 @@
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::process::{Child, Command, Stdio};
+use std::sync::mpsc;
+use std::thread;
 use std::time::{Duration, Instant};
 
 use tempfile::NamedTempFile;
@@ -80,7 +82,7 @@ fn wait_until_ready(address: SocketAddr, process: &mut Child) {
             return;
         }
         assert!(Instant::now() < deadline, "gateway did not become ready within 10s");
-        std::thread::sleep(Duration::from_millis(25));
+        thread::sleep(Duration::from_millis(25));
     }
 }
 
@@ -113,7 +115,7 @@ fn write_pg_erd_config(
     file
 }
 
-fn assert_probe_boundary(binary: &str, config: &NamedTempFile, listener: SocketAddr) {
+fn spawn_gateway(binary: &str, config: &NamedTempFile, listener: SocketAddr) -> GatewayProcess {
     let mut child = Command::new(binary)
         .args(["--config", config.path().to_str().expect("UTF-8 temp path")])
         .stdin(Stdio::null())
@@ -122,7 +124,11 @@ fn assert_probe_boundary(binary: &str, config: &NamedTempFile, listener: SocketA
         .spawn()
         .expect("compiled gateway binary should start");
     wait_until_ready(listener, &mut child);
-    let _process = GatewayProcess(child);
+    GatewayProcess(child)
+}
+
+fn assert_probe_boundary(binary: &str, config: &NamedTempFile, listener: SocketAddr) {
+    let _process = spawn_gateway(binary, config, listener);
 
     for path in ["/livez", "/readyz"] {
         let valid = raw_request(
@@ -167,6 +173,97 @@ fn assert_probe_boundary(binary: &str, config: &NamedTempFile, listener: SocketA
     }
 }
 
+fn assert_invalid_health_shapes_obey_saturation(
+    binary: &str,
+    config: &NamedTempFile,
+    listener: SocketAddr,
+    upstream_listener: TcpListener,
+    held_path: &'static str,
+) {
+    let (request_seen_tx, request_seen_rx) = mpsc::channel();
+    let (release_response_tx, release_response_rx) = mpsc::channel();
+    let fixture = thread::spawn(move || {
+        let (mut upstream, _) = upstream_listener
+            .accept()
+            .expect("held application request should connect upstream");
+        let mut request = Vec::new();
+        let mut buffer = [0_u8; 1024];
+        loop {
+            let read = upstream
+                .read(&mut buffer)
+                .expect("held upstream request should be readable");
+            assert!(read > 0, "held request must complete its headers");
+            request.extend_from_slice(&buffer[..read]);
+            if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                break;
+            }
+        }
+        assert!(
+            String::from_utf8_lossy(&request)
+                .starts_with(&format!("GET {held_path} HTTP/1.1\r\n")),
+            "unexpected held application request: {:?}",
+            String::from_utf8_lossy(&request)
+        );
+        request_seen_tx
+            .send(())
+            .expect("test should observe the held application request");
+        release_response_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("test should release held capacity");
+        upstream
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\nheld")
+            .expect("held response should be writable");
+    });
+
+    let _process = spawn_gateway(binary, config, listener);
+    let held = thread::spawn(move || {
+        raw_request(
+            listener,
+            format!(
+                "GET {held_path} HTTP/1.1\r\nHost: gateway.test\r\nConnection: close\r\n\r\n"
+            )
+            .as_bytes(),
+        )
+    });
+    request_seen_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("application request should hold the single admission lease");
+
+    let body_bearing = raw_request(
+        listener,
+        b"GET /readyz HTTP/1.1\r\nHost: gateway.test\r\nContent-Length: 1\r\nConnection: close\r\n\r\nx",
+    );
+    assert!(
+        body_bearing.starts_with("HTTP/1.1 503"),
+        "body-bearing health-path traffic must use application admission under saturation: {body_bearing:?}"
+    );
+
+    let unsupported_method = raw_request(
+        listener,
+        b"DELETE /livez HTTP/1.1\r\nHost: gateway.test\r\nConnection: close\r\n\r\n",
+    );
+    assert!(
+        unsupported_method.starts_with("HTTP/1.1 503"),
+        "non-GET health-path traffic must use application admission under saturation: {unsupported_method:?}"
+    );
+
+    let valid_probe = raw_request(
+        listener,
+        b"GET /readyz HTTP/1.1\r\nHost: gateway.test\r\nConnection: close\r\n\r\n",
+    );
+    assert!(
+        valid_probe.starts_with("HTTP/1.1 200"),
+        "payload-free GET process probe must remain observable under saturation: {valid_probe:?}"
+    );
+
+    release_response_tx
+        .send(())
+        .expect("held application response should be released");
+    let held_response = held.join().expect("held downstream request should complete");
+    assert!(held_response.starts_with("HTTP/1.1 200"));
+    fixture.join().expect("held-capacity fixture should complete");
+}
+
 #[test]
 fn generic_listener_limits_process_health_bypass_to_payload_free_get() {
     let (traffic_reservation, traffic) = reserve_loopback();
@@ -200,5 +297,43 @@ fn pg_erd_listener_limits_process_health_bypass_to_payload_free_get() {
         traffic,
     );
     drop(backend_reservation);
+    drop(frontend_reservation);
+}
+
+#[test]
+fn generic_invalid_health_shapes_do_not_bypass_saturated_admission() {
+    let (traffic_reservation, traffic) = reserve_loopback();
+    let (metrics_reservation, metrics) = reserve_loopback();
+    let (upstream_listener, upstream) = reserve_loopback();
+    let config = write_generic_config(traffic, metrics, upstream);
+
+    drop(traffic_reservation);
+    drop(metrics_reservation);
+    assert_invalid_health_shapes_obey_saturation(
+        env!("CARGO_BIN_EXE_cwl-pingora-gateway"),
+        &config,
+        traffic,
+        upstream_listener,
+        "/held-capacity",
+    );
+}
+
+#[test]
+fn pg_erd_invalid_health_shapes_do_not_bypass_saturated_admission() {
+    let (traffic_reservation, traffic) = reserve_loopback();
+    let (metrics_reservation, metrics) = reserve_loopback();
+    let (backend_listener, backend) = reserve_loopback();
+    let (frontend_reservation, frontend) = reserve_loopback();
+    let config = write_pg_erd_config(traffic, metrics, backend, frontend);
+
+    drop(traffic_reservation);
+    drop(metrics_reservation);
+    assert_invalid_health_shapes_obey_saturation(
+        env!("CARGO_BIN_EXE_cwl-pingora-pg-erd-migration"),
+        &config,
+        traffic,
+        backend_listener,
+        "/api/held-capacity",
+    );
     drop(frontend_reservation);
 }
