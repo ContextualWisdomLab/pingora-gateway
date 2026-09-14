@@ -28,7 +28,7 @@ impl DownstreamScheme {
         }
     }
 
-    /// Returns the external default port used only when request authority omits an explicit port.
+    /// Returns the external default port used only when Host omits an explicit port.
     fn default_port(self) -> u16 {
         match self {
             Self::Http => 80,
@@ -64,15 +64,13 @@ impl ForwardingContext {
 
     /// Derives forwarding identity from the accepted client socket and original request authority.
     ///
-    /// Request-target control data outranks `Host` when the parsed downstream URI carries an
-    /// authority; `Host` is only the origin-form fallback. The listener socket is intentionally not
-    /// an input because Container, Service, NAT, or port-publish layers can expose a different
-    /// external authority than the process bind address. An explicit admitted authority port is
-    /// therefore authoritative for `X-Forwarded-Port`; otherwise the downstream scheme supplies its
-    /// well-known port. Malformed authority fails closed.
+    /// The listener socket is intentionally not an input. Container, Service, NAT, or port-publish
+    /// layers may expose a different external authority than the process bind address. An explicit
+    /// Host port is therefore authoritative for `X-Forwarded-Port`; otherwise the admitted
+    /// downstream scheme supplies its well-known port. Malformed authority fails closed.
     pub fn from_downstream_transport(
         client_addr: Option<&PingoraSocketAddr>,
-        _upstream_request: &RequestHeader,
+        upstream_request: &RequestHeader,
         downstream_request: &RequestHeader,
         scheme: DownstreamScheme,
     ) -> pingora::Result<Self> {
@@ -85,21 +83,16 @@ impl ForwardingContext {
                     "pg-erd migration requires an IP downstream client address",
                 )
             })?;
-        let original_host = downstream_request
-            .uri
-            .authority()
-            .map(|authority| authority.as_str().to_owned())
-            .or_else(|| {
-                downstream_request
-                    .headers
-                    .get("host")
-                    .and_then(|value| value.to_str().ok())
-                    .map(str::to_owned)
-            })
+        let original_host = upstream_request
+            .headers
+            .get("host")
+            .or_else(|| downstream_request.headers.get("host"))
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned)
             .ok_or_else(|| {
                 Error::explain(
                     ErrorType::HTTPStatus(400),
-                    "pg-erd migration requires a valid downstream request authority",
+                    "pg-erd migration requires a valid downstream Host authority",
                 )
             })?;
         let downstream_port = authority_port(original_host.as_str(), scheme)?;
@@ -148,11 +141,11 @@ impl ForwardingContext {
     }
 }
 
-/// Resolves the external forwarding port from an RFC 9110 request authority and downstream scheme.
+/// Resolves the external forwarding port from an RFC 9110 Host authority and downstream scheme.
 ///
-/// URI/Host authority adopts URI host syntax, so generic HTTP field validity is insufficient:
-/// userinfo, path/query delimiters, malformed percent escapes, and non-IP bracket literals must fail
-/// before the value can be promoted into trusted `X-Forwarded-Host` compatibility metadata.
+/// `Host` adopts URI host syntax, so generic HTTP field validity is insufficient: userinfo,
+/// path/query delimiters, malformed percent escapes, and non-IP bracket literals must fail before
+/// the value can be promoted into trusted `X-Forwarded-Host` compatibility metadata.
 fn authority_port(authority: &str, scheme: DownstreamScheme) -> pingora::Result<u16> {
     if authority.is_empty() {
         return Err(invalid_authority());
@@ -259,7 +252,7 @@ fn is_sub_delim(byte: u8) -> bool {
     )
 }
 
-/// Parses an explicit authority port and rejects zero because it is not valid external authority.
+/// Parses an explicit Host port and rejects zero because it is not valid external authority.
 fn parse_port(port: &str) -> pingora::Result<u16> {
     let parsed = port.parse::<u16>().map_err(|_| invalid_authority())?;
     if parsed == 0 {
@@ -268,11 +261,11 @@ fn parse_port(port: &str) -> pingora::Result<u16> {
     Ok(parsed)
 }
 
-/// Builds the stable fail-closed error used for malformed downstream request authority.
+/// Builds the stable fail-closed error used for malformed downstream Host authority.
 fn invalid_authority() -> Box<Error> {
     Error::explain(
         ErrorType::HTTPStatus(400),
-        "pg-erd migration requires a valid downstream request authority",
+        "pg-erd migration requires a valid downstream Host authority",
     )
 }
 
@@ -355,29 +348,6 @@ mod tests {
     }
 
     #[test]
-    fn request_uri_authority_precedes_conflicting_host() {
-        let client = PingoraSocketAddr::from(SocketAddr::from((Ipv4Addr::LOCALHOST, 49152)));
-        let mut downstream = request_with_host("attacker.example:9090");
-        downstream.set_uri(
-            "http://target.example:8080/api"
-                .parse()
-                .expect("absolute target URI fixture must be valid"),
-        );
-        let upstream = downstream.clone();
-
-        let context = ForwardingContext::from_downstream_transport(
-            Some(&client),
-            &upstream,
-            &downstream,
-            DownstreamScheme::Http,
-        )
-        .expect("request URI authority must outrank conflicting Host");
-
-        assert_eq!(context.original_host, "target.example:8080");
-        assert_eq!(context.downstream_port, 8080);
-    }
-
-    #[test]
     fn missing_host_authority_fails_closed() {
         let client = PingoraSocketAddr::from(SocketAddr::from((Ipv4Addr::LOCALHOST, 49152)));
         let request = RequestHeader::build("GET", b"/", None).expect("fixture request is valid");
@@ -388,7 +358,7 @@ mod tests {
             &request,
             DownstreamScheme::Http,
         )
-        .expect_err("missing request authority must fail closed");
+        .expect_err("missing Host authority must fail closed");
 
         assert_eq!(error.etype, ErrorType::HTTPStatus(400));
     }
@@ -404,7 +374,7 @@ mod tests {
             &request,
             DownstreamScheme::Http,
         )
-        .expect_err("invalid authority port must fail closed at the transport-derived boundary");
+        .expect_err("invalid Host port must fail closed at the transport-derived boundary");
 
         assert_eq!(error.etype, ErrorType::HTTPStatus(400));
     }

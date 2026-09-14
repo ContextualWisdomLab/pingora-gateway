@@ -70,43 +70,6 @@ fn pg_erd_forwarding_rebuilds_transport_identity_instead_of_trusting_request_hea
 }
 
 #[test]
-fn request_target_authority_precedes_conflicting_host_forwarding_metadata() {
-    let client = PingoraSocketAddr::from(SocketAddr::from((Ipv4Addr::LOCALHOST, 49152)));
-    let mut downstream =
-        RequestHeader::build("GET", b"/api", None).expect("fixture request must be valid");
-    downstream.set_uri(
-        "http://target.example:8080/api"
-            .parse()
-            .expect("absolute target URI fixture must be valid"),
-    );
-    downstream
-        .insert_header("Host", "attacker.example:9090")
-        .expect("conflicting Host fixture must remain generic HTTP field data");
-    let upstream = downstream.clone();
-
-    let context = ForwardingContext::from_downstream_transport(
-        Some(&client),
-        &upstream,
-        &downstream,
-        DownstreamScheme::Http,
-    )
-    .expect("target URI authority must be admitted independently from conflicting Host");
-    let mut emitted = upstream;
-    context
-        .apply(&mut emitted)
-        .expect("effective target authority must produce valid compatibility metadata");
-
-    assert_eq!(
-        emitted.headers["x-forwarded-host"].to_str().unwrap(),
-        "target.example:8080"
-    );
-    assert_eq!(
-        emitted.headers["x-forwarded-port"].to_str().unwrap(),
-        "8080"
-    );
-}
-
-#[test]
 fn malformed_host_authority_fails_closed_through_transport_derivation() {
     let client = PingoraSocketAddr::from(SocketAddr::from((Ipv4Addr::LOCALHOST, 49152)));
     let mut request =
