@@ -160,8 +160,8 @@ fn body_rejection_to_pingora(rejection: BodyLimitExceeded) -> Box<Error> {
 
 /// Removes request-controlled proxy identity and emits only the generic-v1 scheme claim.
 ///
-/// Generic v1 intentionally makes no client-IP or trusted-proxy provenance claim; those semantics
-/// require a separately characterized and versioned edge contract.
+/// Generic v1 intentionally makes no client-IP, client-certificate, or trusted-proxy provenance
+/// claim; those semantics require a separately characterized and versioned edge contract.
 fn sanitize_forwarding_headers(upstream_request: &mut RequestHeader) -> pingora::Result<()> {
     for header in [
         "Forwarded",
@@ -170,6 +170,7 @@ fn sanitize_forwarding_headers(upstream_request: &mut RequestHeader) -> pingora:
         "X-Forwarded-Port",
         "X-Forwarded-Proto",
         "X-Forwarded-Server",
+        "X-Forwarded-Client-Cert",
         "X-Real-IP",
     ] {
         upstream_request.remove_header(header);
@@ -272,6 +273,10 @@ mod tests {
             ("X-Forwarded-Port", "4444"),
             ("X-Forwarded-Proto", "https"),
             ("X-Forwarded-Server", "attacker-proxy"),
+            (
+                "X-Forwarded-Client-Cert",
+                "By=spiffe://attacker;Hash=deadbeef;URI=spiffe://attacker/client",
+            ),
             ("X-Real-IP", "203.0.113.77"),
         ] {
             request
@@ -289,6 +294,7 @@ mod tests {
             "x-forwarded-port",
             "x-forwarded-proto",
             "x-forwarded-server",
+            "x-forwarded-client-cert",
             "x-real-ip",
         ] {
             assert!(
