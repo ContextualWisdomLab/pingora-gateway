@@ -159,12 +159,12 @@ fn body_rejection_to_pingora(rejection: BodyLimitExceeded) -> Box<Error> {
     )
 }
 
-fn via_received_protocol(version: Version) -> pingora::Result<&'static str> {
+fn gateway_via_value(version: Version) -> pingora::Result<&'static str> {
     match version {
-        Version::HTTP_10 => Ok("1.0"),
-        Version::HTTP_11 => Ok("1.1"),
-        Version::HTTP_2 => Ok("2"),
-        Version::HTTP_3 => Ok("3"),
+        Version::HTTP_10 => Ok("1.0 cwl-pingora-gateway"),
+        Version::HTTP_11 => Ok("1.1 cwl-pingora-gateway"),
+        Version::HTTP_2 => Ok("2 cwl-pingora-gateway"),
+        Version::HTTP_3 => Ok("3 cwl-pingora-gateway"),
         _ => Err(Error::explain(
             ErrorType::InvalidHTTPHeader,
             "unsupported downstream HTTP version for RFC 9110 Via",
@@ -201,11 +201,7 @@ fn sanitize_forwarding_headers(
         upstream_request.remove_header(header);
     }
     upstream_request.insert_header("Forwarded", "proto=http")?;
-    let via = format!(
-        "{} cwl-pingora-gateway",
-        via_received_protocol(downstream_version)?
-    );
-    upstream_request.append_header("Via", via)?;
+    upstream_request.append_header("Via", gateway_via_value(downstream_version)?)?;
     Ok(())
 }
 
