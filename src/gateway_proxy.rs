@@ -14,15 +14,15 @@ use thiserror::Error;
 use crate::edge_contract::{GatewayConfig, GatewayConfigError};
 use crate::observability::{record_backpressure_rejection, record_request};
 use crate::pingora_delivery::{build_peer_from_validated, PeerBuildError};
+use crate::process_health::{
+    classify_process_health_request, payload_too_large_error, respond_healthy,
+    respond_method_not_allowed, ProcessHealthAction,
+};
+pub use crate::process_health::{LIVENESS_PATH, READINESS_PATH};
 use crate::runtime_isolation::{
     BodyLimitExceeded, RequestAdmission, RequestAdmissionBudget, RequestBodyBudget,
     RuntimeIsolationLimits,
 };
-
-/// Stable process-local liveness endpoint.
-pub const LIVENESS_PATH: &str = "/livez";
-/// Stable readiness endpoint reached through the production Pingora serving path.
-pub const READINESS_PATH: &str = "/readyz";
 
 const MAX_SUPPORTED_MAX_FORWARDS: u32 = 255;
 
@@ -96,22 +96,6 @@ impl GatewayProxy {
     /// Returns a fresh clone of the prevalidated Pingora peer for one upstream connection attempt.
     pub fn build_upstream_peer(&self) -> HttpPeer {
         self.upstream_peer.clone()
-    }
-
-    /// Answers process-local health probes without contacting the configured upstream.
-    ///
-    /// Health responses intentionally bypass application admission so operators can distinguish a
-    /// live but saturated gateway from an unavailable process.
-    async fn respond_healthy(session: &mut Session) -> pingora::Result<()> {
-        let mut response = ResponseHeader::build(200, None)
-            .expect("literal HTTP 200 response header must be valid");
-        response
-            .insert_header("Content-Length", "0")
-            .expect("literal Content-Length response header must be valid");
-        response
-            .insert_header("Cache-Control", "no-store")
-            .expect("literal Cache-Control response header must be valid");
-        session.write_response_header(Box::new(response), true).await
     }
 
     /// Terminates an exhausted TRACE/OPTIONS forwarding budget at this gateway.
@@ -329,12 +313,22 @@ impl ProxyHttp for GatewayProxy {
     where
         Self::CTX: Send + Sync,
     {
-        match session.req_header().uri.path() {
-            LIVENESS_PATH | READINESS_PATH => {
-                Self::respond_healthy(session).await?;
+        let body_done = session.is_body_done();
+        match classify_process_health_request(session.req_header(), body_done) {
+            ProcessHealthAction::Probe => {
+                respond_healthy(session).await?;
                 Ok(true)
             }
-            _ => {
+            ProcessHealthAction::RejectMethod => {
+                self.admit_request(ctx)?;
+                respond_method_not_allowed(session).await?;
+                Ok(true)
+            }
+            ProcessHealthAction::RejectPayload => {
+                self.admit_request(ctx)?;
+                Err(payload_too_large_error())
+            }
+            ProcessHealthAction::NotHealth => {
                 let max_forwards =
                     self.admit_and_classify_max_forwards(session.req_header(), ctx)?;
                 Self::reject_oversize_declared_body(session, ctx)?;
