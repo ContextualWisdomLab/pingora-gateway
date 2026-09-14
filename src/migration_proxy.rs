@@ -19,7 +19,10 @@ use thiserror::Error;
 use crate::forwarding_policy::{DownstreamScheme, ForwardingContext};
 use crate::migration_delivery::MigrationDeliveryPlan;
 use crate::observability::{record_backpressure_rejection, record_request};
-use crate::process_health::{respond_healthy, LIVENESS_PATH, READINESS_PATH};
+use crate::process_health::{
+    classify_process_health_request, payload_too_large_error, respond_healthy,
+    respond_method_not_allowed, ProcessHealthAction,
+};
 use crate::runtime_isolation::{
     BodyLimitExceeded, RequestAdmission, RequestAdmissionBudget, RequestBodyBudget,
     RuntimeIsolationLimits,
@@ -226,12 +229,21 @@ impl ProxyHttp for MigrationGatewayProxy {
     where
         Self::CTX: Send + Sync,
     {
-        match session.req_header().uri.path() {
-            LIVENESS_PATH | READINESS_PATH => {
+        match classify_process_health_request(session.req_header()) {
+            ProcessHealthAction::Probe => {
                 respond_healthy(session).await?;
                 Ok(true)
             }
-            _ => {
+            ProcessHealthAction::RejectMethod => {
+                self.admit_request(ctx)?;
+                respond_method_not_allowed(session).await?;
+                Ok(true)
+            }
+            ProcessHealthAction::RejectPayload => {
+                self.admit_request(ctx)?;
+                Err(payload_too_large_error())
+            }
+            ProcessHealthAction::NotHealth => {
                 self.admit_request(ctx)?;
                 Self::reject_oversize_declared_body(session, ctx)?;
                 Ok(false)
