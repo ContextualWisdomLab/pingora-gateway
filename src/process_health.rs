@@ -107,6 +107,7 @@ pub(crate) fn payload_too_large_error() -> Box<Error> {
 
 #[cfg(test)]
 mod tests {
+    use pingora::http::HeaderValue;
     use pingora::prelude::RequestHeader;
 
     use super::{classify_process_health_request, ProcessHealthAction};
@@ -188,13 +189,23 @@ mod tests {
     }
 
     #[test]
-    fn malformed_or_duplicate_content_length_is_not_a_probe() {
+    fn malformed_duplicate_or_non_text_content_length_is_not_a_probe() {
         let mut malformed = request("GET", b"/readyz");
         malformed
             .insert_header("Content-Length", "not-a-number")
             .expect("fixture header bytes should be valid");
         assert_eq!(
             classify_process_health_request(&malformed),
+            ProcessHealthAction::RejectPayload
+        );
+
+        let mut non_text = request("GET", b"/readyz");
+        non_text.headers.insert(
+            "content-length",
+            HeaderValue::from_bytes(b"\xff").expect("non-text header value should be representable"),
+        );
+        assert_eq!(
+            classify_process_health_request(&non_text),
             ProcessHealthAction::RejectPayload
         );
 
