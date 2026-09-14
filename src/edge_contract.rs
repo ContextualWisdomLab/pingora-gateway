@@ -107,6 +107,12 @@ pub enum GatewayConfigError {
         /// Stable upstream whose transport binding used an unspecified IP address.
         upstream_name: String,
     },
+    /// Upstream authority must not resolve back into a socket owned by this gateway process.
+    #[error("upstream {upstream_name} must not overlap a gateway listener authority")]
+    UpstreamListenerCollision {
+        /// Stable upstream whose transport authority overlaps traffic or metrics listener authority.
+        upstream_name: String,
+    },
     /// A zero request-body limit would reject every body and is almost certainly misconfiguration.
     #[error("max_request_body_bytes must be greater than zero")]
     InvalidRequestBodyLimit,
@@ -223,6 +229,13 @@ impl GatewayConfig {
         for upstream in &self.upstreams {
             upstream.validate()?;
             let normalized_name = upstream.name.trim();
+            if socket_authorities_overlap(self.listener, upstream.address)
+                || socket_authorities_overlap(self.metrics_listener, upstream.address)
+            {
+                return Err(GatewayConfigError::UpstreamListenerCollision {
+                    upstream_name: normalized_name.to_string(),
+                });
+            }
             if !names.insert(normalized_name) {
                 return Err(GatewayConfigError::DuplicateUpstreamName {
                     upstream_name: normalized_name.to_string(),
