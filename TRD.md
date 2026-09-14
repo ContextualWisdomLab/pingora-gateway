@@ -37,7 +37,9 @@ The pg-erd migration callback uses the separate Ingress Forwarding Policy. Reque
 
 ## Health, observability and graceful lifecycle
 
-`/livez` and `/readyz` are gateway process endpoints served locally through the production Pingora path and do not become consumer routes. Pg-erd `/healthz` remains characterized product traffic to `backend`. Shared observability is low-cardinality and payload-free: request path/query, headers, cookies, credentials, customer payloads and product identifiers are outside the shared telemetry contract.
+`/livez` and `/readyz` are gateway process paths served locally through the production Pingora listener and do not become consumer routes. Their admission bypass is intentionally shape-bound rather than path-bound: only a GET with no body framing, or one valid `Content-Length: 0`, receives the local 200 without consuming `max_in_flight_requests`. A health-path request with `Transfer-Encoding`, duplicate/malformed `Content-Length`, or a positive declared length must first acquire the ordinary application lease and then fail through the 413 path; a bodyless method other than GET must first acquire that lease and then receive 405 with `Allow: GET`. Under saturation these application-shaped health-path requests therefore fail with the ordinary 503 admission result, while valid process probes remain observable. Generic and pg-erd adapters consume one shared classifier so the privilege cannot drift between composition roots. Pg-erd `/healthz` remains characterized product traffic to `backend` and never gains the process-health bypass.
+
+Shared observability is low-cardinality and payload-free: request path/query, headers, cookies, credentials, customer payloads and product identifiers are outside the shared telemetry contract.
 
 Both composition roots use the shared Pingora server policy and bounded graceful shutdown. Process tests terminate successful children through the graceful path so LLVM coverage profiles can flush; emergency cleanup remains a test-harness fallback rather than the normal lifecycle.
 
