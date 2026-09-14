@@ -1,7 +1,8 @@
 //! Real-listener regression coverage for the process-health privilege boundary.
 //!
-//! Only payload-free `GET /livez` and `GET /readyz` are privileged process probes. Requests that
-//! reuse those paths with a body or an unsupported method must not inherit that bypass contract.
+//! Only payload-free `GET`/`HEAD` requests to `/livez` and `/readyz` are privileged process probes.
+//! Requests that reuse those paths with a body or an unsupported method must not inherit that
+//! bypass contract.
 
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
@@ -131,14 +132,24 @@ fn assert_probe_boundary(binary: &str, config: &NamedTempFile, listener: SocketA
     let _process = spawn_gateway(binary, config, listener);
 
     for path in ["/livez", "/readyz"] {
-        let valid = raw_request(
+        let valid_get = raw_request(
             listener,
             format!("GET {path} HTTP/1.1\r\nHost: gateway.test\r\nConnection: close\r\n\r\n")
                 .as_bytes(),
         );
         assert!(
-            valid.starts_with("HTTP/1.1 200"),
-            "payload-free GET process probe must remain privileged: {valid:?}"
+            valid_get.starts_with("HTTP/1.1 200"),
+            "payload-free GET process probe must remain privileged: {valid_get:?}"
+        );
+
+        let valid_head = raw_request(
+            listener,
+            format!("HEAD {path} HTTP/1.1\r\nHost: gateway.test\r\nConnection: close\r\n\r\n")
+                .as_bytes(),
+        );
+        assert!(
+            valid_head.starts_with("HTTP/1.1 200"),
+            "payload-free HEAD process probe must follow GET semantics: {valid_head:?}"
         );
 
         let body_bearing = raw_request(
@@ -162,13 +173,13 @@ fn assert_probe_boundary(binary: &str, config: &NamedTempFile, listener: SocketA
         );
         assert!(
             unsupported_method.starts_with("HTTP/1.1 405"),
-            "unsupported methods must not receive the GET probe contract: {unsupported_method:?}"
+            "unsupported methods must not receive the process-probe contract: {unsupported_method:?}"
         );
         assert!(
             unsupported_method
                 .to_ascii_lowercase()
-                .contains("allow: get\r\n"),
-            "method rejection must advertise the admitted process-probe method"
+                .contains("allow: get, head\r\n"),
+            "method rejection must advertise both mandatory retrieval methods"
         );
     }
 }
@@ -244,17 +255,22 @@ fn assert_invalid_health_shapes_obey_saturation(
     );
     assert!(
         unsupported_method.starts_with("HTTP/1.1 503"),
-        "non-GET health-path traffic must use application admission under saturation: {unsupported_method:?}"
+        "unsupported health-path traffic must use application admission under saturation: {unsupported_method:?}"
     );
 
-    let valid_probe = raw_request(
-        listener,
-        b"GET /readyz HTTP/1.1\r\nHost: gateway.test\r\nConnection: close\r\n\r\n",
-    );
-    assert!(
-        valid_probe.starts_with("HTTP/1.1 200"),
-        "payload-free GET process probe must remain observable under saturation: {valid_probe:?}"
-    );
+    for method in ["GET", "HEAD"] {
+        let valid_probe = raw_request(
+            listener,
+            format!(
+                "{method} /readyz HTTP/1.1\r\nHost: gateway.test\r\nConnection: close\r\n\r\n"
+            )
+            .as_bytes(),
+        );
+        assert!(
+            valid_probe.starts_with("HTTP/1.1 200"),
+            "payload-free {method} process probe must remain observable under saturation: {valid_probe:?}"
+        );
+    }
 
     release_response_tx
         .send(())
@@ -265,7 +281,7 @@ fn assert_invalid_health_shapes_obey_saturation(
 }
 
 #[test]
-fn generic_listener_limits_process_health_bypass_to_payload_free_get() {
+fn generic_listener_limits_process_health_bypass_to_payload_free_retrieval() {
     let (traffic_reservation, traffic) = reserve_loopback();
     let (metrics_reservation, metrics) = reserve_loopback();
     let (upstream_reservation, upstream) = reserve_loopback();
@@ -282,7 +298,7 @@ fn generic_listener_limits_process_health_bypass_to_payload_free_get() {
 }
 
 #[test]
-fn pg_erd_listener_limits_process_health_bypass_to_payload_free_get() {
+fn pg_erd_listener_limits_process_health_bypass_to_payload_free_retrieval() {
     let (traffic_reservation, traffic) = reserve_loopback();
     let (metrics_reservation, metrics) = reserve_loopback();
     let (backend_reservation, backend) = reserve_loopback();
