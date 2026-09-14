@@ -5,6 +5,7 @@
 
 use async_trait::async_trait;
 use bytes::Bytes;
+use pingora::http::Version;
 use pingora::prelude::{
     Error, ErrorType, HttpPeer, ProxyHttp, RequestHeader, ResponseHeader, Session,
 };
@@ -158,6 +159,19 @@ fn body_rejection_to_pingora(rejection: BodyLimitExceeded) -> Box<Error> {
     )
 }
 
+fn via_received_protocol(version: Version) -> pingora::Result<&'static str> {
+    match version {
+        Version::HTTP_10 => Ok("1.0"),
+        Version::HTTP_11 => Ok("1.1"),
+        Version::HTTP_2 => Ok("2"),
+        Version::HTTP_3 => Ok("3"),
+        _ => Err(Error::explain(
+            ErrorType::InvalidHTTPHeader,
+            "unsupported downstream HTTP version for RFC 9110 Via",
+        )),
+    }
+}
+
 /// Removes request-controlled forwarding identity and emits gateway-owned forwarding metadata.
 ///
 /// Generic v1 intentionally makes no client-IP, client-certificate, or trusted-proxy provenance
@@ -165,7 +179,10 @@ fn body_rejection_to_pingora(rejection: BodyLimitExceeded) -> Box<Error> {
 /// versioned trust-source contract admits specific fields. RFC 9110 `Via` is different: it is a
 /// protocol trace, so the received chain is preserved and this gateway appends a pseudonymous hop;
 /// no `Via` member is accepted as authentication or authorization evidence.
-fn sanitize_forwarding_headers(upstream_request: &mut RequestHeader) -> pingora::Result<()> {
+fn sanitize_forwarding_headers(
+    upstream_request: &mut RequestHeader,
+    downstream_version: Version,
+) -> pingora::Result<()> {
     let x_forwarded_headers = upstream_request
         .headers
         .keys()
@@ -184,7 +201,11 @@ fn sanitize_forwarding_headers(upstream_request: &mut RequestHeader) -> pingora:
         upstream_request.remove_header(header);
     }
     upstream_request.insert_header("Forwarded", "proto=http")?;
-    upstream_request.append_header("Via", "1.1 cwl-pingora-gateway")?;
+    let via = format!(
+        "{} cwl-pingora-gateway",
+        via_received_protocol(downstream_version)?
+    );
+    upstream_request.append_header("Via", via)?;
     Ok(())
 }
 
@@ -243,14 +264,14 @@ impl ProxyHttp for GatewayProxy {
 
     async fn upstream_request_filter(
         &self,
-        _session: &mut Session,
+        session: &mut Session,
         upstream_request: &mut RequestHeader,
         _ctx: &mut Self::CTX,
     ) -> pingora::Result<()>
     where
         Self::CTX: Send + Sync,
     {
-        sanitize_forwarding_headers(upstream_request)
+        sanitize_forwarding_headers(upstream_request, session.req_header().version)
     }
 
     async fn logging(&self, session: &mut Session, error: Option<&Error>, ctx: &mut Self::CTX)
@@ -267,6 +288,7 @@ mod tests {
     use crate::runtime_isolation::{
         BodyLimitExceeded, RequestAdmissionBudget, RuntimeIsolationLimits,
     };
+    use pingora::http::Version;
     use pingora::prelude::{ErrorType, ProxyHttp, RequestHeader};
 
     #[test]
@@ -295,7 +317,7 @@ mod tests {
                 .expect("fixture forwarding header must be valid");
         }
 
-        sanitize_forwarding_headers(&mut request)
+        sanitize_forwarding_headers(&mut request, Version::HTTP_11)
             .expect("gateway-owned forwarding metadata must remain valid");
 
         assert_eq!(request.headers["forwarded"].to_str().unwrap(), "proto=http");
@@ -330,6 +352,20 @@ mod tests {
             request.headers["x-application-context"].to_str().unwrap(),
             "must-survive",
             "non-forwarding application metadata must remain untouched"
+        );
+    }
+
+    #[test]
+    fn via_hop_uses_the_received_http_version() {
+        let mut request =
+            RequestHeader::build("GET", b"/", None).expect("fixture request must be valid");
+
+        sanitize_forwarding_headers(&mut request, Version::HTTP_10)
+            .expect("HTTP/1.0 Via metadata must remain valid");
+
+        assert_eq!(
+            request.headers["via"].to_str().unwrap(),
+            "1.0 cwl-pingora-gateway"
         );
     }
 
