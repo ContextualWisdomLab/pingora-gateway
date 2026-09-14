@@ -148,6 +148,20 @@ impl GatewayProxy {
         ))
     }
 
+    /// Applies application admission before classifying TRACE/OPTIONS intermediary control.
+    ///
+    /// A zero or malformed `Max-Forwards` request can terminate locally, but it is still
+    /// application traffic. Keeping classification behind the shared lease prevents local 4xx/5xx
+    /// paths from bypassing the process-wide in-flight budget.
+    fn admit_and_classify_max_forwards(
+        &self,
+        request: &RequestHeader,
+        ctx: &mut RequestContext,
+    ) -> pingora::Result<MaxForwardsAction> {
+        self.admit_request(ctx)?;
+        max_forwards_action(request)
+    }
+
     /// Rejects an oversized declared body before streaming additional request bytes upstream.
     ///
     /// Chunked or otherwise undeclared bodies remain bounded independently by `RequestBodyBudget`
@@ -311,12 +325,13 @@ impl ProxyHttp for GatewayProxy {
                 Ok(true)
             }
             _ => {
-                if max_forwards_action(session.req_header())? == MaxForwardsAction::FinalRecipient {
+                let max_forwards =
+                    self.admit_and_classify_max_forwards(session.req_header(), ctx)?;
+                Self::reject_oversize_declared_body(session, ctx)?;
+                if max_forwards == MaxForwardsAction::FinalRecipient {
                     Self::respond_max_forwards_final_recipient(session).await?;
                     return Ok(true);
                 }
-                self.admit_request(ctx)?;
-                Self::reject_oversize_declared_body(session, ctx)?;
                 Ok(false)
             }
         }
@@ -573,6 +588,64 @@ mod tests {
         assert_eq!(
             via_values,
             vec!["1.0 origin-proxy", "1.1 cwl-pingora-gateway"]
+        );
+    }
+
+    #[test]
+    fn max_forwards_final_recipient_holds_application_admission_lease() {
+        let config = crate::edge_contract::GatewayConfig::from_yaml(
+            r#"
+version: 1
+listener: 127.0.0.1:18180
+metrics_listener: 127.0.0.1:18182
+max_request_body_bytes: 8
+max_in_flight_requests: 1
+upstream_keepalive_pool_size: 1
+upstreams:
+  - name: test
+    address: 127.0.0.1:18181
+    tls: false
+    timeouts:
+      connection_ms: 1
+      total_connection_ms: 1
+      read_ms: 1
+      write_ms: 1
+      idle_ms: 1
+"#,
+        )
+        .expect("fixture config is valid");
+        let proxy = super::GatewayProxy::try_from_config(&config).expect("proxy activates");
+
+        let mut final_request =
+            RequestHeader::build("OPTIONS", b"/", None).expect("fixture request must be valid");
+        final_request
+            .insert_header("Max-Forwards", "0")
+            .expect("fixture Max-Forwards must be valid");
+        let mut final_ctx = proxy.new_ctx();
+        assert_eq!(
+            proxy
+                .admit_and_classify_max_forwards(&final_request, &mut final_ctx)
+                .expect("final-recipient request is admitted"),
+            MaxForwardsAction::FinalRecipient
+        );
+        assert!(final_ctx.admission.is_some());
+
+        let ordinary_request =
+            RequestHeader::build("GET", b"/", None).expect("fixture request must be valid");
+        let mut saturated_ctx = proxy.new_ctx();
+        let saturated_error = proxy
+            .admit_and_classify_max_forwards(&ordinary_request, &mut saturated_ctx)
+            .unwrap_err();
+        assert_eq!(saturated_error.etype, ErrorType::HTTPStatus(503));
+
+        drop(final_ctx);
+
+        let mut recovered_ctx = proxy.new_ctx();
+        assert_eq!(
+            proxy
+                .admit_and_classify_max_forwards(&ordinary_request, &mut recovered_ctx)
+                .expect("released lease restores admission"),
+            MaxForwardsAction::Ignore
         );
     }
 
