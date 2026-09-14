@@ -12,6 +12,7 @@ use pingora::prelude::{
 use thiserror::Error;
 
 use crate::edge_contract::{GatewayConfig, GatewayConfigError};
+use crate::http_intermediary_policy::MaxForwardsAction;
 use crate::observability::{record_backpressure_rejection, record_request};
 use crate::pingora_delivery::{build_peer_from_validated, PeerBuildError};
 use crate::runtime_isolation::{
@@ -23,15 +24,6 @@ use crate::runtime_isolation::{
 pub const LIVENESS_PATH: &str = "/livez";
 /// Stable readiness endpoint reached through the production Pingora serving path.
 pub const READINESS_PATH: &str = "/readyz";
-
-const MAX_SUPPORTED_MAX_FORWARDS: u32 = 255;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum MaxForwardsAction {
-    Ignore,
-    FinalRecipient,
-    Forward(u32),
-}
 
 /// Per-request delivery state. Product domain state does not belong here.
 #[derive(Debug)]
@@ -201,65 +193,14 @@ fn body_rejection_to_pingora(rejection: BodyLimitExceeded) -> Box<Error> {
     )
 }
 
-/// Builds the stable client-visible error for an invalid TRACE/OPTIONS hop budget.
-fn invalid_max_forwards() -> Box<Error> {
-    Error::explain(
-        ErrorType::HTTPStatus(400),
-        "TRACE/OPTIONS Max-Forwards must contain exactly one decimal value",
-    )
-}
-
-/// Classifies RFC 9110 `Max-Forwards` without mutating the received request.
-///
-/// Arbitrarily long decimal values are parsed with saturating arithmetic because only the bounded
-/// forwarded value matters; malformed or duplicate fields fail closed before upstream selection.
+/// Classifies RFC 9110 `Max-Forwards` through the shared intermediary-policy boundary.
 fn max_forwards_action(request: &RequestHeader) -> pingora::Result<MaxForwardsAction> {
-    if !matches!(request.method.as_str(), "TRACE" | "OPTIONS") {
-        return Ok(MaxForwardsAction::Ignore);
-    }
-
-    let mut values = request.headers.get_all("max-forwards").iter();
-    let Some(value) = values.next() else {
-        return Ok(MaxForwardsAction::Ignore);
-    };
-    if values.next().is_some() {
-        return Err(invalid_max_forwards());
-    }
-
-    let bytes = value.as_bytes();
-    if bytes.is_empty() || !bytes.iter().all(u8::is_ascii_digit) {
-        return Err(invalid_max_forwards());
-    }
-    if bytes.iter().all(|byte| *byte == b'0') {
-        return Ok(MaxForwardsAction::FinalRecipient);
-    }
-
-    let received = bytes.iter().fold(0_u32, |current, digit| {
-        current
-            .saturating_mul(10)
-            .saturating_add(u32::from(*digit - b'0'))
-    });
-    Ok(MaxForwardsAction::Forward(
-        received.saturating_sub(1).min(MAX_SUPPORTED_MAX_FORWARDS),
-    ))
+    crate::http_intermediary_policy::max_forwards_action(request)
 }
 
 /// Rewrites a forwarding-eligible TRACE/OPTIONS hop budget immediately before proxy delivery.
-///
-/// A final-recipient result is an invariant violation here because `request_filter` should already
-/// have terminated it locally; returning 501 preserves fail-closed behavior if call ordering drifts.
 fn apply_max_forwards_before_forward(request: &mut RequestHeader) -> pingora::Result<()> {
-    match max_forwards_action(request)? {
-        MaxForwardsAction::Ignore => Ok(()),
-        MaxForwardsAction::Forward(value) => {
-            request.insert_header("Max-Forwards", value.to_string())?;
-            Ok(())
-        }
-        MaxForwardsAction::FinalRecipient => Err(Error::explain(
-            ErrorType::HTTPStatus(501),
-            "TRACE/OPTIONS Max-Forwards budget exhausted at gateway",
-        )),
-    }
+    crate::http_intermediary_policy::apply_max_forwards_before_forward(request)
 }
 
 /// Maps an actually received HTTP protocol version to the RFC 9110 `Via` received-protocol token.
@@ -411,8 +352,8 @@ mod tests {
     use super::{
         append_response_via, apply_max_forwards_before_forward, body_rejection_to_pingora,
         max_forwards_action, sanitize_forwarding_headers, MaxForwardsAction, RequestContext,
-        MAX_SUPPORTED_MAX_FORWARDS,
     };
+    use crate::http_intermediary_policy::MAX_SUPPORTED_MAX_FORWARDS;
     use crate::runtime_isolation::{
         BodyLimitExceeded, RequestAdmissionBudget, RuntimeIsolationLimits,
     };
