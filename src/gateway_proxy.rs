@@ -24,6 +24,15 @@ pub const LIVENESS_PATH: &str = "/livez";
 /// Stable readiness endpoint reached through the production Pingora serving path.
 pub const READINESS_PATH: &str = "/readyz";
 
+const MAX_SUPPORTED_MAX_FORWARDS: u32 = 255;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MaxForwardsAction {
+    Ignore,
+    FinalRecipient,
+    Forward(u32),
+}
+
 /// Per-request delivery state. Product domain state does not belong here.
 #[derive(Debug)]
 pub struct RequestContext {
@@ -102,9 +111,24 @@ impl GatewayProxy {
         response
             .insert_header("Cache-Control", "no-store")
             .expect("literal Cache-Control response header must be valid");
-        session
-            .write_response_header(Box::new(response), true)
-            .await
+        session.write_response_header(Box::new(response), true).await
+    }
+
+    /// Terminates an exhausted TRACE/OPTIONS forwarding budget at this gateway.
+    ///
+    /// Generic v1 does not implement local TRACE echo or resource-specific OPTIONS semantics. A
+    /// zero Max-Forwards value therefore receives a local 501 rather than crossing another hop;
+    /// this also avoids reflecting credential-bearing request fields from TRACE.
+    async fn respond_max_forwards_final_recipient(session: &mut Session) -> pingora::Result<()> {
+        let mut response = ResponseHeader::build(501, None)
+            .expect("literal HTTP 501 response header must be valid");
+        response
+            .insert_header("Content-Length", "0")
+            .expect("literal Content-Length response header must be valid");
+        response
+            .insert_header("Cache-Control", "no-store")
+            .expect("literal Cache-Control response header must be valid");
+        session.write_response_header(Box::new(response), true).await
     }
 
     /// Acquires the shared in-flight lease before application request processing begins.
@@ -157,6 +181,60 @@ fn body_rejection_to_pingora(rejection: BodyLimitExceeded) -> Box<Error> {
         ErrorType::HTTPStatus(413),
         "request body exceeds configured max_request_body_bytes",
     )
+}
+
+fn invalid_max_forwards() -> Box<Error> {
+    Error::explain(
+        ErrorType::HTTPStatus(400),
+        "TRACE/OPTIONS Max-Forwards must contain exactly one decimal value",
+    )
+}
+
+fn max_forwards_action(request: &RequestHeader) -> pingora::Result<MaxForwardsAction> {
+    if !matches!(request.method.as_str(), "TRACE" | "OPTIONS") {
+        return Ok(MaxForwardsAction::Ignore);
+    }
+
+    let mut values = request.headers.get_all("max-forwards").iter();
+    let Some(value) = values.next() else {
+        return Ok(MaxForwardsAction::Ignore);
+    };
+    if values.next().is_some() {
+        return Err(invalid_max_forwards());
+    }
+
+    let bytes = value.as_bytes();
+    if bytes.is_empty() || !bytes.iter().all(u8::is_ascii_digit) {
+        return Err(invalid_max_forwards());
+    }
+    if bytes.iter().all(|byte| *byte == b'0') {
+        return Ok(MaxForwardsAction::FinalRecipient);
+    }
+
+    let received = bytes.iter().fold(0_u32, |current, digit| {
+        current
+            .saturating_mul(10)
+            .saturating_add(u32::from(*digit - b'0'))
+    });
+    Ok(MaxForwardsAction::Forward(
+        received
+            .saturating_sub(1)
+            .min(MAX_SUPPORTED_MAX_FORWARDS),
+    ))
+}
+
+fn apply_max_forwards_before_forward(request: &mut RequestHeader) -> pingora::Result<()> {
+    match max_forwards_action(request)? {
+        MaxForwardsAction::Ignore => Ok(()),
+        MaxForwardsAction::Forward(value) => {
+            request.insert_header("Max-Forwards", value.to_string())?;
+            Ok(())
+        }
+        MaxForwardsAction::FinalRecipient => Err(Error::explain(
+            ErrorType::HTTPStatus(501),
+            "TRACE/OPTIONS Max-Forwards budget exhausted at gateway",
+        )),
+    }
 }
 
 fn gateway_via_value(version: Version) -> pingora::Result<&'static str> {
@@ -233,6 +311,10 @@ impl ProxyHttp for GatewayProxy {
                 Ok(true)
             }
             _ => {
+                if max_forwards_action(session.req_header())? == MaxForwardsAction::FinalRecipient {
+                    Self::respond_max_forwards_final_recipient(session).await?;
+                    return Ok(true);
+                }
                 self.admit_request(ctx)?;
                 Self::reject_oversize_declared_body(session, ctx)?;
                 Ok(false)
@@ -273,6 +355,7 @@ impl ProxyHttp for GatewayProxy {
     where
         Self::CTX: Send + Sync,
     {
+        apply_max_forwards_before_forward(upstream_request)?;
         sanitize_forwarding_headers(upstream_request, session.req_header().version)
     }
 
@@ -299,7 +382,9 @@ impl ProxyHttp for GatewayProxy {
 #[cfg(test)]
 mod tests {
     use super::{
-        append_response_via, body_rejection_to_pingora, sanitize_forwarding_headers, RequestContext,
+        append_response_via, apply_max_forwards_before_forward, body_rejection_to_pingora,
+        max_forwards_action, sanitize_forwarding_headers, MaxForwardsAction, RequestContext,
+        MAX_SUPPORTED_MAX_FORWARDS,
     };
     use crate::runtime_isolation::{
         BodyLimitExceeded, RequestAdmissionBudget, RuntimeIsolationLimits,
@@ -369,6 +454,90 @@ mod tests {
             "must-survive",
             "non-forwarding application metadata must remain untouched"
         );
+    }
+
+    #[test]
+    fn trace_max_forwards_is_decremented_before_forwarding() {
+        let mut request =
+            RequestHeader::build("TRACE", b"/", None).expect("fixture request must be valid");
+        request
+            .insert_header("Max-Forwards", "2")
+            .expect("fixture Max-Forwards must be valid");
+
+        assert_eq!(
+            max_forwards_action(&request).expect("valid Max-Forwards is admitted"),
+            MaxForwardsAction::Forward(1)
+        );
+        apply_max_forwards_before_forward(&mut request)
+            .expect("positive Max-Forwards can be forwarded");
+        assert_eq!(request.headers["max-forwards"].to_str().unwrap(), "1");
+    }
+
+    #[test]
+    fn options_max_forwards_zero_terminates_at_gateway() {
+        let mut request =
+            RequestHeader::build("OPTIONS", b"/", None).expect("fixture request must be valid");
+        request
+            .insert_header("Max-Forwards", "000")
+            .expect("fixture Max-Forwards must be valid");
+
+        assert_eq!(
+            max_forwards_action(&request).expect("zero Max-Forwards is structurally valid"),
+            MaxForwardsAction::FinalRecipient
+        );
+    }
+
+    #[test]
+    fn huge_valid_max_forwards_is_capped_to_gateway_supported_value() {
+        let mut request =
+            RequestHeader::build("TRACE", b"/", None).expect("fixture request must be valid");
+        request
+            .insert_header("Max-Forwards", "999999999999999999999999999999999999")
+            .expect("fixture Max-Forwards must be valid");
+
+        assert_eq!(
+            max_forwards_action(&request).expect("decimal Max-Forwards is valid"),
+            MaxForwardsAction::Forward(MAX_SUPPORTED_MAX_FORWARDS)
+        );
+    }
+
+    #[test]
+    fn malformed_or_duplicate_trace_max_forwards_fails_closed() {
+        let mut malformed =
+            RequestHeader::build("TRACE", b"/", None).expect("fixture request must be valid");
+        malformed
+            .insert_header("Max-Forwards", "1x")
+            .expect("fixture header bytes must be valid");
+        let malformed_error = max_forwards_action(&malformed).unwrap_err();
+        assert_eq!(malformed_error.etype, ErrorType::HTTPStatus(400));
+
+        let mut duplicate =
+            RequestHeader::build("OPTIONS", b"/", None).expect("fixture request must be valid");
+        duplicate
+            .append_header("Max-Forwards", "2")
+            .expect("first fixture value must be valid");
+        duplicate
+            .append_header("Max-Forwards", "1")
+            .expect("second fixture value must be valid");
+        let duplicate_error = max_forwards_action(&duplicate).unwrap_err();
+        assert_eq!(duplicate_error.etype, ErrorType::HTTPStatus(400));
+    }
+
+    #[test]
+    fn non_trace_options_methods_leave_max_forwards_unchanged() {
+        let mut request =
+            RequestHeader::build("GET", b"/", None).expect("fixture request must be valid");
+        request
+            .insert_header("Max-Forwards", "0")
+            .expect("fixture Max-Forwards must be valid");
+
+        assert_eq!(
+            max_forwards_action(&request).expect("GET may ignore Max-Forwards"),
+            MaxForwardsAction::Ignore
+        );
+        apply_max_forwards_before_forward(&mut request)
+            .expect("GET Max-Forwards is not proxy control");
+        assert_eq!(request.headers["max-forwards"].to_str().unwrap(), "0");
     }
 
     #[test]
