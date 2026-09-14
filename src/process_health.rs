@@ -5,7 +5,7 @@
 //! Only payload-free GET requests receive the privileged admission bypass; application-shaped
 //! traffic that happens to reuse a health path remains subject to runtime-isolation capacity.
 
-use pingora::prelude::{RequestHeader, ResponseHeader, Session};
+use pingora::prelude::{Error, ErrorType, RequestHeader, ResponseHeader, Session};
 
 /// Stable process-local liveness endpoint.
 pub const LIVENESS_PATH: &str = "/livez";
@@ -21,8 +21,29 @@ pub(crate) enum ProcessHealthAction {
     Probe,
     /// A health path used with another method is not a process probe.
     RejectMethod,
-    /// A GET health request declares framing that could carry a request body.
+    /// A health-path request declares framing that could carry a request body.
     RejectPayload,
+}
+
+fn has_request_body_framing(request: &RequestHeader) -> bool {
+    if request.headers.contains_key("transfer-encoding") {
+        return true;
+    }
+
+    let mut content_lengths = request.headers.get_all("content-length").iter();
+    let Some(content_length) = content_lengths.next() else {
+        return false;
+    };
+    if content_lengths.next().is_some() {
+        return true;
+    }
+    !matches!(
+        content_length
+            .to_str()
+            .ok()
+            .and_then(|raw| raw.parse::<u64>().ok()),
+        Some(0)
+    )
 }
 
 /// Classifies whether a request is entitled to the process-health admission bypass.
@@ -30,33 +51,19 @@ pub(crate) enum ProcessHealthAction {
 /// A privileged probe is deliberately narrow: exact `/livez` or `/readyz`, method GET, and no
 /// request-body framing other than one valid `Content-Length: 0`. `Transfer-Encoding`, duplicate or
 /// malformed content lengths, and positive lengths are application-shaped traffic and therefore do
-/// not receive the bypass.
+/// not receive the bypass. Body framing is classified before the method so a body-bearing request
+/// is always rejected through the non-reusable HTTP error path rather than leaving unread bytes.
 pub(crate) fn classify_process_health_request(request: &RequestHeader) -> ProcessHealthAction {
     if !matches!(request.uri.path(), LIVENESS_PATH | READINESS_PATH) {
         return ProcessHealthAction::NotHealth;
     }
+    if has_request_body_framing(request) {
+        return ProcessHealthAction::RejectPayload;
+    }
     if request.method.as_str() != "GET" {
         return ProcessHealthAction::RejectMethod;
     }
-    if request.headers.contains_key("transfer-encoding") {
-        return ProcessHealthAction::RejectPayload;
-    }
-
-    let mut content_lengths = request.headers.get_all("content-length").iter();
-    let Some(content_length) = content_lengths.next() else {
-        return ProcessHealthAction::Probe;
-    };
-    if content_lengths.next().is_some() {
-        return ProcessHealthAction::RejectPayload;
-    }
-    match content_length
-        .to_str()
-        .ok()
-        .and_then(|raw| raw.parse::<u64>().ok())
-    {
-        Some(0) => ProcessHealthAction::Probe,
-        Some(_) | None => ProcessHealthAction::RejectPayload,
-    }
+    ProcessHealthAction::Probe
 }
 
 async fn respond_empty(
@@ -90,9 +97,12 @@ pub(crate) async fn respond_method_not_allowed(session: &mut Session) -> pingora
     respond_empty(session, 405, true).await
 }
 
-/// Rejects body-bearing health-path traffic instead of granting the payload-free probe bypass.
-pub(crate) async fn respond_payload_too_large(session: &mut Session) -> pingora::Result<()> {
-    respond_empty(session, 413, false).await
+/// Builds the stable fail-closed error for body-bearing traffic on a process-health path.
+pub(crate) fn payload_too_large_error() -> Box<Error> {
+    Error::explain(
+        ErrorType::HTTPStatus(413),
+        "process-health probes must not carry a request body",
+    )
 }
 
 #[cfg(test)]
@@ -162,6 +172,17 @@ mod tests {
             .expect("fixture transfer encoding should be valid");
         assert_eq!(
             classify_process_health_request(&transfer_encoding),
+            ProcessHealthAction::RejectPayload
+        );
+    }
+
+    #[test]
+    fn body_framing_takes_precedence_over_method_rejection() {
+        let mut post = request("POST", b"/readyz");
+        post.insert_header("Content-Length", "1")
+            .expect("fixture content length should be valid");
+        assert_eq!(
+            classify_process_health_request(&post),
             ProcessHealthAction::RejectPayload
         );
     }
