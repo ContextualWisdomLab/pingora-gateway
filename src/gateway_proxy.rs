@@ -286,6 +286,7 @@ mod tests {
                 "By=spiffe://attacker;Hash=deadbeef;URI=spiffe://attacker/client",
             ),
             ("X-Real-IP", "203.0.113.77"),
+            ("Via", "1.0 previous-hop"),
             ("X-Application-Context", "must-survive"),
         ] {
             request
@@ -297,6 +298,17 @@ mod tests {
             .expect("gateway-owned forwarding metadata must remain valid");
 
         assert_eq!(request.headers["forwarded"].to_str().unwrap(), "proto=http");
+        let via_values = request
+            .headers
+            .get_all("via")
+            .iter()
+            .map(|value| value.to_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            via_values,
+            vec!["1.0 previous-hop", "1.1 cwl-pingora-gateway"],
+            "RFC 9110 Via chain must preserve the received trace and append this gateway hop"
+        );
         for name in [
             "x-forwarded-for",
             "x-forwarded-host",
