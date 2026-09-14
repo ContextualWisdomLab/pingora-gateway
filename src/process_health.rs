@@ -21,7 +21,7 @@ pub(crate) enum ProcessHealthAction {
     Probe,
     /// A health path used with another method is not a process probe.
     RejectMethod,
-    /// A health-path request declares framing that could carry a request body.
+    /// A health-path request declares or can still deliver a request body.
     RejectPayload,
 }
 
@@ -48,18 +48,24 @@ fn has_request_body_framing(request: &RequestHeader) -> bool {
 
 /// Classifies whether a request is entitled to the process-health admission bypass.
 ///
-/// A privileged probe is deliberately narrow: exact `/livez` or `/readyz`, GET or HEAD, and no
-/// request-body framing other than one valid `Content-Length: 0`. RFC 9110 defines HEAD as GET
-/// without response content and requires general-purpose HTTP servers to support both methods.
-/// `Transfer-Encoding`, duplicate or malformed content lengths, and positive lengths are
-/// application-shaped traffic and therefore do not receive the bypass. Body framing is classified
-/// before the method so a body-bearing request is rejected through the ordinary HTTP error path
-/// rather than receiving a successful process-health response with unread bytes.
-pub(crate) fn classify_process_health_request(request: &RequestHeader) -> ProcessHealthAction {
+/// A privileged probe is deliberately narrow: exact `/livez` or `/readyz`, GET or HEAD, no
+/// request-body framing other than one valid `Content-Length: 0`, and a downstream request body
+/// that Pingora already considers complete. The transport-completion fact is required because an
+/// HTTP/2 HEADERS frame without `END_STREAM` can be followed by DATA even when no Content-Length is
+/// present. RFC 9110 defines HEAD as GET without response content and requires general-purpose HTTP
+/// servers to support both methods. `Transfer-Encoding`, duplicate or malformed content lengths,
+/// positive lengths, or an incomplete downstream body are application-shaped traffic and therefore
+/// do not receive the bypass. Body eligibility is classified before the method so a body-bearing
+/// request is rejected through the ordinary HTTP error path rather than receiving a successful
+/// process-health response with unread bytes.
+pub(crate) fn classify_process_health_request(
+    request: &RequestHeader,
+    body_done: bool,
+) -> ProcessHealthAction {
     if !matches!(request.uri.path(), LIVENESS_PATH | READINESS_PATH) {
         return ProcessHealthAction::NotHealth;
     }
-    if has_request_body_framing(request) {
+    if has_request_body_framing(request) || !body_done {
         return ProcessHealthAction::RejectPayload;
     }
     if !matches!(request.method.as_str(), "GET" | "HEAD") {
@@ -121,29 +127,42 @@ mod tests {
     #[test]
     fn only_health_paths_are_classified_as_process_health() {
         assert_eq!(
-            classify_process_health_request(&request("GET", b"/application-health")),
+            classify_process_health_request(&request("GET", b"/application-health"), false),
             ProcessHealthAction::NotHealth
         );
         for method in ["GET", "HEAD"] {
             assert_eq!(
-                classify_process_health_request(&request(method, b"/livez")),
+                classify_process_health_request(&request(method, b"/livez"), true),
                 ProcessHealthAction::Probe
             );
             assert_eq!(
-                classify_process_health_request(&request(method, b"/readyz")),
+                classify_process_health_request(&request(method, b"/readyz"), true),
                 ProcessHealthAction::Probe
             );
         }
     }
 
     #[test]
+    fn incomplete_transport_body_state_is_not_privileged_without_header_framing() {
+        for method in ["GET", "HEAD"] {
+            for path in [b"/livez".as_slice(), b"/readyz".as_slice()] {
+                assert_eq!(
+                    classify_process_health_request(&request(method, path), false),
+                    ProcessHealthAction::RejectPayload,
+                    "transport-incomplete {method} {path:?} must stay inside application admission"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn unsupported_health_methods_are_not_privileged_probes() {
         assert_eq!(
-            classify_process_health_request(&request("POST", b"/livez")),
+            classify_process_health_request(&request("POST", b"/livez"), true),
             ProcessHealthAction::RejectMethod
         );
         assert_eq!(
-            classify_process_health_request(&request("DELETE", b"/readyz")),
+            classify_process_health_request(&request("DELETE", b"/readyz"), true),
             ProcessHealthAction::RejectMethod
         );
     }
@@ -156,7 +175,7 @@ mod tests {
                 .insert_header("Content-Length", "0")
                 .expect("fixture content length should be valid");
             assert_eq!(
-                classify_process_health_request(&probe),
+                classify_process_health_request(&probe, true),
                 ProcessHealthAction::Probe
             );
         }
@@ -169,7 +188,7 @@ mod tests {
             .insert_header("Content-Length", "1")
             .expect("fixture content length should be valid");
         assert_eq!(
-            classify_process_health_request(&positive_length),
+            classify_process_health_request(&positive_length, true),
             ProcessHealthAction::RejectPayload
         );
 
@@ -178,7 +197,7 @@ mod tests {
             .insert_header("Transfer-Encoding", "chunked")
             .expect("fixture transfer encoding should be valid");
         assert_eq!(
-            classify_process_health_request(&transfer_encoding),
+            classify_process_health_request(&transfer_encoding, true),
             ProcessHealthAction::RejectPayload
         );
     }
@@ -189,7 +208,7 @@ mod tests {
         post.insert_header("Content-Length", "1")
             .expect("fixture content length should be valid");
         assert_eq!(
-            classify_process_health_request(&post),
+            classify_process_health_request(&post, true),
             ProcessHealthAction::RejectPayload
         );
     }
@@ -201,7 +220,7 @@ mod tests {
             .insert_header("Content-Length", "not-a-number")
             .expect("fixture header bytes should be valid");
         assert_eq!(
-            classify_process_health_request(&malformed),
+            classify_process_health_request(&malformed, true),
             ProcessHealthAction::RejectPayload
         );
 
@@ -211,7 +230,7 @@ mod tests {
             HeaderValue::from_bytes(b"\xff").expect("non-text header value should be representable"),
         );
         assert_eq!(
-            classify_process_health_request(&non_text),
+            classify_process_health_request(&non_text, true),
             ProcessHealthAction::RejectPayload
         );
 
@@ -223,7 +242,7 @@ mod tests {
             .append_header("Content-Length", "0")
             .expect("second fixture content length should be valid");
         assert_eq!(
-            classify_process_health_request(&duplicate),
+            classify_process_health_request(&duplicate, true),
             ProcessHealthAction::RejectPayload
         );
     }

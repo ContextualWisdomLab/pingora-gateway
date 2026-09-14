@@ -313,7 +313,8 @@ impl ProxyHttp for GatewayProxy {
     where
         Self::CTX: Send + Sync,
     {
-        match classify_process_health_request(session.req_header()) {
+        let body_done = session.is_body_done();
+        match classify_process_health_request(session.req_header(), body_done) {
             ProcessHealthAction::Probe => {
                 respond_healthy(session).await?;
                 Ok(true)
