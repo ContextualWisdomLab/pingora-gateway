@@ -143,3 +143,37 @@ fn gateway_profiles_reject_ephemeral_or_wildcard_upstream_authority() {
         );
     }
 }
+
+#[test]
+fn gateway_profiles_reject_upstreams_that_overlap_process_owned_listeners() {
+    for (listener, metrics_listener, upstream_address) in [
+        ("127.0.0.1:6188", "127.0.0.1:6192", "127.0.0.1:6188"),
+        ("0.0.0.0:6188", "127.0.0.1:6192", "127.0.0.1:6188"),
+        ("[::]:6188", "127.0.0.1:6192", "127.0.0.1:6188"),
+        ("127.0.0.1:6188", "127.0.0.1:6192", "127.0.0.1:6192"),
+    ] {
+        let self_routing = generic_gateway_yaml(listener, metrics_listener).replace(
+            "address: 127.0.0.1:8080",
+            &format!("address: \"{upstream_address}\""),
+        );
+        assert_eq!(
+            GatewayConfig::from_yaml(&self_routing),
+            Err(GatewayConfigError::UpstreamListenerCollision {
+                upstream_name: "application".to_string(),
+            }),
+            "generic profile must not route an upstream into its own listener authority: {upstream_address}"
+        );
+    }
+
+    for upstream_address in ["127.0.0.1:6188", "127.0.0.1:6192"] {
+        assert_eq!(
+            PgErdMigrationConfig::from_yaml(&pg_erd_gateway_yaml(upstream_address)),
+            Err(PgErdMigrationConfigError::UpstreamConfiguration(
+                GatewayConfigError::UpstreamListenerCollision {
+                    upstream_name: "backend".to_string(),
+                }
+            )),
+            "pg-erd profile must not route an upstream into its own listener authority: {upstream_address}"
+        );
+    }
+}
