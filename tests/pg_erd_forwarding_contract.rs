@@ -72,12 +72,13 @@ fn pg_erd_forwarding_rebuilds_transport_identity_instead_of_trusting_request_hea
 #[test]
 fn request_target_authority_precedes_conflicting_host_forwarding_metadata() {
     let client = PingoraSocketAddr::from(SocketAddr::from((Ipv4Addr::LOCALHOST, 49152)));
-    let mut downstream = RequestHeader::build(
-        "GET",
-        b"http://target.example:8080/api",
-        None,
-    )
-    .expect("absolute-form request target must be valid");
+    let mut downstream =
+        RequestHeader::build("GET", b"/api", None).expect("fixture request must be valid");
+    downstream.set_uri(
+        "http://target.example:8080/api"
+            .parse()
+            .expect("absolute target URI fixture must be valid"),
+    );
     downstream
         .insert_header("Host", "attacker.example:9090")
         .expect("conflicting Host fixture must remain generic HTTP field data");
