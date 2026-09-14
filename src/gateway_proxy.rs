@@ -158,11 +158,13 @@ fn body_rejection_to_pingora(rejection: BodyLimitExceeded) -> Box<Error> {
     )
 }
 
-/// Removes request-controlled proxy identity and emits only the generic-v1 scheme claim.
+/// Removes request-controlled forwarding identity and emits gateway-owned forwarding metadata.
 ///
 /// Generic v1 intentionally makes no client-IP, client-certificate, or trusted-proxy provenance
 /// claim. The entire `X-Forwarded-*` namespace is untrusted until a separately characterized and
-/// versioned trust-source contract admits specific fields.
+/// versioned trust-source contract admits specific fields. RFC 9110 `Via` is different: it is a
+/// protocol trace, so the received chain is preserved and this gateway appends a pseudonymous hop;
+/// no `Via` member is accepted as authentication or authorization evidence.
 fn sanitize_forwarding_headers(upstream_request: &mut RequestHeader) -> pingora::Result<()> {
     let x_forwarded_headers = upstream_request
         .headers
@@ -181,9 +183,8 @@ fn sanitize_forwarding_headers(upstream_request: &mut RequestHeader) -> pingora:
     for header in &x_forwarded_headers {
         upstream_request.remove_header(header);
     }
-    upstream_request
-        .insert_header("Forwarded", "proto=http")
-        .expect("literal gateway-owned Forwarded header must be valid");
+    upstream_request.insert_header("Forwarded", "proto=http")?;
+    upstream_request.append_header("Via", "1.1 cwl-pingora-gateway")?;
     Ok(())
 }
 
