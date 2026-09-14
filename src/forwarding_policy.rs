@@ -1,8 +1,9 @@
 //! Transport-derived forwarding metadata for trusted edge-to-upstream requests.
 //!
 //! The ingress boundary never accepts request-controlled forwarding identity as authority. It
-//! removes legacy proxy fields first and then rebuilds the subset required by characterized
-//! consumer behavior from the accepted downstream connection and original request authority.
+//! removes the complete legacy forwarding namespace first and then rebuilds the subset required by
+//! characterized consumer behavior from the accepted downstream connection and original request
+//! authority.
 
 use std::net::IpAddr;
 
@@ -97,22 +98,29 @@ impl ForwardingContext {
         Ok(Self::new(client_ip, original_host, downstream_port, scheme))
     }
 
-    /// Removes request-controlled proxy identity and emits transport-derived compatibility fields.
+    /// Removes request-controlled proxy authority and emits transport-derived compatibility fields.
     ///
-    /// `Forwarded` is deliberately removed rather than synthesized: the characterized Traefik
-    /// consumer contract relies on the legacy `X-Forwarded-*` family. `X-Forwarded-Server` is also
-    /// removed because it identifies the proxy host itself and is not consumer authority; adding a
-    /// fabricated server identity would create behavior that the Pingora runtime cannot prove.
+    /// The whole case-insensitive `X-Forwarded-*` namespace is removed before the characterized
+    /// subset is rebuilt. This prevents uncharacterized compatibility or identity fields such as
+    /// `X-Forwarded-Prefix` and `X-Forwarded-Client-Cert` from crossing the edge trust boundary.
+    /// `Forwarded` and `X-Real-IP` are handled separately because they are outside that namespace.
+    /// Headers such as `X-Application-Context` remain ordinary application metadata.
     pub fn apply(&self, upstream_request: &mut RequestHeader) -> pingora::Result<()> {
-        for header in [
-            "Forwarded",
-            "X-Forwarded-For",
-            "X-Forwarded-Host",
-            "X-Forwarded-Port",
-            "X-Forwarded-Proto",
-            "X-Forwarded-Server",
-            "X-Real-IP",
-        ] {
+        let x_forwarded_headers = upstream_request
+            .headers
+            .keys()
+            .filter(|name| {
+                name.as_str()
+                    .as_bytes()
+                    .get(..b"x-forwarded-".len())
+                    .is_some_and(|prefix| prefix.eq_ignore_ascii_case(b"x-forwarded-"))
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+
+        upstream_request.remove_header("Forwarded");
+        upstream_request.remove_header("X-Real-IP");
+        for header in &x_forwarded_headers {
             upstream_request.remove_header(header);
         }
 
