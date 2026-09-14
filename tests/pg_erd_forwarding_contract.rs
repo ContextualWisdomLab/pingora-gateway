@@ -88,3 +88,34 @@ fn malformed_host_authority_fails_closed_through_transport_derivation() {
 
     assert_eq!(error.etype, ErrorType::HTTPStatus(400));
 }
+
+#[test]
+fn non_host_uri_syntax_is_rejected_before_becoming_forwarded_authority() {
+    let client = PingoraSocketAddr::from(SocketAddr::from((Ipv4Addr::LOCALHOST, 49152)));
+
+    for authority in [
+        "user@app.example",
+        "app.example/path",
+        "app.example?query",
+        "app%2.example",
+        "%zz.example",
+        "[not-an-ip]",
+        "[v.example]",
+    ] {
+        let mut request =
+            RequestHeader::build("GET", b"/api", None).expect("fixture request must be valid");
+        request
+            .insert_header("Host", authority)
+            .expect("invalid Host grammar can still be valid generic HTTP field data");
+
+        let error = ForwardingContext::from_downstream_transport(
+            Some(&client),
+            &request,
+            &request,
+            DownstreamScheme::Http,
+        )
+        .expect_err("non-Host URI syntax must not become trusted forwarding authority");
+
+        assert_eq!(error.etype, ErrorType::HTTPStatus(400), "{authority}");
+    }
+}
