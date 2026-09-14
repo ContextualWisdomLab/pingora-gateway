@@ -161,18 +161,24 @@ fn body_rejection_to_pingora(rejection: BodyLimitExceeded) -> Box<Error> {
 /// Removes request-controlled proxy identity and emits only the generic-v1 scheme claim.
 ///
 /// Generic v1 intentionally makes no client-IP, client-certificate, or trusted-proxy provenance
-/// claim; those semantics require a separately characterized and versioned edge contract.
+/// claim. The entire `X-Forwarded-*` namespace is untrusted until a separately characterized and
+/// versioned trust-source contract admits specific fields.
 fn sanitize_forwarding_headers(upstream_request: &mut RequestHeader) -> pingora::Result<()> {
-    for header in [
-        "Forwarded",
-        "X-Forwarded-For",
-        "X-Forwarded-Host",
-        "X-Forwarded-Port",
-        "X-Forwarded-Proto",
-        "X-Forwarded-Server",
-        "X-Forwarded-Client-Cert",
-        "X-Real-IP",
-    ] {
+    let x_forwarded_headers = upstream_request
+        .headers
+        .keys()
+        .filter(|name| {
+            name.as_str()
+                .as_bytes()
+                .get(..b"x-forwarded-".len())
+                .is_some_and(|prefix| prefix.eq_ignore_ascii_case(b"x-forwarded-"))
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+
+    upstream_request.remove_header("Forwarded");
+    upstream_request.remove_header("X-Real-IP");
+    for header in &x_forwarded_headers {
         upstream_request.remove_header(header);
     }
     upstream_request
@@ -273,11 +279,14 @@ mod tests {
             ("X-Forwarded-Port", "4444"),
             ("X-Forwarded-Proto", "https"),
             ("X-Forwarded-Server", "attacker-proxy"),
+            ("X-Forwarded-Prefix", "/attacker-base"),
+            ("X-Forwarded-PathBase", "/attacker-path-base"),
             (
                 "X-Forwarded-Client-Cert",
                 "By=spiffe://attacker;Hash=deadbeef;URI=spiffe://attacker/client",
             ),
             ("X-Real-IP", "203.0.113.77"),
+            ("X-Application-Context", "must-survive"),
         ] {
             request
                 .insert_header(name, value)
@@ -294,6 +303,8 @@ mod tests {
             "x-forwarded-port",
             "x-forwarded-proto",
             "x-forwarded-server",
+            "x-forwarded-prefix",
+            "x-forwarded-pathbase",
             "x-forwarded-client-cert",
             "x-real-ip",
         ] {
@@ -302,6 +313,11 @@ mod tests {
                 "{name} must not retain client-controlled identity"
             );
         }
+        assert_eq!(
+            request.headers["x-application-context"].to_str().unwrap(),
+            "must-survive",
+            "non-forwarding application metadata must remain untouched"
+        );
     }
 
     #[test]
