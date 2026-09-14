@@ -197,6 +197,7 @@ fn body_rejection_to_pingora(rejection: BodyLimitExceeded) -> Box<Error> {
     )
 }
 
+/// Builds the stable client-visible error for an invalid TRACE/OPTIONS hop budget.
 fn invalid_max_forwards() -> Box<Error> {
     Error::explain(
         ErrorType::HTTPStatus(400),
@@ -204,6 +205,10 @@ fn invalid_max_forwards() -> Box<Error> {
     )
 }
 
+/// Classifies RFC 9110 `Max-Forwards` without mutating the received request.
+///
+/// Arbitrarily long decimal values are parsed with saturating arithmetic because only the bounded
+/// forwarded value matters; malformed or duplicate fields fail closed before upstream selection.
 fn max_forwards_action(request: &RequestHeader) -> pingora::Result<MaxForwardsAction> {
     if !matches!(request.method.as_str(), "TRACE" | "OPTIONS") {
         return Ok(MaxForwardsAction::Ignore);
@@ -237,6 +242,10 @@ fn max_forwards_action(request: &RequestHeader) -> pingora::Result<MaxForwardsAc
     ))
 }
 
+/// Rewrites a forwarding-eligible TRACE/OPTIONS hop budget immediately before proxy delivery.
+///
+/// A final-recipient result is an invariant violation here because `request_filter` should already
+/// have terminated it locally; returning 501 preserves fail-closed behavior if call ordering drifts.
 fn apply_max_forwards_before_forward(request: &mut RequestHeader) -> pingora::Result<()> {
     match max_forwards_action(request)? {
         MaxForwardsAction::Ignore => Ok(()),
@@ -251,6 +260,7 @@ fn apply_max_forwards_before_forward(request: &mut RequestHeader) -> pingora::Re
     }
 }
 
+/// Maps an actually received HTTP protocol version to the RFC 9110 `Via` received-protocol token.
 fn gateway_via_value(version: Version) -> pingora::Result<&'static str> {
     match version {
         Version::HTTP_10 => Ok("1.0 cwl-pingora-gateway"),
