@@ -4,8 +4,8 @@
 //! multicast destinations. The gateway therefore fails these values at Admin Config validation
 //! instead of delegating deterministic misconfiguration to the runtime connect path.
 
-use cwl_pingora_gateway::edge_contract::GatewayConfig;
-use cwl_pingora_gateway::migration_admin::PgErdMigrationConfig;
+use cwl_pingora_gateway::edge_contract::{GatewayConfig, GatewayConfigError};
+use cwl_pingora_gateway::migration_admin::{PgErdMigrationConfig, PgErdMigrationConfigError};
 
 fn generic_yaml(upstream: &str) -> String {
     format!(
@@ -28,8 +28,13 @@ fn generic_config_rejects_non_unicast_tcp_destinations() {
         "[::ffff:224.0.0.1]:7000",
         "[::ffff:255.255.255.255]:7000",
     ] {
-        GatewayConfig::from_yaml(&generic_yaml(upstream))
-            .expect_err("broadcast or multicast TCP upstream authority must fail closed");
+        assert_eq!(
+            GatewayConfig::from_yaml(&generic_yaml(upstream)),
+            Err(GatewayConfigError::NonUnicastUpstreamAddress {
+                upstream_name: "api".to_string(),
+            }),
+            "broadcast or multicast TCP upstream authority must fail closed: {upstream}"
+        );
     }
 }
 
@@ -42,7 +47,14 @@ fn pg_erd_config_rejects_non_unicast_tcp_destinations() {
         "[::ffff:224.0.0.1]:7000",
         "[::ffff:255.255.255.255]:7000",
     ] {
-        PgErdMigrationConfig::from_yaml(&pg_erd_yaml(backend))
-            .expect_err("pg-erd must reject broadcast or multicast TCP upstream authority");
+        assert_eq!(
+            PgErdMigrationConfig::from_yaml(&pg_erd_yaml(backend)),
+            Err(PgErdMigrationConfigError::UpstreamConfiguration(
+                GatewayConfigError::NonUnicastUpstreamAddress {
+                    upstream_name: "backend".to_string(),
+                }
+            )),
+            "pg-erd must reject broadcast or multicast TCP upstream authority: {backend}"
+        );
     }
 }
