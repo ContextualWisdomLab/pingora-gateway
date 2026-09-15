@@ -466,6 +466,72 @@ fn readiness_probe_honors_absolute_deadline_under_slow_header_drip() {
         .expect("slow readiness fixture should complete");
 }
 
+/// Exposes the origin-header read bug where a successful one-byte read renews
+/// the five-second socket timeout instead of consuming one absolute budget.
+#[test]
+fn origin_header_read_does_not_allow_slow_drip_to_renew_total_budget() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("slow origin fixture should bind");
+    let address = listener.local_addr().expect("slow origin fixture address");
+    let client = thread::spawn(move || {
+        let mut stream = TcpStream::connect(address).expect("origin fixture should accept client");
+        for byte in b"GET /api/x" {
+            if stream.write_all(&[*byte]).is_err() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(700));
+        }
+    });
+    let (mut stream, _) = listener.accept().expect("origin fixture should accept");
+    let started = Instant::now();
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _ = read_request_headers(&mut stream);
+    }));
+    assert!(result.is_err(), "incomplete slow-drip headers must fail closed");
+    assert!(
+        started.elapsed() < Duration::from_secs(6),
+        "origin header evidence must use one absolute five-second deadline"
+    );
+    client.join().expect("slow origin fixture should complete");
+}
+
+/// Exposes the downstream-termination read bug where repeated partial response
+/// bytes can renew a per-read timeout and outlive the documented total budget.
+#[test]
+fn downstream_termination_read_does_not_allow_slow_drip_to_renew_total_budget() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("slow downstream fixture should bind");
+    let address = listener
+        .local_addr()
+        .expect("slow downstream fixture address");
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("downstream probe should connect");
+        let mut request = [0_u8; 1024];
+        let _ = stream
+            .read(&mut request)
+            .expect("downstream probe request should be readable");
+        for byte in b"0123456789" {
+            if stream.write_all(&[*byte]).is_err() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(700));
+        }
+    });
+    let started = Instant::now();
+    let result = std::panic::catch_unwind(|| {
+        let _ = raw_request_until_committed_then_reset(
+            address,
+            b"GET /slow HTTP/1.1\r\nHost: app.example\r\nConnection: close\r\n\r\n",
+        );
+    });
+    assert!(result.is_err(), "slow-drip downstream termination must fail closed");
+    assert!(
+        started.elapsed() < Duration::from_secs(6),
+        "downstream termination evidence must use one absolute five-second deadline"
+    );
+    server
+        .join()
+        .expect("slow downstream fixture should complete");
+}
+
 /// Rejects numeric-prefix and duplicate metric samples so the oracle proves one
 /// post-commit transport error rather than merely finding at least one matching line.
 #[test]
