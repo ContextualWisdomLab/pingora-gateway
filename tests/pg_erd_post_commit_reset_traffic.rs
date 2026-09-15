@@ -465,8 +465,8 @@ fn readiness_probe_honors_absolute_deadline_under_slow_header_drip() {
         .expect("slow readiness fixture should complete");
 }
 
-/// Rejects numeric-prefix metric values so a larger counter cannot satisfy the
-/// expected single post-commit transport error.
+/// Rejects numeric-prefix and duplicate metric samples so the oracle proves one
+/// post-commit transport error rather than merely finding at least one matching line.
 #[test]
 fn exact_metric_sample_rejects_numeric_prefix_lookalikes() {
     let metrics = "# TYPE cwl_pingora_gateway_request_errors_total counter\ncwl_pingora_gateway_request_errors_total 10\n";
@@ -474,6 +474,15 @@ fn exact_metric_sample_rejects_numeric_prefix_lookalikes() {
         metrics,
         "cwl_pingora_gateway_request_errors_total 1"
     ));
+
+    let duplicated = "# TYPE cwl_pingora_gateway_request_errors_total counter\ncwl_pingora_gateway_request_errors_total 1\ncwl_pingora_gateway_request_errors_total 1\n";
+    assert!(
+        !contains_exact_metric_sample(
+            duplicated,
+            "cwl_pingora_gateway_request_errors_total 1"
+        ),
+        "duplicate exact samples must not satisfy the exactly-one error contract"
+    );
 }
 
 /// Proves an origin RST after the response bytes were acknowledged by the peer
