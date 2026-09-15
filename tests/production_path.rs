@@ -80,17 +80,40 @@ fn wait_until_listening(address: SocketAddr, process: &mut Child) {
     }
 }
 
-fn probe_readyz(address: SocketAddr) -> bool {
-    let Ok(mut stream) = TcpStream::connect_timeout(&address, Duration::from_millis(100)) else {
+/// Returns the remaining per-operation timeout without allowing one operation to outlive the caller.
+fn bounded_timeout(deadline: Instant, cap: Duration) -> Option<Duration> {
+    let remaining = deadline.checked_duration_since(Instant::now())?;
+    if remaining.is_zero() {
+        return None;
+    }
+    Some(remaining.min(cap))
+}
+
+/// Parses exactly one HTTP/1.1 three-digit status token from the response status line.
+fn exact_http_1_1_status_code(response: &str) -> Option<u16> {
+    let status_line = response.split("\r\n").next()?;
+    let mut fields = status_line.split_ascii_whitespace();
+    if fields.next()? != "HTTP/1.1" {
+        return None;
+    }
+    let status = fields.next()?;
+    if status.len() != 3 || !status.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    status.parse().ok()
+}
+
+fn probe_readyz(address: SocketAddr, deadline: Instant) -> bool {
+    let Some(connect_timeout) = bounded_timeout(deadline, Duration::from_millis(100)) else {
         return false;
     };
-    if stream
-        .set_read_timeout(Some(Duration::from_millis(250)))
-        .is_err()
-        || stream
-            .set_write_timeout(Some(Duration::from_millis(250)))
-            .is_err()
-    {
+    let Ok(mut stream) = TcpStream::connect_timeout(&address, connect_timeout) else {
+        return false;
+    };
+    let Some(write_timeout) = bounded_timeout(deadline, Duration::from_millis(250)) else {
+        return false;
+    };
+    if stream.set_write_timeout(Some(write_timeout)).is_err() {
         return false;
     }
     if stream
@@ -103,6 +126,12 @@ fn probe_readyz(address: SocketAddr) -> bool {
     let mut response = Vec::new();
     let mut buffer = [0_u8; 1024];
     loop {
+        let Some(read_timeout) = bounded_timeout(deadline, Duration::from_millis(250)) else {
+            return false;
+        };
+        if stream.set_read_timeout(Some(read_timeout)).is_err() {
+            return false;
+        }
         match stream.read(&mut buffer) {
             Ok(0) => return false,
             Ok(read) => {
@@ -118,7 +147,7 @@ fn probe_readyz(address: SocketAddr) -> bool {
                     continue;
                 };
                 let headers = String::from_utf8_lossy(&response[..header_end]);
-                if !headers.starts_with("HTTP/1.1 200") {
+                if exact_http_1_1_status_code(&headers) != Some(200) {
                     return false;
                 }
                 return headers.lines().any(|line| {
@@ -143,14 +172,17 @@ fn wait_until_http_ready(address: SocketAddr, process: &mut Child) {
         {
             panic!("gateway exited before application readiness: {status}");
         }
-        if probe_readyz(address) {
-            return;
-        }
         assert!(
             Instant::now() < deadline,
             "gateway did not become application-ready within 10s"
         );
-        thread::sleep(Duration::from_millis(25));
+        if probe_readyz(address, deadline) {
+            return;
+        }
+        let Some(sleep_budget) = bounded_timeout(deadline, Duration::from_millis(25)) else {
+            panic!("gateway did not become application-ready within 10s");
+        };
+        thread::sleep(sleep_budget);
     }
 }
 
@@ -564,8 +596,9 @@ fn readiness_probe_rejects_http_2000_status_lookalike() {
             .expect("lookalike response should be writable");
     });
 
+    let deadline = Instant::now() + Duration::from_secs(1);
     assert!(
-        !probe_readyz(address),
+        !probe_readyz(address, deadline),
         "numeric-prefix status must not manufacture readiness"
     );
     server.join().expect("readiness fixture should complete");
@@ -589,7 +622,11 @@ fn readiness_probe_cannot_outlive_a_bounded_slow_header_drip() {
     });
 
     let started = Instant::now();
-    assert!(!probe_readyz(address), "incomplete headers must not admit readiness");
+    let deadline = started + Duration::from_millis(350);
+    assert!(
+        !probe_readyz(address, deadline),
+        "incomplete headers must not admit readiness"
+    );
     assert!(
         started.elapsed() < Duration::from_millis(700),
         "one readiness probe must not be extended indefinitely by slow header progress"
