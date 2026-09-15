@@ -13,6 +13,8 @@ use std::time::{Duration, Instant};
 
 use tempfile::NamedTempFile;
 
+const MAX_HTTP_HEADER_BYTES: usize = 64 * 1024;
+
 struct GatewayProcess(Child);
 
 impl Drop for GatewayProcess {
@@ -98,12 +100,38 @@ fn probe_readyz(address: SocketAddr) -> bool {
         return false;
     }
 
-    let mut response = String::new();
-    if stream.read_to_string(&mut response).is_err() {
-        return false;
+    let mut response = Vec::new();
+    let mut buffer = [0_u8; 1024];
+    loop {
+        match stream.read(&mut buffer) {
+            Ok(0) => return false,
+            Ok(read) => {
+                response.extend_from_slice(&buffer[..read]);
+                if response.len() > MAX_HTTP_HEADER_BYTES {
+                    return false;
+                }
+                let Some(header_end) = response
+                    .windows(4)
+                    .position(|window| window == b"\r\n\r\n")
+                    .map(|position| position + 4)
+                else {
+                    continue;
+                };
+                let headers = String::from_utf8_lossy(&response[..header_end]);
+                if !headers.starts_with("HTTP/1.1 200") {
+                    return false;
+                }
+                return headers.lines().any(|line| {
+                    let Some((name, value)) = line.split_once(':') else {
+                        return false;
+                    };
+                    name.eq_ignore_ascii_case("cache-control")
+                        && value.trim().eq_ignore_ascii_case("no-store")
+                });
+            }
+            Err(_) => return false,
+        }
     }
-    let lowered = response.to_ascii_lowercase();
-    response.starts_with("HTTP/1.1 200") && lowered.contains("cache-control: no-store")
 }
 
 fn wait_until_http_ready(address: SocketAddr, process: &mut Child) {
