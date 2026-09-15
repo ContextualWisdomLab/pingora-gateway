@@ -303,10 +303,10 @@ fn read_downstream_until_termination(
             Err(error) if error.kind() == ErrorKind::ConnectionReset => {
                 return (response, DownstreamTermination::ConnectionReset);
             }
-            Err(error)
-                if matches!(error.kind(), ErrorKind::TimedOut | ErrorKind::WouldBlock) =>
-            {
-                panic!("post-commit reset response exceeded its absolute fixture deadline: {error}");
+            Err(error) if matches!(error.kind(), ErrorKind::TimedOut | ErrorKind::WouldBlock) => {
+                panic!(
+                    "post-commit reset response exceeded its absolute fixture deadline: {error}"
+                );
             }
             Err(error) => panic!("post-commit reset response should terminate cleanly: {error}"),
         }
@@ -344,7 +344,9 @@ fn read_request_headers_until(stream: &mut TcpStream, deadline: Instant) -> Stri
             Err(error) if matches!(error.kind(), ErrorKind::TimedOut | ErrorKind::WouldBlock) => {
                 panic!("origin request headers exceeded the absolute fixture deadline: {error}");
             }
-            Err(error) => panic!("origin request should be readable before the fixture deadline: {error}"),
+            Err(error) => {
+                panic!("origin request should be readable before the fixture deadline: {error}")
+            }
         };
         assert!(
             read > 0,
@@ -513,7 +515,10 @@ fn origin_header_read_does_not_allow_slow_drip_to_renew_total_budget() {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let _ = read_request_headers(&mut stream);
     }));
-    assert!(result.is_err(), "incomplete slow-drip headers must fail closed");
+    assert!(
+        result.is_err(),
+        "incomplete slow-drip headers must fail closed"
+    );
     assert!(
         started.elapsed() < Duration::from_secs(6),
         "origin header evidence must use one absolute five-second deadline"
@@ -549,7 +554,10 @@ fn downstream_termination_read_does_not_allow_slow_drip_to_renew_total_budget() 
             b"GET /slow HTTP/1.1\r\nHost: app.example\r\nConnection: close\r\n\r\n",
         );
     });
-    assert!(result.is_err(), "slow-drip downstream termination must fail closed");
+    assert!(
+        result.is_err(),
+        "slow-drip downstream termination must fail closed"
+    );
     assert!(
         started.elapsed() < Duration::from_secs(6),
         "downstream termination evidence must use one absolute five-second deadline"
@@ -571,10 +579,7 @@ fn exact_metric_sample_rejects_numeric_prefix_lookalikes() {
 
     let duplicated = "# TYPE cwl_pingora_gateway_request_errors_total counter\ncwl_pingora_gateway_request_errors_total 1\ncwl_pingora_gateway_request_errors_total 1\n";
     assert!(
-        !contains_exact_metric_sample(
-            duplicated,
-            "cwl_pingora_gateway_request_errors_total 1"
-        ),
+        !contains_exact_metric_sample(duplicated, "cwl_pingora_gateway_request_errors_total 1"),
         "duplicate exact samples must not satisfy the exactly-one error contract"
     );
 }
