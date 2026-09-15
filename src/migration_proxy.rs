@@ -39,11 +39,14 @@ pub enum MigrationGatewayProxyError {
 /// Per-request state for the characterized multi-route Pingora adapter.
 #[derive(Debug)]
 pub struct MigrationRequestContext {
+    /// Per-request declared and streamed body accounting under validated Runtime Isolation limits.
     request_body: RequestBodyBudget,
+    /// RAII in-flight lease retained from application admission through request completion.
     admission: Option<RequestAdmission>,
 }
 
 impl MigrationRequestContext {
+    /// Creates request-local body state without consuming an application admission lease yet.
     fn new(limits: RuntimeIsolationLimits) -> Self {
         Self {
             request_body: RequestBodyBudget::new(limits),
@@ -55,8 +58,11 @@ impl MigrationRequestContext {
 /// Pingora HTTP application backed only by a prevalidated migration delivery plan.
 #[derive(Debug, Clone)]
 pub struct MigrationGatewayProxy {
+    /// Immutable characterized route, response-policy, and prevalidated peer authority.
     delivery: MigrationDeliveryPlan,
+    /// Validated body and concurrent-request budgets inherited by each request context.
     limits: RuntimeIsolationLimits,
+    /// Shared process-wide admission counter that bounds application concurrency across workers.
     admission_budget: RequestAdmissionBudget,
 }
 
@@ -107,6 +113,7 @@ impl MigrationGatewayProxy {
             .try_for_each(|rule| response.insert_header(rule.name.clone(), rule.value.as_str()))
     }
 
+    /// Acquires one process-wide application lease or fails locally with bounded 503 telemetry.
     fn admit_request(&self, ctx: &mut MigrationRequestContext) -> pingora::Result<()> {
         if let Some(admission) = self.admission_budget.acquire() {
             ctx.admission = Some(admission);
@@ -120,6 +127,7 @@ impl MigrationGatewayProxy {
         ))
     }
 
+    /// Rejects a known oversized Content-Length before the request may select/connect an origin.
     fn reject_oversize_declared_body(
         session: &Session,
         ctx: &MigrationRequestContext,
@@ -139,6 +147,7 @@ impl MigrationGatewayProxy {
     }
 }
 
+/// Builds pg-erd forwarding compatibility metadata only from the accepted clear-text transport.
 fn pg_erd_forwarding_context(
     session: &Session,
     upstream_request: &RequestHeader,
@@ -180,6 +189,7 @@ fn append_migration_request_via(
     Ok(())
 }
 
+/// Maps internal body-budget diagnostics to a stable 413 without exposing resource counts.
 fn body_rejection_to_pingora(rejection: BodyLimitExceeded) -> Box<Error> {
     let _ = (rejection.observed, rejection.limit);
     Error::explain(
@@ -188,6 +198,7 @@ fn body_rejection_to_pingora(rejection: BodyLimitExceeded) -> Box<Error> {
     )
 }
 
+/// Maps an unmatched characterized route to fail-closed 404 rather than inventing a fallback peer.
 fn unmatched_route_to_pingora(_error: MigrationGatewayProxyError) -> Box<Error> {
     Error::explain(
         ErrorType::HTTPStatus(404),
@@ -195,6 +206,7 @@ fn unmatched_route_to_pingora(_error: MigrationGatewayProxyError) -> Box<Error> 
     )
 }
 
+/// Preserves explicit HTTP status while normalizing Pingora transport-source failures for clients.
 fn proxy_error_status(error: &Error) -> u16 {
     if let ErrorType::HTTPStatus(code) = &error.etype {
         return *code;
