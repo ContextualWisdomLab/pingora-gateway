@@ -40,9 +40,13 @@ impl DownstreamScheme {
 /// Trusted transport metadata used to reconstruct legacy forwarding fields.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ForwardingContext {
+    /// Accepted downstream client IP; request-controlled forwarding fields never populate it.
     client_ip: IpAddr,
+    /// Validated original Host authority preserved only for characterized forwarding compatibility.
     original_host: String,
+    /// External authority port derived from validated Host/scheme, never the process bind port.
     downstream_port: u16,
+    /// Clear-text or TLS scheme observed at the accepted downstream transport boundary.
     scheme: DownstreamScheme,
 }
 
