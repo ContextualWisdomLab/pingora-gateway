@@ -13,13 +13,54 @@ use tempfile::NamedTempFile;
 
 struct GatewayProcess(Child);
 
+impl GatewayProcess {
+    #[cfg(unix)]
+    fn assert_graceful_shutdown(&mut self) {
+        let pid = self.0.id().to_string();
+        let signal = Command::new("kill")
+            .args(["-TERM", pid.as_str()])
+            .status()
+            .expect("SIGTERM command should execute");
+        assert!(signal.success(), "SIGTERM should be delivered to gateway child");
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            match self
+                .0
+                .try_wait()
+                .expect("gateway process state should remain readable during graceful shutdown")
+            {
+                Some(status) => {
+                    assert!(
+                        status.success(),
+                        "gateway must exit successfully after graceful SIGTERM: {status}"
+                    );
+                    return;
+                }
+                None => {
+                    assert!(
+                        Instant::now() < deadline,
+                        "gateway did not complete graceful shutdown within five seconds"
+                    );
+                    thread::sleep(Duration::from_millis(25));
+                }
+            }
+        }
+    }
+}
+
 impl Drop for GatewayProcess {
     fn drop(&mut self) {
+        if matches!(self.0.try_wait(), Ok(Some(_))) {
+            return;
+        }
+
         #[cfg(unix)]
         {
             // Pingora handles SIGTERM through its graceful shutdown path. Give the process a bounded
             // chance to return from `Server::run()` so LLVM coverage/profile state is flushed; only
-            // fall back to SIGKILL if the process fails to drain.
+            // fall back to SIGKILL if the process fails to drain. The test explicitly validates a
+            // successful graceful exit; Drop is cleanup-only so it remains safe during unwinding.
             let pid = self.0.id().to_string();
             if Command::new("kill")
                 .args(["-TERM", pid.as_str()])
@@ -200,4 +241,7 @@ fn zero_max_forwards_is_a_local_final_recipient_and_never_contacts_origin() {
         .accept()
         .expect_err("zero-hop intermediary control must not establish an origin connection");
     assert_eq!(error.kind(), std::io::ErrorKind::WouldBlock);
+
+    #[cfg(unix)]
+    process.assert_graceful_shutdown();
 }
