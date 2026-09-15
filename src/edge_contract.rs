@@ -116,7 +116,7 @@ pub enum GatewayConfigError {
     /// A wildcard bind address is not a concrete remote network authority.
     #[error("upstream {upstream_name} must use a concrete IP address, not an unspecified wildcard")]
     UnspecifiedUpstreamAddress {
-        /// Stable upstream whose address was `0.0.0.0` or `::`.
+        /// Stable upstream whose canonical address was `0.0.0.0` or `::`.
         upstream_name: String,
     },
     /// A zero request-body limit would reject every body and is almost certainly misconfiguration.
@@ -320,7 +320,7 @@ impl UpstreamConfig {
                 upstream_name: normalized_name.to_string(),
             });
         }
-        if self.address.ip().is_unspecified() {
+        if self.address.ip().to_canonical().is_unspecified() {
             return Err(GatewayConfigError::UnspecifiedUpstreamAddress {
                 upstream_name: normalized_name.to_string(),
             });
