@@ -33,7 +33,7 @@ All notable changes are tracked here. No release has been published yet.
 - Added non-root/read-only-root OCI packaging with a fail-closed build-time allowlist for the generic and bounded pg-erd process identities; exact-head OCI acceptance builds and starts both profiles under uid/gid 65532, dropped capabilities and `no-new-privileges`, while the supply-chain lane builds and vulnerability-scans both candidate images.
 - Added a committed dependency lock, fail-closed license/source/advisory policy, exact-source SBOM and image-vulnerability evidence.
 - Added an exact-head owned-production coverage gate that requires 100% lines and regions without filename/function/branch exclusions; repaired compiler-generated generic startup coverage and structurally impossible literal-header error regions rather than weakening the gate.
-- Added missing-public-rustdoc enforcement and documentation builds with warnings denied.
+- Added warnings-denied public rustdoc plus compiler-enforced private-production documentation through `clippy::missing_docs_in_private_items` on non-test crate roots. The first hosted enforcement exposed 78 private production gaps; the repair documents purpose, invariants, authority boundaries, security/privacy constraints and performance-sensitive state rather than suppressing the lint or counting test-only helpers.
 - Added a load-workflow contract that proves the measured loopback origin is ready before gateway startup so fixture races cannot be counted as gateway latency or availability behavior, and separately preserves the primary failure when k6 never produces a summary.
 - Added DDD, product, technical, security, threat, test, operability, configuration, migration-gap, and primary-source traceability documentation.
 
