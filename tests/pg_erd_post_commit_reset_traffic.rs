@@ -259,9 +259,8 @@ fn raw_request(address: SocketAddr, request: &[u8]) -> String {
     response
 }
 
-/// Reads the incomplete downstream response until EOF or propagated RST. The
-/// origin independently controls when the reset is released, avoiding a cycle
-/// where downstream forwarding becomes a prerequisite for upstream failure.
+/// Reads the incomplete downstream response until EOF or propagated RST under
+/// one absolute five-second budget. Partial progress cannot renew that budget.
 fn raw_request_until_committed_then_reset(
     address: SocketAddr,
     request: &[u8],
@@ -269,18 +268,29 @@ fn raw_request_until_committed_then_reset(
     let mut downstream = TcpStream::connect_timeout(&address, Duration::from_secs(1))
         .expect("gateway should accept traffic");
     downstream
-        .set_read_timeout(Some(Duration::from_secs(5)))
-        .expect("downstream timeout should be configurable");
-    downstream
         .set_write_timeout(Some(Duration::from_secs(1)))
         .expect("downstream write timeout should be configurable");
     downstream
         .write_all(request)
         .expect("downstream request should be writable");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    read_downstream_until_termination(&mut downstream, deadline)
+}
 
+/// Reads downstream evidence without allowing successful partial reads to
+/// extend the caller's absolute termination deadline.
+fn read_downstream_until_termination(
+    downstream: &mut TcpStream,
+    deadline: Instant,
+) -> (Vec<u8>, DownstreamTermination) {
     let mut response = Vec::new();
     let mut buffer = [0_u8; 1024];
     loop {
+        let read_timeout = bounded_timeout(deadline, Duration::from_secs(5))
+            .expect("post-commit reset response exceeded its absolute fixture deadline");
+        downstream
+            .set_read_timeout(Some(read_timeout))
+            .expect("downstream timeout should be configurable");
         match downstream.read(&mut buffer) {
             Ok(0) => return (response, DownstreamTermination::Eof),
             Ok(read) => {
@@ -293,7 +303,12 @@ fn raw_request_until_committed_then_reset(
             Err(error) if error.kind() == ErrorKind::ConnectionReset => {
                 return (response, DownstreamTermination::ConnectionReset);
             }
-            Err(error) => panic!("post-commit reset response should terminate, not stall: {error}"),
+            Err(error)
+                if matches!(error.kind(), ErrorKind::TimedOut | ErrorKind::WouldBlock) =>
+            {
+                panic!("post-commit reset response exceeded its absolute fixture deadline: {error}");
+            }
+            Err(error) => panic!("post-commit reset response should terminate cleanly: {error}"),
         }
     }
 }
@@ -307,18 +322,30 @@ fn get(address: SocketAddr, path: &str) -> String {
     )
 }
 
-/// Keeps origin-side request reads finite so a forwarding defect fails before
-/// the intended reset phase instead of hanging the acceptance suite.
+/// Keeps origin-side request reads inside one absolute five-second budget so a
+/// slow-drip forwarding defect cannot renew a per-read socket timeout forever.
 fn read_request_headers(stream: &mut TcpStream) -> String {
-    stream
-        .set_read_timeout(Some(Duration::from_secs(5)))
-        .expect("origin request timeout should be configurable");
+    read_request_headers_until(stream, Instant::now() + Duration::from_secs(5))
+}
+
+/// Reads one origin request header block without allowing partial progress to
+/// extend the caller's absolute deadline.
+fn read_request_headers_until(stream: &mut TcpStream, deadline: Instant) -> String {
     let mut bytes = Vec::new();
     let mut buffer = [0_u8; 1024];
     loop {
-        let read = stream
-            .read(&mut buffer)
-            .expect("origin request should be readable before the fixture deadline");
+        let read_timeout = bounded_timeout(deadline, Duration::from_secs(5))
+            .expect("origin request headers exceeded the absolute fixture deadline");
+        stream
+            .set_read_timeout(Some(read_timeout))
+            .expect("origin request timeout should be configurable");
+        let read = match stream.read(&mut buffer) {
+            Ok(read) => read,
+            Err(error) if matches!(error.kind(), ErrorKind::TimedOut | ErrorKind::WouldBlock) => {
+                panic!("origin request headers exceeded the absolute fixture deadline: {error}");
+            }
+            Err(error) => panic!("origin request should be readable before the fixture deadline: {error}"),
+        };
         assert!(
             read > 0,
             "gateway closed origin request before headers completed"
@@ -466,8 +493,8 @@ fn readiness_probe_honors_absolute_deadline_under_slow_header_drip() {
         .expect("slow readiness fixture should complete");
 }
 
-/// Exposes the origin-header read bug where a successful one-byte read renews
-/// the five-second socket timeout instead of consuming one absolute budget.
+/// Proves origin header evidence is bounded by one absolute budget even when a
+/// peer keeps making partial progress before each socket-level read timeout.
 #[test]
 fn origin_header_read_does_not_allow_slow_drip_to_renew_total_budget() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("slow origin fixture should bind");
@@ -494,8 +521,8 @@ fn origin_header_read_does_not_allow_slow_drip_to_renew_total_budget() {
     client.join().expect("slow origin fixture should complete");
 }
 
-/// Exposes the downstream-termination read bug where repeated partial response
-/// bytes can renew a per-read timeout and outlive the documented total budget.
+/// Proves downstream termination evidence is bounded by one absolute budget
+/// even when the peer keeps delivering partial response bytes.
 #[test]
 fn downstream_termination_read_does_not_allow_slow_drip_to_renew_total_budget() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("slow downstream fixture should bind");
