@@ -152,17 +152,19 @@ impl GatewayProxy {
         ))
     }
 
-    /// Applies application admission before classifying TRACE/OPTIONS intermediary control.
+    /// Applies admission and declared-body limits before classifying intermediary control.
     ///
     /// A zero or malformed `Max-Forwards` request can terminate locally, but it is still
-    /// application traffic. Keeping classification behind the shared lease prevents local 4xx/5xx
-    /// paths from bypassing the process-wide in-flight budget.
+    /// application traffic. The shared lease is acquired first, then an oversized declared body
+    /// fails with 413 before malformed intermediary control can return 400. This keeps both local
+    /// paths inside the same runtime-isolation contract without allowing body policy to be bypassed.
     fn admit_and_classify_max_forwards(
         &self,
         request: &RequestHeader,
         ctx: &mut RequestContext,
     ) -> pingora::Result<MaxForwardsAction> {
         self.admit_request(ctx)?;
+        Self::reject_oversize_declared_body(request, ctx)?;
         max_forwards_action(request)
     }
 
@@ -171,11 +173,10 @@ impl GatewayProxy {
     /// Chunked or otherwise undeclared bodies remain bounded independently by `RequestBodyBudget`
     /// as body progress arrives.
     fn reject_oversize_declared_body(
-        session: &Session,
+        request: &RequestHeader,
         ctx: &RequestContext,
     ) -> pingora::Result<()> {
-        let declared = session
-            .req_header()
+        let declared = request
             .headers
             .get("content-length")
             .and_then(|value| value.to_str().ok())
@@ -349,7 +350,6 @@ impl ProxyHttp for GatewayProxy {
             _ => {
                 let max_forwards =
                     self.admit_and_classify_max_forwards(session.req_header(), ctx)?;
-                Self::reject_oversize_declared_body(session, ctx)?;
                 if max_forwards == MaxForwardsAction::FinalRecipient {
                     Self::respond_max_forwards_final_recipient(session).await?;
                     return Ok(true);
