@@ -410,8 +410,8 @@ impl ProxyHttp for GatewayProxy {
 mod tests {
     use super::{
         append_response_via, apply_max_forwards_before_forward, body_rejection_to_pingora,
-        max_forwards_action, sanitize_forwarding_headers, MaxForwardsAction, RequestContext,
-        MAX_SUPPORTED_MAX_FORWARDS,
+        gateway_via_value, max_forwards_action, sanitize_forwarding_headers, MaxForwardsAction,
+        RequestContext, MAX_SUPPORTED_MAX_FORWARDS,
     };
     use crate::runtime_isolation::{
         BodyLimitExceeded, RequestAdmissionBudget, RuntimeIsolationLimits,
@@ -515,6 +515,30 @@ mod tests {
     }
 
     #[test]
+    fn trace_without_max_forwards_remains_forwarding_eligible() {
+        let request =
+            RequestHeader::build("TRACE", b"/", None).expect("fixture request must be valid");
+
+        assert_eq!(
+            max_forwards_action(&request).expect("missing Max-Forwards does not exhaust a budget"),
+            MaxForwardsAction::Ignore
+        );
+    }
+
+    #[test]
+    fn exhausted_max_forwards_cannot_reach_upstream_rewrite() {
+        let mut request =
+            RequestHeader::build("OPTIONS", b"/", None).expect("fixture request must be valid");
+        request
+            .insert_header("Max-Forwards", "0")
+            .expect("fixture Max-Forwards must be valid");
+
+        let error = apply_max_forwards_before_forward(&mut request)
+            .expect_err("final-recipient traffic must not be rewritten for another hop");
+        assert_eq!(error.etype, ErrorType::HTTPStatus(501));
+    }
+
+    #[test]
     fn huge_valid_max_forwards_is_capped_to_gateway_supported_value() {
         let mut request =
             RequestHeader::build("TRACE", b"/", None).expect("fixture request must be valid");
@@ -579,6 +603,18 @@ mod tests {
             request.headers["via"].to_str().unwrap(),
             "1.0 cwl-pingora-gateway"
         );
+    }
+
+    #[test]
+    fn via_mapping_supports_http3_and_rejects_http09() {
+        assert_eq!(
+            gateway_via_value(Version::HTTP_3).expect("HTTP/3 Via token must be supported"),
+            "3 cwl-pingora-gateway"
+        );
+
+        let error = gateway_via_value(Version::HTTP_09)
+            .expect_err("HTTP/0.9 has no supported Via token in this gateway");
+        assert_eq!(error.etype, ErrorType::InvalidHTTPHeader);
     }
 
     #[test]
