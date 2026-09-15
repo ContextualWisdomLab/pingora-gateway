@@ -119,6 +119,12 @@ pub enum GatewayConfigError {
         /// Stable upstream whose canonical address was `0.0.0.0` or `::`.
         upstream_name: String,
     },
+    /// TCP upstream authority must identify a unicast destination, not broadcast or multicast.
+    #[error("upstream {upstream_name} must use a unicast TCP destination address")]
+    NonUnicastUpstreamAddress {
+        /// Stable upstream whose canonical address was broadcast or multicast.
+        upstream_name: String,
+    },
     /// A zero request-body limit would reject every body and is almost certainly misconfiguration.
     #[error("max_request_body_bytes must be greater than zero")]
     InvalidRequestBodyLimit,
@@ -320,8 +326,19 @@ impl UpstreamConfig {
                 upstream_name: normalized_name.to_string(),
             });
         }
-        if self.address.ip().to_canonical().is_unspecified() {
+
+        let canonical_address = self.address.ip().to_canonical();
+        if canonical_address.is_unspecified() {
             return Err(GatewayConfigError::UnspecifiedUpstreamAddress {
+                upstream_name: normalized_name.to_string(),
+            });
+        }
+        let is_non_unicast = match canonical_address {
+            IpAddr::V4(address) => address.is_broadcast() || address.is_multicast(),
+            IpAddr::V6(address) => address.is_multicast(),
+        };
+        if is_non_unicast {
+            return Err(GatewayConfigError::NonUnicastUpstreamAddress {
                 upstream_name: normalized_name.to_string(),
             });
         }
