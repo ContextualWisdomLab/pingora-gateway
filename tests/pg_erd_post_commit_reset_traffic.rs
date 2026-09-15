@@ -436,11 +436,15 @@ fn exact_status_code_rejects_case_and_numeric_prefix_lookalikes() {
 #[test]
 fn readiness_probe_honors_absolute_deadline_under_slow_header_drip() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("slow readiness fixture should bind");
-    let address = listener.local_addr().expect("slow readiness fixture address");
+    let address = listener
+        .local_addr()
+        .expect("slow readiness fixture address");
     let server = thread::spawn(move || {
         let (mut stream, _) = listener.accept().expect("probe should connect");
         let mut request = [0_u8; 1024];
-        let _ = stream.read(&mut request).expect("probe request should be readable");
+        let _ = stream
+            .read(&mut request)
+            .expect("probe request should be readable");
         for byte in b"HTTP/1.1 200 OK\r\nCache-Control: no-store\r\n" {
             if stream.write_all(&[*byte]).is_err() {
                 break;
@@ -456,7 +460,9 @@ fn readiness_probe_honors_absolute_deadline_under_slow_header_drip() {
         started.elapsed() < Duration::from_millis(700),
         "pg-erd readiness probe must not reset its total budget on each read"
     );
-    server.join().expect("slow readiness fixture should complete");
+    server
+        .join()
+        .expect("slow readiness fixture should complete");
 }
 
 /// Rejects numeric-prefix metric values so a larger counter cannot satisfy the
