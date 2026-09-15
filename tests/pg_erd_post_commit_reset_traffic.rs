@@ -107,19 +107,28 @@ fn exact_http_1_1_status_code(response: &str) -> Option<u16> {
     status.parse().ok()
 }
 
+/// Returns the remaining per-operation timeout without allowing one operation to outlive the caller.
+fn bounded_timeout(deadline: Instant, cap: Duration) -> Option<Duration> {
+    let remaining = deadline.checked_duration_since(Instant::now())?;
+    if remaining.is_zero() {
+        return None;
+    }
+    Some(remaining.min(cap))
+}
+
 /// Attempts one bounded application-level readiness exchange. A successful TCP
 /// handshake alone is not sufficient to admit the failure fixture.
-fn probe_readyz(address: SocketAddr) -> bool {
-    let Ok(mut stream) = TcpStream::connect_timeout(&address, Duration::from_millis(100)) else {
+fn probe_readyz(address: SocketAddr, deadline: Instant) -> bool {
+    let Some(connect_timeout) = bounded_timeout(deadline, Duration::from_millis(100)) else {
         return false;
     };
-    if stream
-        .set_read_timeout(Some(Duration::from_millis(250)))
-        .is_err()
-        || stream
-            .set_write_timeout(Some(Duration::from_millis(250)))
-            .is_err()
-    {
+    let Ok(mut stream) = TcpStream::connect_timeout(&address, connect_timeout) else {
+        return false;
+    };
+    let Some(write_timeout) = bounded_timeout(deadline, Duration::from_millis(250)) else {
+        return false;
+    };
+    if stream.set_write_timeout(Some(write_timeout)).is_err() {
         return false;
     }
     if stream
@@ -132,6 +141,12 @@ fn probe_readyz(address: SocketAddr) -> bool {
     let mut response = Vec::new();
     let mut buffer = [0_u8; 1024];
     loop {
+        let Some(read_timeout) = bounded_timeout(deadline, Duration::from_millis(250)) else {
+            return false;
+        };
+        if stream.set_read_timeout(Some(read_timeout)).is_err() {
+            return false;
+        }
         match stream.read(&mut buffer) {
             Ok(0) => return false,
             Ok(read) => {
@@ -164,14 +179,17 @@ fn wait_until_http_ready(address: SocketAddr, process: &mut Child) {
         {
             panic!("gateway exited before application readiness: {status}");
         }
-        if probe_readyz(address) {
-            return;
-        }
         assert!(
             Instant::now() < deadline,
             "gateway did not become application-ready within 10s"
         );
-        thread::sleep(Duration::from_millis(25));
+        if probe_readyz(address, deadline) {
+            return;
+        }
+        let Some(sleep_budget) = bounded_timeout(deadline, Duration::from_millis(25)) else {
+            panic!("gateway did not become application-ready within 10s");
+        };
+        thread::sleep(sleep_budget);
     }
 }
 
@@ -412,6 +430,33 @@ fn exact_status_code_rejects_case_and_numeric_prefix_lookalikes() {
     assert_eq!(exact_http_1_1_status_code("HTTP/1.1 200 OK\r\n"), Some(200));
     assert_eq!(exact_http_1_1_status_code("http/1.1 200 OK\r\n"), None);
     assert_eq!(exact_http_1_1_status_code("HTTP/1.1 2000 OK\r\n"), None);
+}
+
+/// Proves the pg-erd readiness oracle cannot be extended by a peer that continuously drips headers.
+#[test]
+fn readiness_probe_honors_absolute_deadline_under_slow_header_drip() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("slow readiness fixture should bind");
+    let address = listener.local_addr().expect("slow readiness fixture address");
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("probe should connect");
+        let mut request = [0_u8; 1024];
+        let _ = stream.read(&mut request).expect("probe request should be readable");
+        for byte in b"HTTP/1.1 200 OK\r\nCache-Control: no-store\r\n" {
+            if stream.write_all(&[*byte]).is_err() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+    });
+
+    let started = Instant::now();
+    let deadline = started + Duration::from_millis(350);
+    assert!(!probe_readyz(address, deadline));
+    assert!(
+        started.elapsed() < Duration::from_millis(700),
+        "pg-erd readiness probe must not reset its total budget on each read"
+    );
+    server.join().expect("slow readiness fixture should complete");
 }
 
 /// Rejects numeric-prefix metric values so a larger counter cannot satisfy the
