@@ -156,8 +156,9 @@ impl GatewayProxy {
     ///
     /// A zero or malformed `Max-Forwards` request can terminate locally, but it is still
     /// application traffic. The shared lease is acquired first, then an oversized declared body
-    /// fails with 413 before malformed intermediary control can return 400. This keeps both local
-    /// paths inside the same runtime-isolation contract without allowing body policy to be bypassed.
+    /// fails with 413 before malformed intermediary control can return 400. TRACE content is then
+    /// rejected before upstream selection so this HTTP-to-HTTP gateway never emits it on its client
+    /// hop. This keeps all local outcomes inside the same runtime-isolation contract.
     fn admit_and_classify_max_forwards(
         &self,
         request: &RequestHeader,
@@ -165,6 +166,7 @@ impl GatewayProxy {
     ) -> pingora::Result<MaxForwardsAction> {
         self.admit_request(ctx)?;
         Self::reject_oversize_declared_body(request, ctx)?;
+        reject_declared_trace_content(request)?;
         max_forwards_action(request)
     }
 
@@ -200,6 +202,35 @@ fn body_rejection_to_pingora(rejection: BodyLimitExceeded) -> Box<Error> {
         ErrorType::HTTPStatus(413),
         "request body exceeds configured max_request_body_bytes",
     )
+}
+
+/// Builds the stable fail-closed error used when TRACE carries request content.
+fn invalid_trace_content() -> Box<Error> {
+    Error::explain(
+        ErrorType::HTTPStatus(400),
+        "TRACE request content is not permitted by RFC 9110",
+    )
+}
+
+/// Rejects declared TRACE content before this gateway selects or contacts an upstream peer.
+///
+/// The generic body-size boundary runs first so an already-declared oversize request retains the
+/// existing 413 precedence. A zero declared length is permitted; undeclared content is caught by
+/// the streaming body filter before any content chunk is forwarded.
+fn reject_declared_trace_content(request: &RequestHeader) -> pingora::Result<()> {
+    if request.method.as_str() != "TRACE" {
+        return Ok(());
+    }
+
+    let declared = request
+        .headers
+        .get("content-length")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|raw| raw.parse::<u64>().ok());
+    if declared.is_some_and(|length| length > 0) {
+        return Err(invalid_trace_content());
+    }
+    Ok(())
 }
 
 /// Builds the stable client-visible error for an invalid TRACE/OPTIONS hop budget.
@@ -361,7 +392,7 @@ impl ProxyHttp for GatewayProxy {
 
     async fn request_body_filter(
         &self,
-        _session: &mut Session,
+        session: &mut Session,
         body: &mut Option<Bytes>,
         _end_of_stream: bool,
         ctx: &mut Self::CTX,
@@ -372,7 +403,11 @@ impl ProxyHttp for GatewayProxy {
         let chunk_bytes = body.as_ref().map_or(0_u64, |chunk| chunk.len() as u64);
         ctx.request_body
             .observe_chunk(chunk_bytes)
-            .map_err(body_rejection_to_pingora)
+            .map_err(body_rejection_to_pingora)?;
+        if session.req_header().method.as_str() == "TRACE" && chunk_bytes > 0 {
+            return Err(invalid_trace_content());
+        }
+        Ok(())
     }
 
     async fn upstream_peer(
