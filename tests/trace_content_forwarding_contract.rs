@@ -205,3 +205,91 @@ fn trace_content_is_rejected_locally_before_origin_contact() {
     #[cfg(unix)]
     process.assert_graceful_shutdown();
 }
+
+#[test]
+fn streamed_trace_content_is_rejected_before_any_body_octet_reaches_origin() {
+    let upstream = TcpListener::bind("127.0.0.1:0").expect("fixture upstream should bind");
+    let upstream_address = upstream
+        .local_addr()
+        .expect("fixture upstream should expose its address");
+    upstream
+        .set_nonblocking(true)
+        .expect("fixture upstream should support bounded contact observation");
+    let origin = thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            match upstream.accept() {
+                Ok((mut stream, _peer)) => {
+                    stream
+                        .set_read_timeout(Some(Duration::from_millis(500)))
+                        .expect("origin read timeout should be configurable");
+                    let mut observed = Vec::new();
+                    let mut buffer = [0_u8; 4096];
+                    loop {
+                        match stream.read(&mut buffer) {
+                            Ok(0) => break,
+                            Ok(read) => observed.extend_from_slice(&buffer[..read]),
+                            Err(error)
+                                if matches!(
+                                    error.kind(),
+                                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                                ) =>
+                            {
+                                break;
+                            }
+                            Err(error) => panic!("origin request observation failed: {error}"),
+                        }
+                    }
+                    return Some(observed);
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    if Instant::now() >= deadline {
+                        return None;
+                    }
+                    thread::sleep(Duration::from_millis(10));
+                }
+                Err(error) => panic!("origin contact observation failed: {error}"),
+            }
+        }
+    });
+
+    let (traffic_reservation, gateway_address) = reserve_loopback();
+    let (metrics_reservation, metrics_address) = reserve_loopback();
+    let config = write_config(gateway_address, metrics_address, upstream_address);
+
+    drop(traffic_reservation);
+    drop(metrics_reservation);
+    let child = Command::new(env!("CARGO_BIN_EXE_cwl-pingora-gateway"))
+        .args(["--config", config.path().to_str().expect("UTF-8 temp path")])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("compiled gateway binary should start");
+    let mut process = GatewayProcess(child);
+    wait_until_ready(gateway_address, &mut process.0);
+
+    let response = raw_request(
+        gateway_address,
+        b"TRACE /streamed HTTP/1.1\r\nHost: gateway.test\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n1\r\nx\r\n0\r\n\r\n",
+    );
+    assert!(
+        response.starts_with("HTTP/1.1 400"),
+        "streamed TRACE content must fail closed at the gateway: {response:?}"
+    );
+
+    if let Some(observed) = origin.join().expect("origin observer should terminate") {
+        let body = observed
+            .windows(4)
+            .position(|window| window == b"\r\n\r\n")
+            .map(|index| &observed[index + 4..])
+            .unwrap_or_default();
+        assert!(
+            body.is_empty(),
+            "TRACE request content must not be emitted to the origin: {observed:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    process.assert_graceful_shutdown();
+}
