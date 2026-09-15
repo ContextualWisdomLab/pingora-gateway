@@ -22,8 +22,11 @@ pub enum RequestOutcome {
 /// Payload-free observation produced at the end of a downstream request lifecycle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RequestObservation {
+    /// Downstream status code, or zero when no response header reached the client.
     status: u16,
+    /// Binary transport outcome deliberately independent from product-domain status taxonomy.
     outcome: RequestOutcome,
+    /// Request-body bytes observed before completion or fail-closed rejection.
     request_body_bytes: u64,
 }
 
@@ -56,6 +59,7 @@ impl RequestObservation {
         self.request_body_bytes
     }
 
+    /// Emits only bounded counters and a payload-free structured log line for this request.
     fn record(self) {
         REQUESTS_TOTAL.inc();
         REQUEST_BODY_BYTES_TOTAL.inc_by(self.request_body_bytes);
@@ -74,11 +78,13 @@ impl RequestObservation {
     }
 }
 
+/// Registers one process-global counter and fails startup/test execution on duplicate identity.
 fn register_counter(name: &'static str, help: &'static str) -> IntCounter {
     register_int_counter!(name, help)
         .unwrap_or_else(|error| panic!("gateway metric {name} must register exactly once: {error}"))
 }
 
+/// Counts every completed downstream request without labels that could expose tenant or payload data.
 static REQUESTS_TOTAL: LazyLock<IntCounter> = LazyLock::new(|| {
     register_counter(
         "cwl_pingora_gateway_requests_total",
@@ -86,6 +92,7 @@ static REQUESTS_TOTAL: LazyLock<IntCounter> = LazyLock::new(|| {
     )
 });
 
+/// Counts requests whose Pingora lifecycle completed with an error, again without dynamic labels.
 static REQUEST_ERRORS_TOTAL: LazyLock<IntCounter> = LazyLock::new(|| {
     register_counter(
         "cwl_pingora_gateway_request_errors_total",
@@ -93,6 +100,7 @@ static REQUEST_ERRORS_TOTAL: LazyLock<IntCounter> = LazyLock::new(|| {
     )
 });
 
+/// Accumulates observed request-body bytes as a single low-cardinality process counter.
 static REQUEST_BODY_BYTES_TOTAL: LazyLock<IntCounter> = LazyLock::new(|| {
     register_counter(
         "cwl_pingora_gateway_request_body_bytes_total",
@@ -100,6 +108,7 @@ static REQUEST_BODY_BYTES_TOTAL: LazyLock<IntCounter> = LazyLock::new(|| {
     )
 });
 
+/// Counts fail-closed application admissions rejected by the configured in-flight budget.
 static BACKPRESSURE_REJECTIONS_TOTAL: LazyLock<IntCounter> = LazyLock::new(|| {
     register_counter(
         "cwl_pingora_gateway_backpressure_rejections_total",
@@ -107,6 +116,7 @@ static BACKPRESSURE_REJECTIONS_TOTAL: LazyLock<IntCounter> = LazyLock::new(|| {
     )
 });
 
+/// Derives and records one payload-free request observation from Pingora completion state.
 pub(crate) fn record_request(session: &Session, error: Option<&Error>, request_body_bytes: u64) {
     let status = session
         .response_written()
@@ -114,6 +124,7 @@ pub(crate) fn record_request(session: &Session, error: Option<&Error>, request_b
     RequestObservation::from_parts(status, error.is_some(), request_body_bytes).record();
 }
 
+/// Records one capacity rejection without attaching request, route, tenant, or payload labels.
 pub(crate) fn record_backpressure_rejection() {
     BACKPRESSURE_REJECTIONS_TOTAL.inc();
 }
