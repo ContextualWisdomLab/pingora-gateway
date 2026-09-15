@@ -252,7 +252,9 @@ fn apply_max_forwards_before_forward(request: &mut RequestHeader) -> pingora::Re
     match max_forwards_action(request)? {
         MaxForwardsAction::Ignore => Ok(()),
         MaxForwardsAction::Forward(value) => {
-            request.insert_header("Max-Forwards", value.to_string())?;
+            request
+                .insert_header("Max-Forwards", value.to_string())
+                .expect("bounded decimal Max-Forwards must be a valid HTTP field value");
             Ok(())
         }
         MaxForwardsAction::FinalRecipient => Err(Error::explain(
@@ -304,14 +306,22 @@ fn sanitize_forwarding_headers(
     for header in &x_forwarded_headers {
         upstream_request.remove_header(header);
     }
-    upstream_request.insert_header("Forwarded", "proto=http")?;
-    upstream_request.append_header("Via", gateway_via_value(downstream_version)?)?;
+    upstream_request
+        .insert_header("Forwarded", "proto=http")
+        .expect("literal gateway Forwarded field must be valid");
+    let via = gateway_via_value(downstream_version)?;
+    upstream_request
+        .append_header("Via", via)
+        .expect("validated static gateway Via field must be valid");
     Ok(())
 }
 
 /// Appends this intermediary to a forwarded upstream response without rewriting the received chain.
 fn append_response_via(upstream_response: &mut ResponseHeader) -> pingora::Result<()> {
-    upstream_response.append_header("Via", gateway_via_value(upstream_response.version)?)?;
+    let via = gateway_via_value(upstream_response.version)?;
+    upstream_response
+        .append_header("Via", via)
+        .expect("validated static gateway Via field must be valid");
     Ok(())
 }
 
@@ -539,6 +549,19 @@ mod tests {
     }
 
     #[test]
+    fn malformed_max_forwards_cannot_reach_upstream_rewrite() {
+        let mut request =
+            RequestHeader::build("TRACE", b"/", None).expect("fixture request must be valid");
+        request
+            .insert_header("Max-Forwards", "1x")
+            .expect("fixture header bytes must be valid");
+
+        let error = apply_max_forwards_before_forward(&mut request)
+            .expect_err("malformed Max-Forwards must fail before upstream rewrite");
+        assert_eq!(error.etype, ErrorType::HTTPStatus(400));
+    }
+
+    #[test]
     fn huge_valid_max_forwards_is_capped_to_gateway_supported_value() {
         let mut request =
             RequestHeader::build("TRACE", b"/", None).expect("fixture request must be valid");
@@ -606,7 +629,11 @@ mod tests {
     }
 
     #[test]
-    fn via_mapping_supports_http3_and_rejects_http09() {
+    fn via_mapping_covers_http2_http3_and_rejects_http09() {
+        assert_eq!(
+            gateway_via_value(Version::HTTP_2).expect("HTTP/2 Via token must be supported"),
+            "2 cwl-pingora-gateway"
+        );
         assert_eq!(
             gateway_via_value(Version::HTTP_3).expect("HTTP/3 Via token must be supported"),
             "3 cwl-pingora-gateway"
@@ -615,6 +642,22 @@ mod tests {
         let error = gateway_via_value(Version::HTTP_09)
             .expect_err("HTTP/0.9 has no supported Via token in this gateway");
         assert_eq!(error.etype, ErrorType::InvalidHTTPHeader);
+    }
+
+    #[test]
+    fn via_adapters_propagate_unsupported_protocols() {
+        let mut request =
+            RequestHeader::build("GET", b"/", None).expect("fixture request must be valid");
+        let request_error = sanitize_forwarding_headers(&mut request, Version::HTTP_09)
+            .expect_err("unsupported downstream protocol must fail before appending Via");
+        assert_eq!(request_error.etype, ErrorType::InvalidHTTPHeader);
+
+        let mut response =
+            ResponseHeader::build(200, None).expect("fixture response must be valid");
+        response.set_version(Version::HTTP_09);
+        let response_error = append_response_via(&mut response)
+            .expect_err("unsupported upstream protocol must fail before appending Via");
+        assert_eq!(response_error.etype, ErrorType::InvalidHTTPHeader);
     }
 
     #[test]
