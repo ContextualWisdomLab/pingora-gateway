@@ -350,12 +350,13 @@ fn header_values<'a>(headers: &'a str, name: &str) -> Vec<&'a str> {
         .collect()
 }
 
-/// Requires a complete Prometheus sample line so numeric-prefix values cannot
-/// manufacture the expected exact counter sample.
+/// Requires exactly one complete Prometheus sample line so duplicate or
+/// numeric-prefix values cannot manufacture the expected counter evidence.
 fn contains_exact_metric_sample(metrics: &str, sample: &str) -> bool {
-    metrics
+    let mut exact = metrics
         .lines()
-        .any(|line| line.trim_end_matches('\r') == sample)
+        .filter(|line| line.trim_end_matches('\r') == sample);
+    exact.next().is_some() && exact.next().is_none()
 }
 
 /// Waits until Linux reports no response bytes outstanding in the origin TCP
