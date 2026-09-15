@@ -21,7 +21,10 @@ impl GatewayProcess {
             .args(["-TERM", pid.as_str()])
             .status()
             .expect("SIGTERM command should execute");
-        assert!(signal.success(), "SIGTERM should be delivered to gateway child");
+        assert!(
+            signal.success(),
+            "SIGTERM should be delivered to gateway child"
+        );
 
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
@@ -132,7 +135,9 @@ fn ipvfuture_suffix_character_classes_are_enforced_through_forwarding_boundary()
         &invalid,
         DownstreamScheme::Https,
     )
-    .expect_err("IPvFuture suffix must reject characters outside unreserved, sub-delims, and colon");
+    .expect_err(
+        "IPvFuture suffix must reject characters outside unreserved, sub-delims, and colon",
+    );
     assert_eq!(error.etype, ErrorType::HTTPStatus(400));
 }
 
