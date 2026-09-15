@@ -158,7 +158,9 @@ fn trace_content_is_rejected_locally_before_origin_contact() {
                     let mut request = [0_u8; 4096];
                     let _ = stream.read(&mut request);
                     stream
-                        .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                        .write_all(
+                            b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                        )
                         .expect("diagnostic origin response should be writable");
                     return true;
                 }
