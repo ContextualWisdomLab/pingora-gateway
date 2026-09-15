@@ -16,6 +16,7 @@ use cwl_pingora_gateway::startup::GatewayCommand;
 use pingora::prelude::{http_proxy_service, Server};
 use pingora::server::RunArgs;
 
+/// Validates explicit startup authority before constructing listeners and entering Pingora's drain-aware run loop.
 fn main() -> ExitCode {
     env_logger::init();
 
@@ -54,6 +55,7 @@ fn main() -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// Emits one bounded startup diagnostic and returns the stable configuration/startup failure code.
 fn exit_with_error(error: impl Display) -> ExitCode {
     eprintln!("{error}");
     ExitCode::from(2)
