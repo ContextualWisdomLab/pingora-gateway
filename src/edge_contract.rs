@@ -113,6 +113,12 @@ pub enum GatewayConfigError {
         /// Stable upstream whose transport binding used port zero.
         upstream_name: String,
     },
+    /// A wildcard bind address is not a concrete remote network authority.
+    #[error("upstream {upstream_name} must use a concrete IP address, not an unspecified wildcard")]
+    UnspecifiedUpstreamAddress {
+        /// Stable upstream whose address was `0.0.0.0` or `::`.
+        upstream_name: String,
+    },
     /// A zero request-body limit would reject every body and is almost certainly misconfiguration.
     #[error("max_request_body_bytes must be greater than zero")]
     InvalidRequestBodyLimit,
@@ -311,6 +317,11 @@ impl UpstreamConfig {
         }
         if self.address.port() == 0 {
             return Err(GatewayConfigError::ZeroUpstreamPort {
+                upstream_name: normalized_name.to_string(),
+            });
+        }
+        if self.address.ip().is_unspecified() {
+            return Err(GatewayConfigError::UnspecifiedUpstreamAddress {
                 upstream_name: normalized_name.to_string(),
             });
         }
