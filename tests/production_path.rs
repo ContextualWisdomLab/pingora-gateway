@@ -103,6 +103,19 @@ fn exact_http_1_1_status_code(response: &str) -> Option<u16> {
     status.parse().ok()
 }
 
+/// Requires exactly one Cache-Control field and an exact no-store value for readiness identity.
+fn has_exact_no_store_cache_control(headers: &str) -> bool {
+    let mut values = headers.lines().filter_map(|line| {
+        let (name, value) = line.split_once(':')?;
+        name.eq_ignore_ascii_case("cache-control")
+            .then_some(value.trim())
+    });
+    matches!(
+        (values.next(), values.next()),
+        (Some(value), None) if value.eq_ignore_ascii_case("no-store")
+    )
+}
+
 fn probe_readyz(address: SocketAddr, deadline: Instant) -> bool {
     let Some(connect_timeout) = bounded_timeout(deadline, Duration::from_millis(100)) else {
         return false;
@@ -150,13 +163,7 @@ fn probe_readyz(address: SocketAddr, deadline: Instant) -> bool {
                 if exact_http_1_1_status_code(&headers) != Some(200) {
                     return false;
                 }
-                return headers.lines().any(|line| {
-                    let Some((name, value)) = line.split_once(':') else {
-                        return false;
-                    };
-                    name.eq_ignore_ascii_case("cache-control")
-                        && value.trim().eq_ignore_ascii_case("no-store")
-                });
+                return has_exact_no_store_cache_control(&headers);
             }
             Err(_) => return false,
         }
