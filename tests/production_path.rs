@@ -549,3 +549,50 @@ fn upstream_connection_failure_is_bounded_and_does_not_poison_readiness() {
 
     terminate_gateway(&mut process.0);
 }
+
+/// Rejects status-code prefix lookalikes in the application-readiness identity oracle.
+#[test]
+fn readiness_probe_rejects_http_2000_status_lookalike() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("readiness fixture should bind");
+    let address = listener.local_addr().expect("readiness fixture address");
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("probe should connect");
+        let mut request = [0_u8; 1024];
+        let _ = stream.read(&mut request).expect("probe request should be readable");
+        stream
+            .write_all(b"HTTP/1.1 2000 Not-Ready\r\nCache-Control: no-store\r\n\r\n")
+            .expect("lookalike response should be writable");
+    });
+
+    assert!(
+        !probe_readyz(address),
+        "numeric-prefix status must not manufacture readiness"
+    );
+    server.join().expect("readiness fixture should complete");
+}
+
+/// Rejects slow-drip headers that keep each socket read alive but exceed one bounded probe budget.
+#[test]
+fn readiness_probe_cannot_outlive_a_bounded_slow_header_drip() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("slow readiness fixture should bind");
+    let address = listener.local_addr().expect("slow readiness fixture address");
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("probe should connect");
+        let mut request = [0_u8; 1024];
+        let _ = stream.read(&mut request).expect("probe request should be readable");
+        for byte in b"HTTP/1.1 200 OK\r\nCache-Control: no-store\r\n" {
+            if stream.write_all(&[*byte]).is_err() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+    });
+
+    let started = Instant::now();
+    assert!(!probe_readyz(address), "incomplete headers must not admit readiness");
+    assert!(
+        started.elapsed() < Duration::from_millis(700),
+        "one readiness probe must not be extended indefinitely by slow header progress"
+    );
+    server.join().expect("slow readiness fixture should complete");
+}
