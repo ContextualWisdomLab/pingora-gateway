@@ -15,6 +15,30 @@ struct GatewayProcess(Child);
 
 impl Drop for GatewayProcess {
     fn drop(&mut self) {
+        #[cfg(unix)]
+        {
+            // Pingora handles SIGTERM through its graceful shutdown path. Give the process a bounded
+            // chance to return from `Server::run()` so LLVM coverage/profile state is flushed; only
+            // fall back to SIGKILL if the process fails to drain.
+            let pid = self.0.id().to_string();
+            if Command::new("kill")
+                .args(["-TERM", pid.as_str()])
+                .status()
+                .is_ok()
+            {
+                let deadline = Instant::now() + Duration::from_secs(5);
+                loop {
+                    match self.0.try_wait() {
+                        Ok(Some(_)) => return,
+                        Ok(None) if Instant::now() < deadline => {
+                            thread::sleep(Duration::from_millis(25));
+                        }
+                        Ok(None) | Err(_) => break,
+                    }
+                }
+            }
+        }
+
         let _ = self.0.kill();
         let _ = self.0.wait();
     }
@@ -44,6 +68,31 @@ fn incomplete_ipvfuture_and_empty_reg_name_fail_closed_through_forwarding_bounda
         .expect_err("malformed Host authority must fail before becoming forwarding identity");
         assert_eq!(error.etype, ErrorType::HTTPStatus(400), "{authority}");
     }
+}
+
+#[test]
+fn ipvfuture_suffix_character_classes_are_enforced_through_forwarding_boundary() {
+    let client = PingoraSocketAddr::from(SocketAddr::from((Ipv4Addr::LOCALHOST, 49152)));
+    let valid = request_with_host("[vF.a:b!c]:9443");
+    let context = ForwardingContext::from_downstream_transport(
+        Some(&client),
+        &valid,
+        &valid,
+        DownstreamScheme::Https,
+    )
+    .expect("IPvFuture suffix may contain RFC 3986 sub-delims and colon");
+    assert_eq!(context.original_host, "[vF.a:b!c]:9443");
+    assert_eq!(context.downstream_port, 9443);
+
+    let invalid = request_with_host("[vF.a/b]:9443");
+    let error = ForwardingContext::from_downstream_transport(
+        Some(&client),
+        &invalid,
+        &invalid,
+        DownstreamScheme::Https,
+    )
+    .expect_err("IPvFuture suffix must reject characters outside unreserved, sub-delims, and colon");
+    assert_eq!(error.etype, ErrorType::HTTPStatus(400));
 }
 
 fn reserve_loopback() -> (TcpListener, SocketAddr) {
