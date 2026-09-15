@@ -33,6 +33,7 @@ All notable changes are tracked here. No release has been published yet.
 - Added an executable local-CA TLS test through the compiled gateway that holds CA trust constant and proves SNI/hostname mismatch is rejected.
 - Added a focused transport-adapter regression proving an upstream without a custom trust bundle leaves Pingora's platform trust roots selected rather than replacing the CA store.
 - Added fail-closed binary startup and real loopback production-path tests, including held-request saturation/recovery at an in-flight budget of one.
+- Hardened the generic compiled production-path fixture after instrumented coverage exposed an ephemeral-port/readiness race: traffic and metrics loopback sockets now remain reserved through config construction and are released only at child-bind handoff, and traffic startup requires a bounded application-level `/readyz` HTTP/1.1 200 carrying `Cache-Control: no-store` rather than a bare TCP accept. This prevents a sibling test or recycled loopback port from manufacturing readiness evidence without changing production gateway semantics.
 - Added `/livez` and `/readyz` through the Pingora serving path.
 - Added request-body limits and a distrust-by-default forwarded-header policy.
 - Added low-cardinality metrics plus credential/cookie-safe access logging through the production path.
