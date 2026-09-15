@@ -176,7 +176,10 @@ fn append_migration_request_via(
     upstream_request: &mut RequestHeader,
     downstream_version: Version,
 ) -> pingora::Result<()> {
-    upstream_request.append_header("Via", migration_gateway_via_value(downstream_version)?)?;
+    let via = migration_gateway_via_value(downstream_version)?;
+    upstream_request
+        .append_header("Via", via)
+        .expect("validated static migration Via field must be valid");
     Ok(())
 }
 
@@ -431,6 +434,15 @@ mod tests {
         );
         let error = migration_gateway_via_value(Version::HTTP_09)
             .expect_err("HTTP/0.9 has no supported Via token in the migration gateway");
+        assert_eq!(error.etype, ErrorType::InvalidHTTPHeader);
+    }
+
+    #[test]
+    fn migration_via_adapter_propagates_unsupported_protocol() {
+        let mut request =
+            RequestHeader::build("GET", b"/", None).expect("fixture request must be valid");
+        let error = append_migration_request_via(&mut request, Version::HTTP_09)
+            .expect_err("unsupported downstream protocol must fail before appending migration Via");
         assert_eq!(error.etype, ErrorType::InvalidHTTPHeader);
     }
 
