@@ -100,6 +100,7 @@ fn non_host_uri_syntax_is_rejected_before_becoming_forwarded_authority() {
         "user@app.example",
         "app.example/path",
         "app.example?query",
+        "app.example:+80",
         "app%2.example",
         "%zz.example",
         "[not-an-ip]",
