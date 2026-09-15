@@ -24,19 +24,26 @@ pub const LIVENESS_PATH: &str = "/livez";
 /// Stable readiness endpoint reached through the production Pingora serving path.
 pub const READINESS_PATH: &str = "/readyz";
 
+/// Largest forwarded hop budget emitted by this intermediary after decrementing a valid value.
 const MAX_SUPPORTED_MAX_FORWARDS: u32 = 255;
 
+/// Parsed RFC 9110 Max-Forwards decision made before any upstream request mutation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MaxForwardsAction {
+    /// The method is outside TRACE/OPTIONS or carries no hop-control field.
     Ignore,
+    /// A zero hop budget makes this gateway the final recipient and forbids another proxy hop.
     FinalRecipient,
+    /// Forward after replacing the field with this already decremented and locally capped value.
     Forward(u32),
 }
 
 /// Per-request delivery state. Product domain state does not belong here.
 #[derive(Debug)]
 pub struct RequestContext {
+    /// Per-request declared/streamed body budget inherited from validated runtime limits.
     request_body: RequestBodyBudget,
+    /// RAII application-admission lease retained for the complete admitted request lifetime.
     admission: Option<RequestAdmission>,
 }
 
@@ -67,8 +74,11 @@ pub enum GatewayProxyError {
 /// Pingora HTTP application backed by one explicitly configured upstream.
 #[derive(Debug, Clone)]
 pub struct GatewayProxy {
+    /// Immutable prevalidated single-upstream transport authority for generic version 1.
     upstream_peer: HttpPeer,
+    /// Validated request-body and concurrent-request limits shared by each new request context.
     limits: RuntimeIsolationLimits,
+    /// Process-wide lock-free capacity budget cloned by Pingora workers but counted once.
     admission_budget: RequestAdmissionBudget,
 }
 
@@ -217,7 +227,6 @@ fn max_forwards_action(request: &RequestHeader) -> pingora::Result<MaxForwardsAc
     if !matches!(request.method.as_str(), "TRACE" | "OPTIONS") {
         return Ok(MaxForwardsAction::Ignore);
     }
-
     let mut values = request.headers.get_all("max-forwards").iter();
     let Some(value) = values.next() else {
         return Ok(MaxForwardsAction::Ignore);
