@@ -633,3 +633,27 @@ fn readiness_probe_cannot_outlive_a_bounded_slow_header_drip() {
     );
     server.join().expect("slow readiness fixture should complete");
 }
+
+/// Rejects conflicting duplicate Cache-Control fields that could otherwise spoof readiness identity.
+#[test]
+fn readiness_probe_rejects_conflicting_duplicate_cache_control() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("readiness fixture should bind");
+    let address = listener.local_addr().expect("readiness fixture address");
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("probe should connect");
+        let mut request = [0_u8; 1024];
+        let _ = stream.read(&mut request).expect("probe request should be readable");
+        stream
+            .write_all(
+                b"HTTP/1.1 200 OK\r\nCache-Control: private\r\nCache-Control: no-store\r\n\r\n",
+            )
+            .expect("conflicting readiness response should be writable");
+    });
+
+    let deadline = Instant::now() + Duration::from_secs(1);
+    assert!(
+        !probe_readyz(address, deadline),
+        "a conflicting duplicate Cache-Control field must not manufacture readiness"
+    );
+    server.join().expect("readiness fixture should complete");
+}
