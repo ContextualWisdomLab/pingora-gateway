@@ -597,7 +597,9 @@ fn readiness_probe_rejects_http_2000_status_lookalike() {
     let server = thread::spawn(move || {
         let (mut stream, _) = listener.accept().expect("probe should connect");
         let mut request = [0_u8; 1024];
-        let _ = stream.read(&mut request).expect("probe request should be readable");
+        let _ = stream
+            .read(&mut request)
+            .expect("probe request should be readable");
         stream
             .write_all(b"HTTP/1.1 2000 Not-Ready\r\nCache-Control: no-store\r\n\r\n")
             .expect("lookalike response should be writable");
@@ -615,11 +617,15 @@ fn readiness_probe_rejects_http_2000_status_lookalike() {
 #[test]
 fn readiness_probe_cannot_outlive_a_bounded_slow_header_drip() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("slow readiness fixture should bind");
-    let address = listener.local_addr().expect("slow readiness fixture address");
+    let address = listener
+        .local_addr()
+        .expect("slow readiness fixture address");
     let server = thread::spawn(move || {
         let (mut stream, _) = listener.accept().expect("probe should connect");
         let mut request = [0_u8; 1024];
-        let _ = stream.read(&mut request).expect("probe request should be readable");
+        let _ = stream
+            .read(&mut request)
+            .expect("probe request should be readable");
         for byte in b"HTTP/1.1 200 OK\r\nCache-Control: no-store\r\n" {
             if stream.write_all(&[*byte]).is_err() {
                 break;
@@ -638,7 +644,9 @@ fn readiness_probe_cannot_outlive_a_bounded_slow_header_drip() {
         started.elapsed() < Duration::from_millis(700),
         "one readiness probe must not be extended indefinitely by slow header progress"
     );
-    server.join().expect("slow readiness fixture should complete");
+    server
+        .join()
+        .expect("slow readiness fixture should complete");
 }
 
 /// Rejects conflicting duplicate Cache-Control fields that could otherwise spoof readiness identity.
@@ -649,7 +657,9 @@ fn readiness_probe_rejects_conflicting_duplicate_cache_control() {
     let server = thread::spawn(move || {
         let (mut stream, _) = listener.accept().expect("probe should connect");
         let mut request = [0_u8; 1024];
-        let _ = stream.read(&mut request).expect("probe request should be readable");
+        let _ = stream
+            .read(&mut request)
+            .expect("probe request should be readable");
         stream
             .write_all(
                 b"HTTP/1.1 200 OK\r\nCache-Control: private\r\nCache-Control: no-store\r\n\r\n",
