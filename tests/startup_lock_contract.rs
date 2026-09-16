@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 const STARTUP_LOCK_FILE: &str = "cwl-pingora-gateway-test-startup-v2.lock";
 const CHILD_LOCK_PATH: &str = "CWL_STARTUP_LOCK_CHILD_PATH";
 const CHILD_READY_PATH: &str = "CWL_STARTUP_LOCK_CHILD_READY_PATH";
+const CHILD_TERMINATE_PATH: &str = "CWL_STARTUP_LOCK_CHILD_TERMINATE_PATH";
 
 fn open_lock_file(path: &Path) -> File {
     OpenOptions::new()
@@ -65,6 +66,7 @@ fn abrupt_owner_process_exit_releases_lock_without_stale_lease_waiting() {
     let tempdir = tempfile::tempdir().expect("create process-exit tempdir");
     let lock_path = tempdir.path().join("startup.lock");
     let ready_path = tempdir.path().join("owner.ready");
+    let terminate_path = tempdir.path().join("owner.terminate");
     let executable = env::current_exe().expect("resolve current integration-test executable");
     let mut child = Command::new(executable)
         .arg("--exact")
@@ -72,6 +74,7 @@ fn abrupt_owner_process_exit_releases_lock_without_stale_lease_waiting() {
         .arg("--nocapture")
         .env(CHILD_LOCK_PATH, &lock_path)
         .env(CHILD_READY_PATH, &ready_path)
+        .env(CHILD_TERMINATE_PATH, &terminate_path)
         .spawn()
         .expect("spawn startup-lock child process");
 
@@ -92,6 +95,7 @@ fn abrupt_owner_process_exit_releases_lock_without_stale_lease_waiting() {
         contender.try_lock(),
         Err(TryLockError::WouldBlock)
     ));
+    fs::write(&terminate_path, b"exit").expect("signal startup-lock child termination");
 
     let status = child.wait().expect("wait for startup-lock child exit");
     assert!(status.success(), "startup-lock child failed: {status}");
@@ -141,9 +145,19 @@ fn startup_lock_child_exits_without_drop() {
         return;
     };
     let ready_path = env::var_os(CHILD_READY_PATH).expect("child ready path must be configured");
+    let terminate_path =
+        env::var_os(CHILD_TERMINATE_PATH).expect("child termination path must be configured");
     let _lock = support::StartupLock::acquire_at(Path::new(&lock_path), Duration::from_secs(5));
     fs::write(Path::new(&ready_path), b"locked").expect("signal child lock ownership");
-    thread::sleep(Duration::from_millis(250));
+
+    let terminate_deadline = Instant::now() + Duration::from_secs(5);
+    while !Path::new(&terminate_path).exists() {
+        assert!(
+            Instant::now() < terminate_deadline,
+            "timed out waiting for startup-lock child termination signal"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
 
     process::exit(0);
 }
