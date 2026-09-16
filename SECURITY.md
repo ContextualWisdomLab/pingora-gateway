@@ -10,11 +10,13 @@ HTTPS upstreams use certificate and hostname verification with an explicit SNI. 
 
 Inbound forwarding identity is deleted before proxying. V1 emits only `Forwarded: proto=http`; it deliberately does not claim a client IP. A future trusted-proxy feature must define allowed proxy CIDRs/hops and RFC 7239 semantics as a versioned contract with spoofing tests.
 
-Request bodies and upstream connect/read/write/idle time are bounded. The Pingora HTTP parser has finite protocol/header limits, but a smaller configurable header budget and an explicit concurrency/backpressure budget remain documented gaps.
+Request bodies, process-wide in-flight request concurrency, and upstream connect/read/write/idle time are bounded. The Pingora HTTP parser has finite protocol/header limits, but a smaller configurable header budget and explicit connection/queue admission budgets beyond the current in-flight limit remain documented gaps.
 
 ## Logging and data minimization
 
-The production path emits coarse status/outcome/request-body-byte access logs and label-free Prometheus request/error/body-byte counters. It does not log Authorization, Proxy-Authorization, Cookie, Set-Cookie, request/response bodies, access tokens, configuration credentials, arbitrary headers, route values, trust-bundle contents, or other unbounded request-derived labels. Distributed tracing and richer bounded operability evidence remain release gaps.
+CWL-owned access logs emit coarse status/outcome/request-body-byte data and label-free Prometheus request/error/body-byte counters. The gateway callbacks do not intentionally log Authorization, Proxy-Authorization, Cookie, Set-Cookie, request/response bodies, access tokens, configuration credentials, arbitrary headers, route values, trust-bundle contents, or other unbounded request-derived labels.
+
+Dependency diagnostics remain a separate unresolved boundary: the current composition root uses `env_logger::init()`, so an operator-wide `RUST_LOG=trace` can enable Pingora dependency TRACE output that includes raw request-header material before CWL callbacks. The payload-safe logging policy is owned by #31 and must be integrated or fully carried by a verified successor before promotion. Distributed tracing and richer bounded operability evidence also remain release gaps.
 
 ## Supply chain
 
