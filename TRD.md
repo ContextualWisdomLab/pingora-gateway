@@ -6,7 +6,7 @@ Rust edition 2021, minimum Rust `1.97.1`. The Pingora dependency is pinned to an
 
 ## Contract
 
-Configuration version 1 is YAML with `deny_unknown_fields`. Required top-level fields are `version`, `listener`, `max_request_body_bytes`, and `upstreams`. Exactly one upstream is accepted. Each upstream has `name`, `address`, `tls`, optional `sni`, and explicit positive timeout budgets.
+Configuration version 1 is YAML with `deny_unknown_fields`. Required top-level fields are `version`, `listener`, `metrics_listener`, `max_request_body_bytes`, `max_in_flight_requests`, `upstream_keepalive_pool_size`, and `upstreams`. Exactly one upstream is accepted. Each upstream has `name`, `address`, `tls`, optional `sni`, and explicit positive timeout budgets.
 
 TLS upstreams require SNI. The Pingora `HttpPeer` enables certificate verification and hostname verification. Cleartext upstreams must not carry an SNI value. No request may choose an upstream dynamically.
 
