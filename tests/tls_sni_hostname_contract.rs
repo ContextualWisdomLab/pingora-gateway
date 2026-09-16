@@ -24,7 +24,13 @@ fn tls_upstream(sni: &str) -> UpstreamConfig {
 #[test]
 fn tls_sni_must_be_an_rfc_6066_dns_hostname() {
     let overlong_label = format!("{}.example", "a".repeat(64));
-    let overlong_name = ["a".repeat(63), "b".repeat(63), "c".repeat(63), "d".repeat(63)].join(".");
+    let overlong_name = [
+        "a".repeat(63),
+        "b".repeat(63),
+        "c".repeat(63),
+        "d".repeat(63),
+    ]
+    .join(".");
     let invalid_snis = vec![
         "127.0.0.1".to_string(),
         "2001:db8::1".to_string(),
@@ -52,12 +58,24 @@ fn tls_sni_must_be_an_rfc_6066_dns_hostname() {
 
 #[test]
 fn tls_sni_admits_ascii_dns_and_idna_a_labels() {
-    for valid_sni in [
-        "api.internal.example",
-        "api-1.internal.example",
-        "xn--bcher-kva.example",
-    ] {
-        tls_upstream(valid_sni)
+    let max_length_name = [
+        "a".repeat(63),
+        "b".repeat(63),
+        "c".repeat(63),
+        "d".repeat(61),
+    ]
+    .join(".");
+    let valid_snis = vec![
+        "api.internal.example".to_string(),
+        "API.INTERNAL.EXAMPLE".to_string(),
+        "api-1.internal.example".to_string(),
+        "xn--bcher-kva.example".to_string(),
+        format!("{}.example", "a".repeat(63)),
+        max_length_name,
+    ];
+
+    for valid_sni in valid_snis {
+        tls_upstream(&valid_sni)
             .validate()
             .unwrap_or_else(|error| panic!("valid RFC 6066 HostName {valid_sni:?}: {error}"));
     }
