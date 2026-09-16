@@ -164,6 +164,12 @@ pub enum GatewayConfigError {
         /// Upstream whose TLS identity is incomplete.
         upstream_name: String,
     },
+    /// SNI must be an RFC 6066 ASCII DNS HostName, not an IP literal or malformed DNS label set.
+    #[error("TLS upstream {upstream_name} has an invalid RFC 6066 SNI DNS hostname")]
+    InvalidTlsServerName {
+        /// Upstream whose configured SNI is not a valid TLS HostName.
+        upstream_name: String,
+    },
     /// Cleartext upstreams must not carry an unused TLS identity.
     #[error("cleartext upstream {upstream_name} must not define an SNI server name")]
     UnexpectedTlsServerName {
@@ -314,6 +320,37 @@ pub(crate) fn validate_upstream_authority_separation(
     Ok(())
 }
 
+/// Returns whether an operator-supplied TLS server name is safe to serialize as RFC 6066 HostName.
+///
+/// SNI `host_name` carries an ASCII DNS hostname without a trailing root dot; literal IP addresses
+/// are a different TLS reference-identifier class and are not representable through this field.
+/// DNS labels use the conservative host-name LDH form, which also admits IDNA A-labels.
+fn valid_tls_sni_hostname(server_name: &str) -> bool {
+    if server_name.len() > 253
+        || !server_name.is_ascii()
+        || server_name.ends_with('.')
+        || server_name.parse::<IpAddr>().is_ok()
+    {
+        return false;
+    }
+
+    server_name.split('.').all(|label| {
+        !label.is_empty()
+            && label.len() <= 63
+            && label
+                .as_bytes()
+                .first()
+                .is_some_and(|byte| byte.is_ascii_alphanumeric())
+            && label
+                .as_bytes()
+                .last()
+                .is_some_and(|byte| byte.is_ascii_alphanumeric())
+            && label
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+    })
+}
+
 impl UpstreamConfig {
     /// Validates the invariants required before this upstream can become network authority.
     pub fn validate(&self) -> Result<(), GatewayConfigError> {
@@ -351,6 +388,11 @@ impl UpstreamConfig {
             }
             (true, Some(server_name)) if server_name.trim().is_empty() => {
                 return Err(GatewayConfigError::EmptyTlsServerName {
+                    upstream_name: normalized_name.to_string(),
+                });
+            }
+            (true, Some(server_name)) if !valid_tls_sni_hostname(server_name) => {
+                return Err(GatewayConfigError::InvalidTlsServerName {
                     upstream_name: normalized_name.to_string(),
                 });
             }
