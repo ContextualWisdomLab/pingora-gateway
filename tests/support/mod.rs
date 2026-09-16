@@ -6,7 +6,7 @@
 
 use std::fs;
 use std::io::ErrorKind;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
@@ -55,7 +55,7 @@ impl Drop for StartupLock {
     }
 }
 
-fn lock_is_stale(path: &PathBuf) -> bool {
+fn lock_is_stale(path: &Path) -> bool {
     let Ok(metadata) = fs::metadata(path) else {
         return false;
     };
