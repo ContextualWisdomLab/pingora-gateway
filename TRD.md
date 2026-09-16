@@ -2,7 +2,7 @@
 
 ## Runtime
 
-Rust edition 2021, minimum Rust `1.97.1`. The Pingora dependency is pinned to an exact upstream Git revision. The production composition root is `src/bin/cwl-pingora-gateway.rs`; it parses `--config`, validates the contract, constructs `GatewayProxy`, adds a TCP listener to `http_proxy_service`, and enters Pingora lifecycle handling with `server.run(RunArgs::default())`. The binary deliberately returns `ExitCode::SUCCESS` after `run()` rather than invoking `Server::run_forever()`, preserving the same drain path without the latter's final `process::exit(0)`.
+Rust edition 2021, minimum Rust `1.98.0`. The Pingora dependency is pinned to an exact upstream Git revision. The production composition root is `src/bin/cwl-pingora-gateway.rs`; it parses `--config`, validates the contract, constructs `GatewayProxy`, adds a TCP listener to `http_proxy_service`, and enters Pingora lifecycle handling with `server.run(RunArgs::default())`. The binary deliberately returns `ExitCode::SUCCESS` after `run()` rather than invoking `Server::run_forever()`, preserving the same drain path without the latter's final `process::exit(0)`.
 
 ## Contract
 
