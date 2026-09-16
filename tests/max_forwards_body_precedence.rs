@@ -6,6 +6,7 @@ use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use cwl_pingora_gateway::runtime_policy::V1_TERMINATION_BUDGET_SECONDS;
 use tempfile::NamedTempFile;
 
 struct GatewayProcess(Child);
@@ -20,7 +21,7 @@ impl GatewayProcess {
             .expect("SIGTERM command should execute");
         assert!(signal.success(), "SIGTERM should reach gateway child");
 
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let deadline = Instant::now() + Duration::from_secs(V1_TERMINATION_BUDGET_SECONDS);
         loop {
             match self
                 .0
@@ -37,7 +38,7 @@ impl GatewayProcess {
                 None => {
                     assert!(
                         Instant::now() < deadline,
-                        "gateway did not complete graceful shutdown within five seconds"
+                        "gateway did not complete graceful shutdown before the external termination budget"
                     );
                     thread::sleep(Duration::from_millis(25));
                 }
@@ -60,7 +61,7 @@ impl Drop for GatewayProcess {
                 .status()
                 .is_ok()
             {
-                let deadline = Instant::now() + Duration::from_secs(5);
+                let deadline = Instant::now() + Duration::from_secs(V1_TERMINATION_BUDGET_SECONDS);
                 loop {
                     match self.0.try_wait() {
                         Ok(Some(_)) => return,
