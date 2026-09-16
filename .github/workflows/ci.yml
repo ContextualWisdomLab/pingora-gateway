@@ -149,9 +149,12 @@ jobs:
           trap cleanup EXIT
 
           for _ in $(seq 1 80); do
-            if curl --fail --silent --show-error --max-time 1 \
+            if ready_status="$(curl --silent --show-error --max-time 1 \
+              --output /dev/null \
+              --write-out '%{http_code}' \
               --dump-header /tmp/gateway-ready.headers \
-              http://127.0.0.1:18080/readyz >/dev/null \
+              http://127.0.0.1:18080/readyz)" \
+              && test "$ready_status" = "200" \
               && grep -Eiq '^cache-control:[[:space:]]*no-store\r?$' /tmp/gateway-ready.headers; then
               break
             fi
@@ -161,9 +164,12 @@ jobs:
             fi
             sleep 0.1
           done
-          curl --fail --silent --show-error --max-time 1 \
+          ready_status="$(curl --silent --show-error --max-time 1 \
+            --output /dev/null \
+            --write-out '%{http_code}' \
             --dump-header /tmp/gateway-ready.headers \
-            http://127.0.0.1:18080/readyz >/dev/null
+            http://127.0.0.1:18080/readyz)"
+          test "$ready_status" = "200"
           grep -Eiq '^cache-control:[[:space:]]*no-store\r?$' /tmp/gateway-ready.headers
 
           GATEWAY_URL=http://127.0.0.1:18080 k6 run --quiet tests/load/gateway_smoke.js
