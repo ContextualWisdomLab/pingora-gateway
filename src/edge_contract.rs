@@ -114,7 +114,9 @@ pub enum GatewayConfigError {
         upstream_name: String,
     },
     /// A wildcard bind address is not a concrete remote network authority.
-    #[error("upstream {upstream_name} must use a concrete IP address, not an unspecified wildcard")]
+    #[error(
+        "upstream {upstream_name} must use a concrete IP address, not an unspecified wildcard"
+    )]
     UnspecifiedUpstreamAddress {
         /// Stable upstream whose canonical address was `0.0.0.0` or `::`.
         upstream_name: String,
