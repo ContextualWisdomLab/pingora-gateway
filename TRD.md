@@ -2,7 +2,7 @@
 
 ## Runtime
 
-Rust edition 2021, minimum Rust `1.97.1`. The Pingora dependency is pinned to an exact upstream Git revision. The production composition root is `src/bin/cwl-pingora-gateway.rs`; it parses `--config`, validates the contract, constructs `GatewayProxy`, adds a TCP listener to `http_proxy_service`, and delegates lifecycle handling to `Server::run_forever()`.
+Rust edition 2021, minimum Rust `1.97.1`. The Pingora dependency is pinned to an exact upstream Git revision. The production composition root is `src/bin/cwl-pingora-gateway.rs`; it parses `--config`, validates the contract, constructs `GatewayProxy`, adds a TCP listener to `http_proxy_service`, and enters Pingora lifecycle handling with `server.run(RunArgs::default())`. The binary deliberately returns `ExitCode::SUCCESS` after `run()` rather than invoking `Server::run_forever()`, preserving the same drain path without the latter's final `process::exit(0)`.
 
 ## Contract
 
@@ -18,8 +18,8 @@ Requests with a parseable `Content-Length` larger than `max_request_body_bytes` 
 
 ## Health
 
-`GET /livez` and `/readyz` currently produce 200 with an empty non-cacheable response. Readiness proves validated configuration plus an active production serving path, not upstream health.
+`/livez` and `/readyz` are process-local health endpoints served by the gateway. They are not forwarded upstream and do not absorb product-domain health semantics.
 
-## Packaging
+## Failure behavior
 
-`Dockerfile` uses a Rust builder and Debian runtime, installs only CA/OpenSSL runtime dependencies, and executes as uid/gid `65532`. The process has no intentional filesystem writes. A committed lockfile, image build test, SBOM/provenance, and immutable registry digest remain release gates.
+Configuration and trust material fail closed before listeners open. Runtime admission, request-body, forwarding, timeout, retry and shutdown behavior are explicit gateway contracts and must remain covered by executable tests.
