@@ -4,6 +4,8 @@
 //! It proves that validated configuration reaches Pingora's serving path rather than stopping at a
 //! unit-test-only adapter boundary.
 
+mod support;
+
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::process::{Child, Command, Stdio};
@@ -11,6 +13,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use support::StartupLock;
 use tempfile::NamedTempFile;
 
 const MAX_HTTP_HEADER_BYTES: usize = 64 * 1024;
@@ -300,6 +303,7 @@ fn compiled_gateway_enforces_health_limits_forwarding_proxy_and_telemetry_paths(
         }
     });
 
+    let startup_lock = StartupLock::acquire();
     drop(traffic_reservation);
     drop(metrics_reservation);
     let mut child = Command::new(env!("CARGO_BIN_EXE_cwl-pingora-gateway"))
@@ -313,6 +317,7 @@ fn compiled_gateway_enforces_health_limits_forwarding_proxy_and_telemetry_paths(
 
     wait_until_http_ready(gateway_address, &mut child);
     wait_until_listening(metrics_address, &mut child);
+    drop(startup_lock);
     let mut process = GatewayProcess(child);
 
     for health_path in ["/livez", "/readyz"] {
@@ -458,6 +463,7 @@ fn exhausted_in_flight_budget_rejects_with_503_and_recovers_without_poisoning_he
             .expect("recovery response should be writable");
     });
 
+    let startup_lock = StartupLock::acquire();
     drop(traffic_reservation);
     drop(metrics_reservation);
     let mut child = Command::new(env!("CARGO_BIN_EXE_cwl-pingora-gateway"))
@@ -469,6 +475,7 @@ fn exhausted_in_flight_budget_rejects_with_503_and_recovers_without_poisoning_he
         .expect("compiled gateway binary should start");
     wait_until_http_ready(gateway_address, &mut child);
     wait_until_listening(metrics_address, &mut child);
+    drop(startup_lock);
     let mut process = GatewayProcess(child);
 
     let held = thread::spawn(move || get(gateway_address, "/held-capacity"));
@@ -523,6 +530,7 @@ fn upstream_connection_failure_is_bounded_and_does_not_poison_readiness() {
     let (traffic_reservation, metrics_reservation, gateway_address, metrics_address) =
         reserve_distinct_loopback_addresses();
     let config = write_gateway_config(gateway_address, metrics_address, upstream_address);
+    let startup_lock = StartupLock::acquire();
     drop(traffic_reservation);
     drop(metrics_reservation);
     let mut child = Command::new(env!("CARGO_BIN_EXE_cwl-pingora-gateway"))
@@ -534,6 +542,8 @@ fn upstream_connection_failure_is_bounded_and_does_not_poison_readiness() {
         .expect("compiled gateway binary should start");
 
     wait_until_http_ready(gateway_address, &mut child);
+    wait_until_listening(metrics_address, &mut child);
+    drop(startup_lock);
     let mut process = GatewayProcess(child);
 
     let started = Instant::now();
