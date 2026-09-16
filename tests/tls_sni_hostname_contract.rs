@@ -1,4 +1,6 @@
-use cwl_pingora_gateway::edge_contract::{UpstreamConfig, UpstreamTimeouts};
+use cwl_pingora_gateway::edge_contract::{
+    GatewayConfigError, UpstreamConfig, UpstreamTimeouts,
+};
 
 fn tls_upstream(sni: &str) -> UpstreamConfig {
     UpstreamConfig {
@@ -21,19 +23,28 @@ fn tls_upstream(sni: &str) -> UpstreamConfig {
 
 #[test]
 fn tls_sni_must_be_an_rfc_6066_dns_hostname() {
-    for invalid_sni in [
-        "127.0.0.1",
-        "2001:db8::1",
-        "api.internal.example.",
-        "api internal.example",
-        "_api.internal.example",
-        "-api.internal.example",
-        "api-.internal.example",
-        "api..internal.example",
-        "예.internal.example",
-    ] {
-        assert!(
-            tls_upstream(invalid_sni).validate().is_err(),
+    let overlong_label = format!("{}.example", "a".repeat(64));
+    let overlong_name = ["a".repeat(63), "b".repeat(63), "c".repeat(63), "d".repeat(63)].join(".");
+    let invalid_snis = vec![
+        "127.0.0.1".to_string(),
+        "2001:db8::1".to_string(),
+        "api.internal.example.".to_string(),
+        "api internal.example".to_string(),
+        "_api.internal.example".to_string(),
+        "-api.internal.example".to_string(),
+        "api-.internal.example".to_string(),
+        "api..internal.example".to_string(),
+        "예.internal.example".to_string(),
+        overlong_label,
+        overlong_name,
+    ];
+
+    for invalid_sni in invalid_snis {
+        assert_eq!(
+            tls_upstream(&invalid_sni).validate(),
+            Err(GatewayConfigError::InvalidTlsServerName {
+                upstream_name: "api".to_string(),
+            }),
             "TLS SNI must reject invalid RFC 6066 HostName {invalid_sni:?} before network authority"
         );
     }
