@@ -6,6 +6,8 @@
 
 #![cfg(unix)]
 
+mod support;
+
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::process::{Child, Command, Stdio};
@@ -14,6 +16,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use cwl_pingora_gateway::runtime_policy::{V1_GRACE_PERIOD_SECONDS, V1_TERMINATION_BUDGET_SECONDS};
+use support::StartupLock;
 use tempfile::NamedTempFile;
 
 struct GatewayProcess(Child);
@@ -25,19 +28,17 @@ impl Drop for GatewayProcess {
     }
 }
 
-fn reserve_distinct_loopback_addresses() -> (SocketAddr, SocketAddr) {
+fn reserve_distinct_loopback_addresses() -> (TcpListener, TcpListener, SocketAddr, SocketAddr) {
     let traffic = TcpListener::bind("127.0.0.1:0").expect("traffic port should be available");
     let metrics = TcpListener::bind("127.0.0.1:0").expect("metrics port should be available");
-    let addresses = (
-        traffic
-            .local_addr()
-            .expect("traffic reservation has an address"),
-        metrics
-            .local_addr()
-            .expect("metrics reservation has an address"),
-    );
-    assert_ne!(addresses.0, addresses.1);
-    addresses
+    let traffic_address = traffic
+        .local_addr()
+        .expect("traffic reservation has an address");
+    let metrics_address = metrics
+        .local_addr()
+        .expect("metrics reservation has an address");
+    assert_ne!(traffic_address, metrics_address);
+    (traffic, metrics, traffic_address, metrics_address)
 }
 
 fn write_gateway_config(
@@ -98,7 +99,8 @@ fn sigterm_drains_an_in_flight_request_before_process_exit() {
     let upstream_address = upstream_listener
         .local_addr()
         .expect("fixture upstream should expose its address");
-    let (gateway_address, metrics_address) = reserve_distinct_loopback_addresses();
+    let (traffic_reservation, metrics_reservation, gateway_address, metrics_address) =
+        reserve_distinct_loopback_addresses();
     let config = write_gateway_config(gateway_address, metrics_address, upstream_address);
 
     let (request_seen_tx, request_seen_rx) = mpsc::channel();
@@ -127,6 +129,9 @@ fn sigterm_drains_an_in_flight_request_before_process_exit() {
             .expect("held upstream response should be writable");
     });
 
+    let startup_lock = StartupLock::acquire();
+    drop(traffic_reservation);
+    drop(metrics_reservation);
     let child = Command::new(env!("CARGO_BIN_EXE_cwl-pingora-gateway"))
         .args(["--config", config.path().to_str().expect("UTF-8 temp path")])
         .env("RUST_LOG", "info")
@@ -137,6 +142,8 @@ fn sigterm_drains_an_in_flight_request_before_process_exit() {
         .expect("compiled gateway binary should start");
     let mut process = GatewayProcess(child);
     wait_until_listening(gateway_address, &mut process.0);
+    wait_until_listening(metrics_address, &mut process.0);
+    drop(startup_lock);
 
     let downstream = thread::spawn(move || {
         let mut stream =
