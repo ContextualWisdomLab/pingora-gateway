@@ -47,13 +47,17 @@ fn load_contract_uses_exact_readyz_and_non_cacheable_readiness() {
         2,
         "both readiness checks must capture response headers"
     );
+    assert!(
+        !load_contract.contains("no-store\\r?$"),
+        "GNU grep ERE does not interpret \\r as a carriage return; the readiness contract must not reject valid curl CRLF headers"
+    );
     assert_eq!(
         load_contract
             .matches(
-                "grep -Eiq '^cache-control:[[:space:]]*no-store\\r?$' /tmp/gateway-ready.headers"
+                "grep -Eiq '^cache-control:[[:space:]]*no-store[[:space:]]*$' /tmp/gateway-ready.headers"
             )
             .count(),
         2,
-        "both readiness checks must prove Cache-Control: no-store"
+        "both readiness checks must accept the CRLF line ending emitted by curl while proving Cache-Control: no-store"
     );
 }
