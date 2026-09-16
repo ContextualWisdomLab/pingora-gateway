@@ -67,7 +67,7 @@ pub struct UpstreamConfig {
     /// TLS server name used for SNI and hostname verification.
     #[serde(default)]
     pub sni: Option<String>,
-    /// Optional absolute PEM bundle of additional trust anchors for this TLS upstream.
+    /// Optional absolute PEM bundle that replaces platform trust roots for this TLS upstream.
     ///
     /// The gateway consumes trust roots supplied by the operator; it does not issue, rotate, or
     /// otherwise become authoritative for certificates. When omitted, Pingora uses platform roots.
