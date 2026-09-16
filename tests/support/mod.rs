@@ -10,8 +10,8 @@ use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
-const ACQUIRE_TIMEOUT: Duration = Duration::from_secs(45);
-const STALE_AFTER: Duration = Duration::from_secs(30);
+const ACQUIRE_TIMEOUT: Duration = Duration::from_secs(90);
+const STALE_AFTER: Duration = Duration::from_secs(60);
 const RETRY_INTERVAL: Duration = Duration::from_millis(25);
 
 /// Cross-process guard for the short reservation-release -> child-readiness handoff.
