@@ -7,6 +7,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use cwl_pingora_gateway::forwarding_policy::{DownstreamScheme, ForwardingContext};
+use cwl_pingora_gateway::runtime_policy::V1_TERMINATION_BUDGET_SECONDS;
 use pingora::prelude::{ErrorType, RequestHeader};
 use pingora::protocols::l4::socket::SocketAddr as PingoraSocketAddr;
 use tempfile::NamedTempFile;
@@ -26,7 +27,8 @@ impl GatewayProcess {
             "SIGTERM should be delivered to gateway child"
         );
 
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let deadline =
+            Instant::now() + Duration::from_secs(V1_TERMINATION_BUDGET_SECONDS);
         loop {
             match self
                 .0
@@ -43,7 +45,7 @@ impl GatewayProcess {
                 None => {
                     assert!(
                         Instant::now() < deadline,
-                        "gateway did not complete graceful shutdown within five seconds"
+                        "gateway did not complete graceful shutdown before the external termination budget"
                     );
                     thread::sleep(Duration::from_millis(25));
                 }
@@ -60,17 +62,19 @@ impl Drop for GatewayProcess {
 
         #[cfg(unix)]
         {
-            // Pingora handles SIGTERM through its graceful shutdown path. Give the process a bounded
-            // chance to return from `Server::run()` so LLVM coverage/profile state is flushed; only
-            // fall back to SIGKILL if the process fails to drain. The test explicitly validates a
-            // successful graceful exit; Drop is cleanup-only so it remains safe during unwinding.
+            // Pingora handles SIGTERM through its graceful shutdown path. Give the process the
+            // runtime's external termination budget so `Server::run()` can complete and LLVM
+            // coverage/profile state can flush; only fall back to SIGKILL if that bounded drain
+            // fails. The test explicitly validates a successful graceful exit; Drop is cleanup-only
+            // so it remains safe during unwinding.
             let pid = self.0.id().to_string();
             if Command::new("kill")
                 .args(["-TERM", pid.as_str()])
                 .status()
                 .is_ok()
             {
-                let deadline = Instant::now() + Duration::from_secs(5);
+                let deadline =
+                    Instant::now() + Duration::from_secs(V1_TERMINATION_BUDGET_SECONDS);
                 loop {
                     match self.0.try_wait() {
                         Ok(Some(_)) => return,
