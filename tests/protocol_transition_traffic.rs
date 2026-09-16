@@ -116,27 +116,26 @@ fn wait_until_ready(address: SocketAddr, process: &mut Child) {
         if let Ok(mut stream) = TcpStream::connect_timeout(&address, Duration::from_millis(100)) {
             if stream
                 .set_write_timeout(Some(Duration::from_millis(250)))
-                .is_err()
-                || stream
-                    .set_read_timeout(Some(Duration::from_millis(250)))
-                    .is_err()
-            {
-                assert!(
-                    Instant::now() < deadline,
-                    "gateway /readyz did not return HTTP/1.1 200 within 10s"
-                );
-                thread::sleep(Duration::from_millis(25));
-                continue;
-            }
-            if stream
-                .write_all(
-                    b"GET /readyz HTTP/1.1\r\nHost: gateway.local\r\nConnection: close\r\n\r\n",
-                )
                 .is_ok()
+                && stream
+                    .write_all(
+                        b"GET /readyz HTTP/1.1\r\nHost: gateway.local\r\nConnection: close\r\n\r\n",
+                    )
+                    .is_ok()
             {
                 let mut response = Vec::new();
                 let mut buffer = [0_u8; 1024];
                 loop {
+                    let now = Instant::now();
+                    if now >= deadline {
+                        break;
+                    }
+                    let read_timeout = deadline
+                        .saturating_duration_since(now)
+                        .min(Duration::from_millis(250));
+                    if stream.set_read_timeout(Some(read_timeout)).is_err() {
+                        break;
+                    }
                     match stream.read(&mut buffer) {
                         Ok(0) => break,
                         Ok(read) => {
