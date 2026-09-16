@@ -52,7 +52,7 @@ fn pg_erd_config_rejects_non_unicast_tcp_destinations() {
             Err(PgErdMigrationConfigError::UpstreamConfiguration(
                 GatewayConfigError::NonUnicastUpstreamAddress {
                     upstream_name: "backend".to_string(),
-                }
+                },
             )),
             "pg-erd must reject broadcast or multicast TCP upstream authority: {backend}"
         );
