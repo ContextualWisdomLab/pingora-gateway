@@ -109,6 +109,11 @@ impl EdgeMigrationPlan {
         self.response_headers.value_for(name)
     }
 
+    /// Returns every characterized edge-owned response-header mutation in declaration order.
+    pub fn response_header_rules(&self) -> &[ResponseHeaderRule] {
+        self.response_headers.rules()
+    }
+
     /// Returns the number of explicitly admitted upstream identities in this plan.
     pub fn upstream_count(&self) -> usize {
         self.upstreams.len()
