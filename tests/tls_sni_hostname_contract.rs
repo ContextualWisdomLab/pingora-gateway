@@ -1,6 +1,4 @@
-use cwl_pingora_gateway::edge_contract::{
-    GatewayConfigError, UpstreamConfig, UpstreamTimeouts,
-};
+use cwl_pingora_gateway::edge_contract::{GatewayConfigError, UpstreamConfig, UpstreamTimeouts};
 
 fn tls_upstream(sni: &str) -> UpstreamConfig {
     UpstreamConfig {
