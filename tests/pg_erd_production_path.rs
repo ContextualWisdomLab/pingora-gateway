@@ -172,6 +172,14 @@ fn serve_origin(
         assert!(!lowered.contains("x-forwarded-port: 443\r\n"));
         assert!(!lowered.contains("x-forwarded-server:"));
         assert!(!lowered.contains("attacker.example"));
+        assert!(
+            lowered.contains("via: 1.0 previous-hop\r\n"),
+            "gateway must preserve the received Via chain: {request:?}"
+        );
+        assert!(
+            lowered.contains("via: 1.1 cwl-pingora-gateway\r\n"),
+            "gateway must append its HTTP/1.1 received-protocol hop: {request:?}"
+        );
         write!(
             stream,
             "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nX-Frame-Options: SAMEORIGIN\r\nConnection: close\r\n\r\n{}",
@@ -270,7 +278,7 @@ fn compiled_pg_erd_listener_preserves_health_route_header_and_forwarding_boundar
         ("/projects/42", "frontend"),
     ] {
         let hostile = format!(
-            "GET {path} HTTP/1.1\r\nHost: app.example:8080\r\nForwarded: for=203.0.113.7;proto=https\r\nX-Forwarded-For: 203.0.113.7\r\nX-Forwarded-Host: attacker.example\r\nX-Forwarded-Port: 443\r\nX-Forwarded-Proto: https\r\nX-Forwarded-Server: attacker-proxy\r\nX-Real-IP: 203.0.113.7\r\nConnection: close\r\n\r\n"
+            "GET {path} HTTP/1.1\r\nHost: app.example:8080\r\nVia: 1.0 previous-hop\r\nForwarded: for=203.0.113.7;proto=https\r\nX-Forwarded-For: 203.0.113.7\r\nX-Forwarded-Host: attacker.example\r\nX-Forwarded-Port: 443\r\nX-Forwarded-Proto: https\r\nX-Forwarded-Server: attacker-proxy\r\nX-Real-IP: 203.0.113.7\r\nConnection: close\r\n\r\n"
         );
         let response = raw_request(gateway_address, hostile.as_bytes());
         assert!(

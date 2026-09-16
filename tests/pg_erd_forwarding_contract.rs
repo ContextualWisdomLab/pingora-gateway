@@ -18,7 +18,14 @@ fn pg_erd_forwarding_rebuilds_transport_identity_instead_of_trusting_request_hea
         ("X-Forwarded-Port", "80"),
         ("X-Forwarded-Proto", "http"),
         ("X-Forwarded-Server", "attacker-proxy"),
+        (
+            "X-Forwarded-Client-Cert",
+            "By=spiffe://attacker.example;Hash=spoofed",
+        ),
+        ("X-Forwarded-Prefix", "/attacker-prefix"),
+        ("X-Forwarded-PathBase", "/attacker-path-base"),
         ("X-Real-IP", "203.0.113.7"),
+        ("X-Application-Context", "preserve-me"),
     ] {
         request
             .insert_header(name, value)
@@ -56,6 +63,13 @@ fn pg_erd_forwarding_rebuilds_transport_identity_instead_of_trusting_request_hea
         "https"
     );
     assert!(request.headers.get("x-forwarded-server").is_none());
+    assert!(request.headers.get("x-forwarded-client-cert").is_none());
+    assert!(request.headers.get("x-forwarded-prefix").is_none());
+    assert!(request.headers.get("x-forwarded-pathbase").is_none());
+    assert_eq!(
+        request.headers["x-application-context"].to_str().unwrap(),
+        "preserve-me"
+    );
 }
 
 #[test]
@@ -76,4 +90,36 @@ fn malformed_host_authority_fails_closed_through_transport_derivation() {
     .expect_err("invalid Host port must fail closed at the transport-derived boundary");
 
     assert_eq!(error.etype, ErrorType::HTTPStatus(400));
+}
+
+#[test]
+fn non_host_uri_syntax_is_rejected_before_becoming_forwarded_authority() {
+    let client = PingoraSocketAddr::from(SocketAddr::from((Ipv4Addr::LOCALHOST, 49152)));
+
+    for authority in [
+        "user@app.example",
+        "app.example/path",
+        "app.example?query",
+        "app.example:+80",
+        "app%2.example",
+        "%zz.example",
+        "[not-an-ip]",
+        "[v.example]",
+    ] {
+        let mut request =
+            RequestHeader::build("GET", b"/api", None).expect("fixture request must be valid");
+        request
+            .insert_header("Host", authority)
+            .expect("invalid Host grammar can still be valid generic HTTP field data");
+
+        let error = ForwardingContext::from_downstream_transport(
+            Some(&client),
+            &request,
+            &request,
+            DownstreamScheme::Http,
+        )
+        .expect_err("non-Host URI syntax must not become trusted forwarding authority");
+
+        assert_eq!(error.etype, ErrorType::HTTPStatus(400), "{authority}");
+    }
 }
