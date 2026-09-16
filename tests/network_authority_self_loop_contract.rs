@@ -84,6 +84,30 @@ fn generic_config_rejects_recursive_gateway_authority() {
                 upstream_name: "api".to_string(),
             },
         ),
+        (
+            "127.0.0.1:6188",
+            "127.0.0.1:6192",
+            "0.0.0.0:7000",
+            GatewayConfigError::UnspecifiedUpstreamAddress {
+                upstream_name: "api".to_string(),
+            },
+        ),
+        (
+            "127.0.0.1:6188",
+            "127.0.0.1:6192",
+            "[::]:7000",
+            GatewayConfigError::UnspecifiedUpstreamAddress {
+                upstream_name: "api".to_string(),
+            },
+        ),
+        (
+            "127.0.0.1:6188",
+            "127.0.0.1:6192",
+            "[::ffff:0.0.0.0]:7000",
+            GatewayConfigError::UnspecifiedUpstreamAddress {
+                upstream_name: "api".to_string(),
+            },
+        ),
     ] {
         assert_eq!(
             GatewayConfig::from_yaml(&generic_yaml(listener, metrics, upstream)),
@@ -151,6 +175,33 @@ fn pg_erd_config_rejects_gateway_owned_socket_as_transport_authority() {
             "[::ffff:127.0.0.1]:9090",
             GatewayConfigError::UpstreamMetricsListenerCollision {
                 upstream_name: "frontend".to_string(),
+            },
+        ),
+        (
+            "127.0.0.1:8080",
+            "127.0.0.1:9090",
+            "0.0.0.0:7000",
+            "127.0.0.1:3000",
+            GatewayConfigError::UnspecifiedUpstreamAddress {
+                upstream_name: "backend".to_string(),
+            },
+        ),
+        (
+            "127.0.0.1:8080",
+            "127.0.0.1:9090",
+            "127.0.0.1:8000",
+            "[::]:7000",
+            GatewayConfigError::UnspecifiedUpstreamAddress {
+                upstream_name: "frontend".to_string(),
+            },
+        ),
+        (
+            "127.0.0.1:8080",
+            "127.0.0.1:9090",
+            "[::ffff:0.0.0.0]:7000",
+            "127.0.0.1:3000",
+            GatewayConfigError::UnspecifiedUpstreamAddress {
+                upstream_name: "backend".to_string(),
             },
         ),
     ] {
