@@ -125,8 +125,12 @@ fn ipvfuture_suffix_character_classes_are_enforced_through_forwarding_boundary()
         DownstreamScheme::Https,
     )
     .expect("IPvFuture suffix may contain RFC 3986 sub-delims and colon");
-    assert_eq!(context.original_host, "[vF.a:b!c]:9443");
-    assert_eq!(context.downstream_port, 9443);
+    let mut emitted = valid.clone();
+    context
+        .apply(&mut emitted)
+        .expect("validated transport authority must remain representable as forwarding metadata");
+    assert_eq!(emitted.headers["x-forwarded-host"], "[vF.a:b!c]:9443");
+    assert_eq!(emitted.headers["x-forwarded-port"], "9443");
 
     let invalid = request_with_host("[vF.a/b]:9443");
     let error = ForwardingContext::from_downstream_transport(
