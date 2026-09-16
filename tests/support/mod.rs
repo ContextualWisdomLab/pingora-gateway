@@ -59,7 +59,7 @@ fn lock_is_stale(path: &Path) -> bool {
     let Ok(metadata) = fs::metadata(path) else {
         return false;
     };
-    let modified = metadata.modified().unwrap_or(SystemTime::now());
+    let modified = metadata.modified().unwrap_or_else(|_| SystemTime::now());
     modified
         .elapsed()
         .map(|age| age > STALE_AFTER)
