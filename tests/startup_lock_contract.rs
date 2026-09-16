@@ -112,7 +112,10 @@ fn continuously_held_lock_times_out_with_existing_diagnostic() {
         support::StartupLock::acquire_at(&lock_path, Duration::from_millis(100))
     });
     let elapsed = started.elapsed();
-    let panic = result.expect_err("contended startup lock must fail after its bounded deadline");
+    let panic = match result {
+        Ok(_) => panic!("contended startup lock must fail after its bounded deadline"),
+        Err(panic) => panic,
+    };
     let message = panic
         .downcast_ref::<String>()
         .map(String::as_str)
