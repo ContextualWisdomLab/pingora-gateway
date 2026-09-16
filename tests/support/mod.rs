@@ -5,6 +5,7 @@
 //! binaries as separate processes, so an in-process mutex cannot protect that handoff globally.
 
 use std::fs::{File, OpenOptions, TryLockError};
+use std::path::Path;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -20,19 +21,24 @@ impl StartupLock {
     /// Acquires the repository-wide test startup lock without adding a runtime dependency.
     pub(crate) fn acquire() -> Self {
         let path = std::env::temp_dir().join("cwl-pingora-gateway-test-startup-v2.lock");
+        Self::acquire_at(&path, ACQUIRE_TIMEOUT)
+    }
+
+    /// Acquires one test-scoped startup lock with a caller-supplied bounded deadline.
+    pub(crate) fn acquire_at(path: &Path, timeout: Duration) -> Self {
         let file = OpenOptions::new()
             .read(true)
             .write(true)
             .create(true)
             .truncate(false)
-            .open(&path)
+            .open(path)
             .unwrap_or_else(|error| {
                 panic!(
                     "failed to open cross-process gateway startup lock at {}: {error}",
                     path.display()
                 )
             });
-        let deadline = Instant::now() + ACQUIRE_TIMEOUT;
+        let deadline = Instant::now() + timeout;
 
         loop {
             match file.try_lock() {
