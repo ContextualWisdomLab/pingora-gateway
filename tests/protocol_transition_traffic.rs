@@ -114,8 +114,20 @@ fn wait_until_ready(address: SocketAddr, process: &mut Child) {
         }
 
         if let Ok(mut stream) = TcpStream::connect_timeout(&address, Duration::from_millis(100)) {
-            let _ = stream.set_write_timeout(Some(Duration::from_millis(250)));
-            let _ = stream.set_read_timeout(Some(Duration::from_millis(250)));
+            if stream
+                .set_write_timeout(Some(Duration::from_millis(250)))
+                .is_err()
+                || stream
+                    .set_read_timeout(Some(Duration::from_millis(250)))
+                    .is_err()
+            {
+                assert!(
+                    Instant::now() < deadline,
+                    "gateway /readyz did not return HTTP/1.1 200 within 10s"
+                );
+                thread::sleep(Duration::from_millis(25));
+                continue;
+            }
             if stream
                 .write_all(
                     b"GET /readyz HTTP/1.1\r\nHost: gateway.local\r\nConnection: close\r\n\r\n",
