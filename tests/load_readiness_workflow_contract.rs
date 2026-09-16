@@ -34,18 +34,24 @@ fn load_contract_uses_exact_readyz_and_non_cacheable_readiness() {
         "both readiness checks must capture the exact HTTP status"
     );
     assert_eq!(
-        load_contract.matches("test \"$ready_status\" = \"200\"").count(),
+        load_contract
+            .matches("test \"$ready_status\" = \"200\"")
+            .count(),
         2,
         "both readiness checks must require exact HTTP 200"
     );
     assert_eq!(
-        load_contract.matches("--dump-header /tmp/gateway-ready.headers").count(),
+        load_contract
+            .matches("--dump-header /tmp/gateway-ready.headers")
+            .count(),
         2,
         "both readiness checks must capture response headers"
     );
     assert_eq!(
         load_contract
-            .matches("grep -Eiq '^cache-control:[[:space:]]*no-store\\r?$' /tmp/gateway-ready.headers")
+            .matches(
+                "grep -Eiq '^cache-control:[[:space:]]*no-store\\r?$' /tmp/gateway-ready.headers"
+            )
             .count(),
         2,
         "both readiness checks must prove Cache-Control: no-store"
