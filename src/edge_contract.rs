@@ -5,7 +5,7 @@
 //! consumer products never depend on Pingora internals.
 
 use std::collections::HashSet;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 
 use serde::Deserialize;
@@ -86,9 +86,33 @@ pub enum GatewayConfigError {
     /// The configuration requests a contract version this binary does not implement.
     #[error("unsupported gateway configuration version {0}")]
     UnsupportedVersion(u32),
-    /// Traffic and metrics endpoints must never compete for the same socket authority.
-    #[error("listener and metrics_listener must use distinct socket addresses")]
+    /// Port zero would delegate the traffic listener to an ephemeral OS-selected authority.
+    #[error("listener must use a non-zero port")]
+    ZeroListenerPort,
+    /// Port zero would make the declared metrics endpoint indeterminate.
+    #[error("metrics_listener must use a non-zero port")]
+    ZeroMetricsListenerPort,
+    /// Traffic and metrics endpoints must never overlap the same effective socket authority.
+    #[error("listener and metrics_listener socket authorities must not overlap")]
     ListenerCollision,
+    /// An approved upstream must identify a concrete, connectable transport port.
+    #[error("upstream {upstream_name} must use a non-zero port")]
+    ZeroUpstreamPort {
+        /// Stable upstream whose transport binding used port zero.
+        upstream_name: String,
+    },
+    /// Bind-wildcard addresses do not identify a concrete remote TCP authority.
+    #[error("upstream {upstream_name} must not use an unspecified address")]
+    UnspecifiedUpstreamAddress {
+        /// Stable upstream whose transport binding used an unspecified IP address.
+        upstream_name: String,
+    },
+    /// Upstream authority must not resolve back into a socket owned by this gateway process.
+    #[error("upstream {upstream_name} must not overlap a gateway listener authority")]
+    UpstreamListenerCollision {
+        /// Stable upstream whose transport authority overlaps traffic or metrics listener authority.
+        upstream_name: String,
+    },
     /// A zero request-body limit would reject every body and is almost certainly misconfiguration.
     #[error("max_request_body_bytes must be greater than zero")]
     InvalidRequestBodyLimit,
@@ -179,7 +203,13 @@ impl GatewayConfig {
         if self.version != CURRENT_GATEWAY_CONFIG_VERSION {
             return Err(GatewayConfigError::UnsupportedVersion(self.version));
         }
-        if self.listener == self.metrics_listener {
+        if self.listener.port() == 0 {
+            return Err(GatewayConfigError::ZeroListenerPort);
+        }
+        if self.metrics_listener.port() == 0 {
+            return Err(GatewayConfigError::ZeroMetricsListenerPort);
+        }
+        if socket_authorities_overlap(self.listener, self.metrics_listener) {
             return Err(GatewayConfigError::ListenerCollision);
         }
         if self.max_request_body_bytes == 0 {
@@ -199,6 +229,13 @@ impl GatewayConfig {
         for upstream in &self.upstreams {
             upstream.validate()?;
             let normalized_name = upstream.name.trim();
+            if socket_authorities_overlap(self.listener, upstream.address)
+                || socket_authorities_overlap(self.metrics_listener, upstream.address)
+            {
+                return Err(GatewayConfigError::UpstreamListenerCollision {
+                    upstream_name: normalized_name.to_string(),
+                });
+            }
             if !names.insert(normalized_name) {
                 return Err(GatewayConfigError::DuplicateUpstreamName {
                     upstream_name: normalized_name.to_string(),
@@ -216,12 +253,75 @@ impl GatewayConfig {
     }
 }
 
+/// Returns true when two listener declarations can claim the same effective socket authority.
+///
+/// IPv4-mapped IPv6 addresses are first reduced to their mapped IPv4 authority so wildcard and
+/// equality rules cannot diverge merely because two declarations use different address families.
+/// An unmapped IPv6 wildcard may also consume the IPv4 port on dual-stack platforms when
+/// `IPV6_V6ONLY` is disabled. These cases are rejected before listener activation while distinct
+/// concrete non-aliased addresses remain independent.
+pub(crate) fn socket_authorities_overlap(left: SocketAddr, right: SocketAddr) -> bool {
+    if left.port() != right.port() {
+        return false;
+    }
+
+    enum CanonicalIpAuthority {
+        V4(std::net::Ipv4Addr),
+        V6(std::net::Ipv6Addr),
+    }
+
+    let canonical = |ip: IpAddr| match ip {
+        IpAddr::V4(ipv4) => CanonicalIpAuthority::V4(ipv4),
+        IpAddr::V6(ipv6) => ipv6
+            .to_ipv4_mapped()
+            .map_or(CanonicalIpAuthority::V6(ipv6), CanonicalIpAuthority::V4),
+    };
+
+    match (canonical(left.ip()), canonical(right.ip())) {
+        (CanonicalIpAuthority::V4(left), CanonicalIpAuthority::V4(right)) => {
+            left == right || left.is_unspecified() || right.is_unspecified()
+        }
+        (CanonicalIpAuthority::V6(left), CanonicalIpAuthority::V6(right)) => {
+            left == right || left.is_unspecified() || right.is_unspecified()
+        }
+        (CanonicalIpAuthority::V6(ipv6), CanonicalIpAuthority::V4(_))
+        | (CanonicalIpAuthority::V4(_), CanonicalIpAuthority::V6(ipv6)) => ipv6.is_unspecified(),
+    }
+}
+
+/// Returns true when an upstream IP is a bind wildcard rather than concrete remote authority.
+///
+/// Rust intentionally does not assign the embedded IPv4 semantics to IPv4-mapped IPv6 addresses
+/// when evaluating IPv6 address properties, so `::ffff:0.0.0.0` must be canonicalized before the
+/// unspecified-address check.
+fn upstream_ip_is_unspecified(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(ipv4) => ipv4.is_unspecified(),
+        IpAddr::V6(ipv6) => {
+            ipv6.is_unspecified()
+                || ipv6
+                    .to_ipv4_mapped()
+                    .is_some_and(|ipv4| ipv4.is_unspecified())
+        }
+    }
+}
+
 impl UpstreamConfig {
     /// Validates the invariants required before this upstream can become network authority.
     pub fn validate(&self) -> Result<(), GatewayConfigError> {
         let normalized_name = self.name.trim();
         if normalized_name.is_empty() {
             return Err(GatewayConfigError::EmptyUpstreamName);
+        }
+        if self.address.port() == 0 {
+            return Err(GatewayConfigError::ZeroUpstreamPort {
+                upstream_name: normalized_name.to_string(),
+            });
+        }
+        if upstream_ip_is_unspecified(self.address.ip()) {
+            return Err(GatewayConfigError::UnspecifiedUpstreamAddress {
+                upstream_name: normalized_name.to_string(),
+            });
         }
 
         match (self.tls, self.sni.as_deref()) {
