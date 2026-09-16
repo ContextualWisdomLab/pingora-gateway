@@ -18,8 +18,8 @@ Requests with a parseable `Content-Length` larger than `max_request_body_bytes` 
 
 ## Health
 
-`/livez` and `/readyz` are process-local health endpoints served by the gateway. They are not forwarded upstream and do not absorb product-domain health semantics.
+`GET /livez` and `/readyz` currently produce 200 with an empty non-cacheable response. Readiness proves validated configuration plus an active production serving path, not upstream health.
 
-## Failure behavior
+## Packaging
 
-Configuration and trust material fail closed before listeners open. Runtime admission, request-body, forwarding, timeout, retry and shutdown behavior are explicit gateway contracts and must remain covered by executable tests.
+`Dockerfile` uses a Rust builder and Debian runtime, installs only CA/OpenSSL runtime dependencies, and executes as uid/gid `65532`. The process has no intentional filesystem writes. A committed lockfile, image build test, SBOM/provenance, and immutable registry digest remain release gates.
