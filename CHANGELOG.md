@@ -8,13 +8,14 @@ All notable changes are tracked here. No release has been published yet.
 - Added strict v1 configuration, explicit one-upstream network authority, TLS identity verification, and explicit upstream I/O budgets.
 - Added mandatory positive `max_in_flight_requests` and `upstream_keepalive_pool_size` capacity budgets; Pingora's framework keepalive default is overridden from the validated edge contract.
 - Added process-local fail-fast backpressure: non-health requests above the in-flight budget receive HTTP 503, health remains observable, rejection telemetry increments, and capacity is released after request completion or failure.
-- Added optional per-upstream absolute PEM trust-bundle consumption without taking ownership of certificate issuance/rotation; trust material is loaded fail-closed before listeners open.
+- Added optional per-upstream absolute PEM trust-bundle consumption without taking ownership of certificate issuance/rotation; a configured PEM replaces platform trust roots for that upstream and is loaded fail-closed before listeners open.
 - Added an executable local-CA TLS test through the compiled gateway that holds CA trust constant and proves SNI/hostname mismatch is rejected.
 - Added a focused transport-adapter regression proving an upstream without a custom trust bundle leaves Pingora's platform trust roots selected rather than replacing the CA store.
 - Added fail-closed binary startup and real loopback production-path tests, including held-request saturation/recovery at an in-flight budget of one.
-- Added `/livez` and `/readyz` through the Pingora serving path.
+- Added `/livez` and `/readyz` through the Pingora serving path; the measured CI load lane now waits for `/readyz` and verifies `Cache-Control: no-store` before k6 traffic.
+- Serialized the ephemeral listener reservation-release to child-bind/readiness handoff across graceful-shutdown, local-CA TLS, and production-path integration-test processes with a bounded test-only cross-process startup lock.
 - Added request-body limits and a distrust-by-default forwarded-header policy.
-- Added low-cardinality metrics plus credential/cookie-safe access logging through the production path.
+- Added low-cardinality metrics plus credential/cookie-safe CWL access logging through the production path; payload-safe dependency diagnostics remain a separate Observability integration requirement.
 - Overrode Pingora framework retry/drain defaults with one total upstream attempt, a 5-second SIGTERM grace period, and a 30-second graceful-shutdown timeout.
 - Added non-root/read-only-root OCI packaging and executable least-privilege runtime verification.
 - Added a committed dependency lock, fail-closed license/source/advisory policy, exact-source SBOM and image-vulnerability evidence.
