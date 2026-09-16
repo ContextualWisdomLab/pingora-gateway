@@ -155,7 +155,7 @@ jobs:
               --dump-header /tmp/gateway-ready.headers \
               http://127.0.0.1:18080/readyz)" \
               && test "$ready_status" = "200" \
-              && grep -Eiq '^cache-control:[[:space:]]*no-store\r?$' /tmp/gateway-ready.headers; then
+              && grep -Eiq '^cache-control:[[:space:]]*no-store[[:space:]]*$' /tmp/gateway-ready.headers; then
               break
             fi
             if ! kill -0 "$gateway_pid" 2>/dev/null; then
@@ -170,7 +170,7 @@ jobs:
             --dump-header /tmp/gateway-ready.headers \
             http://127.0.0.1:18080/readyz)"
           test "$ready_status" = "200"
-          grep -Eiq '^cache-control:[[:space:]]*no-store\r?$' /tmp/gateway-ready.headers
+          grep -Eiq '^cache-control:[[:space:]]*no-store[[:space:]]*$' /tmp/gateway-ready.headers
 
           GATEWAY_URL=http://127.0.0.1:18080 k6 run --quiet tests/load/gateway_smoke.js
       - name: Upload loopback latency evidence
