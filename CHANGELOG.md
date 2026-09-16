@@ -12,7 +12,7 @@ All notable changes are tracked here. No release has been published yet.
 - Added an executable local-CA TLS test through the compiled gateway that holds CA trust constant and proves SNI/hostname mismatch is rejected.
 - Added a focused transport-adapter regression proving an upstream without a custom trust bundle leaves Pingora's platform trust roots selected rather than replacing the CA store.
 - Added fail-closed binary startup and real loopback production-path tests, including held-request saturation/recovery at an in-flight budget of one.
-- Added `/livez` and `/readyz` through the Pingora serving path; the measured CI load lane now waits for `/readyz` and verifies `Cache-Control: no-store` before k6 traffic.
+- Added `/livez` and `/readyz` through the Pingora serving path; before measured k6 traffic the CI load lane now requires both bounded polling and final `/readyz` validation to return exact HTTP 200 with `Cache-Control: no-store`.
 - Serialized the ephemeral listener reservation-release to child-bind/readiness handoff across graceful-shutdown, local-CA TLS, and production-path integration-test processes with a bounded test-only cross-process startup lock.
 - Added request-body limits and a distrust-by-default forwarded-header policy.
 - Added low-cardinality metrics plus credential/cookie-safe CWL access logging through the production path; payload-safe dependency diagnostics remain a separate Observability integration requirement.
