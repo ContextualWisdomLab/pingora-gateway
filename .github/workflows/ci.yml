@@ -149,16 +149,22 @@ jobs:
           trap cleanup EXIT
 
           for _ in $(seq 1 80); do
-            if curl --fail --silent --show-error --max-time 1 http://127.0.0.1:18080/livez >/dev/null; then
+            if curl --fail --silent --show-error --max-time 1 \
+              --dump-header /tmp/gateway-ready.headers \
+              http://127.0.0.1:18080/readyz >/dev/null \
+              && grep -Eiq '^cache-control:[[:space:]]*no-store\r?$' /tmp/gateway-ready.headers; then
               break
             fi
             if ! kill -0 "$gateway_pid" 2>/dev/null; then
-              echo "gateway exited before the load contract became live" >&2
+              echo "gateway exited before the load contract became ready" >&2
               exit 1
             fi
             sleep 0.1
           done
-          curl --fail --silent --show-error --max-time 1 http://127.0.0.1:18080/livez >/dev/null
+          curl --fail --silent --show-error --max-time 1 \
+            --dump-header /tmp/gateway-ready.headers \
+            http://127.0.0.1:18080/readyz >/dev/null
+          grep -Eiq '^cache-control:[[:space:]]*no-store\r?$' /tmp/gateway-ready.headers
 
           GATEWAY_URL=http://127.0.0.1:18080 k6 run --quiet tests/load/gateway_smoke.js
       - name: Upload loopback latency evidence
