@@ -27,8 +27,7 @@ impl GatewayProcess {
             "SIGTERM should be delivered to gateway child"
         );
 
-        let deadline =
-            Instant::now() + Duration::from_secs(V1_TERMINATION_BUDGET_SECONDS);
+        let deadline = Instant::now() + Duration::from_secs(V1_TERMINATION_BUDGET_SECONDS);
         loop {
             match self
                 .0
@@ -73,8 +72,7 @@ impl Drop for GatewayProcess {
                 .status()
                 .is_ok()
             {
-                let deadline =
-                    Instant::now() + Duration::from_secs(V1_TERMINATION_BUDGET_SECONDS);
+                let deadline = Instant::now() + Duration::from_secs(V1_TERMINATION_BUDGET_SECONDS);
                 loop {
                     match self.0.try_wait() {
                         Ok(Some(_)) => return,
