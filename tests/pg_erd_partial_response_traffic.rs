@@ -15,6 +15,8 @@ use std::time::{Duration, Instant};
 
 use tempfile::NamedTempFile;
 
+const MAX_RESPONSE_HEADER_BYTES: usize = 64 * 1024;
+
 /// Owns the compiled migration child so assertion failures cannot leak a listening test process.
 struct GatewayProcess(Child);
 
@@ -32,22 +34,20 @@ enum DownstreamTermination {
     ConnectionReset,
 }
 
-/// Selects distinct traffic and metrics authorities while both ephemeral reservations remain held.
-fn reserve_distinct_loopback_addresses() -> (SocketAddr, SocketAddr) {
-    // Hold both ephemeral reservations at once so listener and metrics authority cannot
-    // accidentally collapse to the same port before the migration process binds them.
+/// Holds distinct traffic and metrics reservations until the compiled child is ready to bind them.
+fn reserve_distinct_loopback_listeners() -> (TcpListener, TcpListener) {
     let traffic = TcpListener::bind("127.0.0.1:0").expect("traffic port should be reservable");
     let metrics = TcpListener::bind("127.0.0.1:0").expect("metrics port should be reservable");
-    let addresses = (
+    assert_ne!(
         traffic
             .local_addr()
             .expect("traffic reservation should expose an address"),
         metrics
             .local_addr()
             .expect("metrics reservation should expose an address"),
+        "traffic and metrics reservations must remain distinct"
     );
-    assert_ne!(addresses.0, addresses.1);
-    addresses
+    (traffic, metrics)
 }
 
 /// Writes the bounded pg-erd fixture used to separate post-commit truncation from read-stall failure.
@@ -66,28 +66,67 @@ fn write_config(
     file
 }
 
-/// Waits for one gateway listener without treating an early process exit as startup success.
-fn wait_until_listening(address: SocketAddr, process: &mut Child) {
+/// Waits for a bounded complete HTTP 200 response instead of treating bare TCP accept as readiness.
+fn wait_until_http_ok(address: SocketAddr, path: &str, process: &mut Child) {
     let deadline = Instant::now() + Duration::from_secs(10);
+    let request =
+        format!("GET {path} HTTP/1.1\r\nHost: gateway.local\r\nConnection: close\r\n\r\n");
     loop {
         if let Some(status) = process
             .try_wait()
             .expect("gateway process state should be readable")
         {
-            panic!("gateway exited before accepting traffic: {status}");
+            panic!("gateway exited before {path} became ready: {status}");
         }
-        if TcpStream::connect_timeout(&address, Duration::from_millis(100)).is_ok() {
-            return;
+
+        if let Ok(mut stream) = TcpStream::connect_timeout(&address, Duration::from_millis(100)) {
+            stream
+                .set_read_timeout(Some(Duration::from_millis(250)))
+                .expect("readiness read timeout should be configurable");
+            stream
+                .set_write_timeout(Some(Duration::from_millis(250)))
+                .expect("readiness write timeout should be configurable");
+            if stream.write_all(request.as_bytes()).is_ok() {
+                let mut response = Vec::new();
+                let mut buffer = [0_u8; 1024];
+                loop {
+                    match stream.read(&mut buffer) {
+                        Ok(0) => break,
+                        Ok(read) => {
+                            response.extend_from_slice(&buffer[..read]);
+                            if response.len() > MAX_RESPONSE_HEADER_BYTES {
+                                break;
+                            }
+                            if response.windows(4).any(|window| window == b"\r\n\r\n") {
+                                if response.starts_with(b"HTTP/1.1 200 ") {
+                                    return;
+                                }
+                                break;
+                            }
+                        }
+                        Err(error)
+                            if matches!(
+                                error.kind(),
+                                ErrorKind::WouldBlock | ErrorKind::TimedOut
+                            ) =>
+                        {
+                            break;
+                        }
+                        Err(_) => break,
+                    }
+                }
+            }
         }
+
         assert!(
             Instant::now() < deadline,
-            "gateway did not start within 10s"
+            "gateway did not expose HTTP 200 on {path} within 10s"
         );
         thread::sleep(Duration::from_millis(25));
     }
 }
 
-/// Starts the compiled pg-erd binary and requires both traffic and metrics authorities to bind.
+/// Starts the compiled pg-erd binary and requires application-level traffic and metrics readiness.
 fn start_gateway(
     config: &NamedTempFile,
     gateway_address: SocketAddr,
@@ -100,8 +139,8 @@ fn start_gateway(
         .stderr(Stdio::null())
         .spawn()
         .expect("compiled pg-erd migration binary should start");
-    wait_until_listening(gateway_address, &mut child);
-    wait_until_listening(metrics_address, &mut child);
+    wait_until_http_ok(gateway_address, "/readyz", &mut child);
+    wait_until_http_ok(metrics_address, "/metrics", &mut child);
     GatewayProcess(child)
 }
 
@@ -196,17 +235,24 @@ fn get(address: SocketAddr, path: &str) -> String {
 
 /// Reads only through the origin header terminator so the fixture can control the failure phase.
 fn read_request_headers(stream: &mut TcpStream) -> String {
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .expect("origin request timeout should be configurable");
     let mut bytes = Vec::new();
     let mut buffer = [0_u8; 1024];
     loop {
         let read = stream
             .read(&mut buffer)
-            .expect("origin request should be readable");
+            .expect("origin request should complete within the fixture timeout");
         assert!(
             read > 0,
             "gateway closed origin request before headers completed"
         );
         bytes.extend_from_slice(&buffer[..read]);
+        assert!(
+            bytes.len() <= MAX_RESPONSE_HEADER_BYTES,
+            "origin request headers exceeded the bounded fixture limit"
+        );
         if bytes.windows(4).any(|window| window == b"\r\n\r\n") {
             return String::from_utf8_lossy(&bytes).into_owned();
         }
@@ -223,6 +269,21 @@ fn content_length_values(headers: &str) -> Vec<&str> {
         .collect()
 }
 
+/// Parses only an exact HTTP/1.1 three-digit response status line for the wire oracle.
+fn http_1_1_status_code(response: &str) -> Option<u16> {
+    let status_line = response.lines().next()?.trim_end_matches('\r');
+    let mut fields = status_line.splitn(3, ' ');
+    if fields.next()? != "HTTP/1.1" {
+        return None;
+    }
+    let code = fields.next()?;
+    if code.len() != 3 || !code.bytes().all(|byte| byte.is_ascii_digit()) || fields.next().is_none()
+    {
+        return None;
+    }
+    code.parse().ok()
+}
+
 /// Locks the framing oracle against lookalike names and duplicate/conflicting field values.
 #[test]
 fn content_length_parser_preserves_field_identity_and_cardinality_evidence() {
@@ -237,6 +298,15 @@ fn content_length_parser_preserves_field_identity_and_cardinality_evidence() {
         ),
         vec!["20", "21"]
     );
+}
+
+/// Locks status evidence to exact HTTP/1.1 protocol and a three-digit code.
+#[test]
+fn status_parser_rejects_prefix_and_protocol_lookalikes() {
+    assert_eq!(http_1_1_status_code("HTTP/1.1 200 OK\r\n\r\n"), Some(200));
+    assert_eq!(http_1_1_status_code("HTTP/1.1 2000 Bad\r\n\r\n"), None);
+    assert_eq!(http_1_1_status_code("http/1.1 200 OK\r\n\r\n"), None);
+    assert_eq!(http_1_1_status_code("HTTP/2 200 OK\r\n\r\n"), None);
 }
 
 /// Proves a post-commit origin truncation preserves framing, terminates downstream and keeps recovery usable.
@@ -280,13 +350,23 @@ fn compiled_pg_erd_truncated_response_stays_committed_and_preserves_independent_
             .expect("frontend recovery response should be writable");
     });
 
-    let (gateway_address, metrics_address) = reserve_distinct_loopback_addresses();
+    let (gateway_reservation, metrics_reservation) = reserve_distinct_loopback_listeners();
+    let gateway_address = gateway_reservation
+        .local_addr()
+        .expect("traffic reservation should expose an address");
+    let metrics_address = metrics_reservation
+        .local_addr()
+        .expect("metrics reservation should expose an address");
     let config = write_config(
         gateway_address,
         metrics_address,
         backend_address,
         frontend_address,
     );
+    // Release the exact reservations only at the compiled child-bind handoff; retaining them through
+    // config construction prevents another fixture from reclaiming either selected authority early.
+    drop(gateway_reservation);
+    drop(metrics_reservation);
     let _process = start_gateway(&config, gateway_address, metrics_address);
 
     let (partial, termination) = raw_request_until_terminal_after_body_prefix(
@@ -308,10 +388,10 @@ fn compiled_pg_erd_truncated_response_stays_committed_and_preserves_independent_
         .map(|position| position + 4)
         .expect("committed partial response must contain a complete header block");
     let raw_headers = String::from_utf8_lossy(&partial[..header_end]);
-    let headers = raw_headers.to_ascii_lowercase();
-    assert!(
-        headers.starts_with("http/1.1 200"),
-        "a post-header upstream failure cannot be rewritten as a new status: {headers:?}"
+    assert_eq!(
+        http_1_1_status_code(raw_headers.as_ref()),
+        Some(200),
+        "a post-header upstream failure cannot be rewritten as a new status: {raw_headers:?}"
     );
     let content_lengths = content_length_values(raw_headers.as_ref());
     assert_eq!(
@@ -327,8 +407,9 @@ fn compiled_pg_erd_truncated_response_stays_committed_and_preserves_independent_
     );
 
     let readiness = get(gateway_address, "/readyz");
-    assert!(
-        readiness.starts_with("HTTP/1.1 200"),
+    assert_eq!(
+        http_1_1_status_code(&readiness),
+        Some(200),
         "one truncated upstream response must not poison process readiness: {readiness:?}"
     );
 
@@ -341,8 +422,9 @@ fn compiled_pg_erd_truncated_response_stays_committed_and_preserves_independent_
     );
 
     let recovered = get(gateway_address, "/after-partial-response");
-    assert!(
-        recovered.starts_with("HTTP/1.1 200"),
+    assert_eq!(
+        http_1_1_status_code(&recovered),
+        Some(200),
         "an independent characterized route must remain usable after a truncated response: {recovered:?}"
     );
     assert!(recovered.ends_with("\r\n\r\nrecovered"));

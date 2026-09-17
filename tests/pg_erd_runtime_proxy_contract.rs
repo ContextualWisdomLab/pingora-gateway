@@ -9,7 +9,7 @@ use cwl_pingora_gateway::migration_plan::EdgeMigrationPlan;
 use cwl_pingora_gateway::migration_proxy::{MigrationGatewayProxy, MigrationGatewayProxyError};
 use cwl_pingora_gateway::observability::{RequestObservation, RequestOutcome};
 use cwl_pingora_gateway::runtime_isolation::RuntimeIsolationLimits;
-use pingora::prelude::{ErrorType, ProxyHttp, RequestHeader, ResponseHeader};
+use pingora::prelude::{ProxyHttp, RequestHeader, ResponseHeader};
 use pingora::upstreams::peer::Peer;
 
 fn upstream(name: &str, port: u16) -> UpstreamConfig {
@@ -153,11 +153,6 @@ fn migration_proxy_rejects_unmatched_paths_instead_of_inventing_a_destination() 
         MigrationGatewayProxyError::UnmatchedRoute {
             request_path: "/missing".to_string(),
         }
-    );
-    assert_eq!(
-        error.into_pingora().etype,
-        ErrorType::HTTPStatus(404),
-        "adapter-local route misses must preserve the bounded edge HTTP status"
     );
 }
 

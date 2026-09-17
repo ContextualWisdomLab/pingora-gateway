@@ -113,6 +113,20 @@ pub enum GatewayConfigError {
         /// Stable upstream whose transport binding used port zero.
         upstream_name: String,
     },
+    /// A wildcard bind address is not a concrete remote network authority.
+    #[error(
+        "upstream {upstream_name} must use a concrete IP address, not an unspecified wildcard"
+    )]
+    UnspecifiedUpstreamAddress {
+        /// Stable upstream whose canonical address was `0.0.0.0` or `::`.
+        upstream_name: String,
+    },
+    /// TCP upstream authority must identify a unicast destination, not broadcast or multicast.
+    #[error("upstream {upstream_name} must use a unicast TCP destination address")]
+    NonUnicastUpstreamAddress {
+        /// Stable upstream whose canonical address was broadcast or multicast.
+        upstream_name: String,
+    },
     /// A zero request-body limit would reject every body and is almost certainly misconfiguration.
     #[error("max_request_body_bytes must be greater than zero")]
     InvalidRequestBodyLimit,
@@ -150,6 +164,12 @@ pub enum GatewayConfigError {
     #[error("TLS upstream {upstream_name} has an empty SNI server name")]
     EmptyTlsServerName {
         /// Upstream whose TLS identity is incomplete.
+        upstream_name: String,
+    },
+    /// SNI must be an RFC 6066 ASCII DNS HostName, not an IP literal or malformed DNS label set.
+    #[error("TLS upstream {upstream_name} has an invalid RFC 6066 SNI DNS hostname")]
+    InvalidTlsServerName {
+        /// Upstream whose configured SNI is not a valid TLS HostName.
         upstream_name: String,
     },
     /// Cleartext upstreams must not carry an unused TLS identity.
@@ -302,6 +322,37 @@ pub(crate) fn validate_upstream_authority_separation(
     Ok(())
 }
 
+/// Returns whether an operator-supplied TLS server name is safe to serialize as RFC 6066 HostName.
+///
+/// SNI `host_name` carries an ASCII DNS hostname without a trailing root dot; literal IP addresses
+/// are a different TLS reference-identifier class and are not representable through this field.
+/// DNS labels use the conservative host-name LDH form, which also admits IDNA A-labels.
+fn valid_tls_sni_hostname(server_name: &str) -> bool {
+    if server_name.len() > 253
+        || !server_name.is_ascii()
+        || server_name.ends_with('.')
+        || server_name.parse::<IpAddr>().is_ok()
+    {
+        return false;
+    }
+
+    server_name.split('.').all(|label| {
+        !label.is_empty()
+            && label.len() <= 63
+            && label
+                .as_bytes()
+                .first()
+                .is_some_and(|byte| byte.is_ascii_alphanumeric())
+            && label
+                .as_bytes()
+                .last()
+                .is_some_and(|byte| byte.is_ascii_alphanumeric())
+            && label
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+    })
+}
+
 impl UpstreamConfig {
     /// Validates the invariants required before this upstream can become network authority.
     pub fn validate(&self) -> Result<(), GatewayConfigError> {
@@ -315,6 +366,22 @@ impl UpstreamConfig {
             });
         }
 
+        let canonical_address = self.address.ip().to_canonical();
+        if canonical_address.is_unspecified() {
+            return Err(GatewayConfigError::UnspecifiedUpstreamAddress {
+                upstream_name: normalized_name.to_string(),
+            });
+        }
+        let is_non_unicast = match canonical_address {
+            IpAddr::V4(address) => address.is_broadcast() || address.is_multicast(),
+            IpAddr::V6(address) => address.is_multicast(),
+        };
+        if is_non_unicast {
+            return Err(GatewayConfigError::NonUnicastUpstreamAddress {
+                upstream_name: normalized_name.to_string(),
+            });
+        }
+
         match (self.tls, self.sni.as_deref()) {
             (true, None) => {
                 return Err(GatewayConfigError::MissingTlsServerName {
@@ -323,6 +390,11 @@ impl UpstreamConfig {
             }
             (true, Some(server_name)) if server_name.trim().is_empty() => {
                 return Err(GatewayConfigError::EmptyTlsServerName {
+                    upstream_name: normalized_name.to_string(),
+                });
+            }
+            (true, Some(server_name)) if !valid_tls_sni_hostname(server_name) => {
+                return Err(GatewayConfigError::InvalidTlsServerName {
                     upstream_name: normalized_name.to_string(),
                 });
             }
