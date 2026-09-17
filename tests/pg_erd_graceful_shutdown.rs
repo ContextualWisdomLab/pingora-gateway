@@ -2,9 +2,8 @@
 //!
 //! The fixture holds one characterized backend response open, sends SIGTERM only after the routed
 //! request reaches that backend, then releases the response during the shared grace period. The
-//! downstream request must complete and the migration process must exit inside the external
-//! termination budget. This proves the bounded composition root consumes the shared runtime drain
-//! policy without transferring generic-binary evidence.
+//! downstream request must complete and the migration process must exit inside the signal-relative
+//! external termination budget. This keeps bounded-root evidence independent of the generic binary.
 
 #![cfg(unix)]
 
@@ -17,6 +16,8 @@ use std::time::{Duration, Instant};
 
 use cwl_pingora_gateway::runtime_policy::{V1_GRACE_PERIOD_SECONDS, V1_TERMINATION_BUDGET_SECONDS};
 use tempfile::NamedTempFile;
+
+const MAX_FIXTURE_EVIDENCE_BYTES: usize = 64 * 1024;
 
 /// Owns the migration child so every assertion path terminates and reaps the spawned process.
 struct GatewayProcess(Child);
@@ -101,22 +102,72 @@ fn wait_for_exit(process: &mut Child, deadline: Instant) -> std::process::ExitSt
     }
 }
 
-/// Reads through the origin header terminator so SIGTERM is sent only after routing is established.
+/// Reads through the origin header terminator with finite socket and evidence bounds.
 fn read_request_headers(stream: &mut TcpStream) -> String {
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .expect("origin request timeout should be configurable");
     let mut bytes = Vec::new();
     let mut buffer = [0_u8; 1024];
     loop {
         let read = stream
             .read(&mut buffer)
-            .expect("origin request should be readable");
+            .expect("origin request should be readable before its fixture timeout");
         assert!(
             read > 0,
             "gateway closed origin request before headers completed"
         );
         bytes.extend_from_slice(&buffer[..read]);
+        assert!(
+            bytes.len() <= MAX_FIXTURE_EVIDENCE_BYTES,
+            "origin request exceeded the 64 KiB evidence ceiling"
+        );
         if bytes.windows(4).any(|window| window == b"\r\n\r\n") {
             return String::from_utf8_lossy(&bytes).into_owned();
         }
+    }
+}
+
+/// Reads exactly far enough to prove the admitted response body completed without waiting for EOF.
+fn read_response_through_body(stream: &mut TcpStream, expected_body: &[u8]) -> Vec<u8> {
+    stream
+        .set_read_timeout(Some(Duration::from_secs(V1_GRACE_PERIOD_SECONDS + 1)))
+        .expect("downstream response timeout should be configurable");
+
+    let mut response = Vec::new();
+    let mut buffer = [0_u8; 1024];
+    loop {
+        let read = stream
+            .read(&mut buffer)
+            .expect("downstream response should arrive before its fixture timeout");
+        assert!(
+            read > 0,
+            "migration gateway closed before completing the response"
+        );
+        response.extend_from_slice(&buffer[..read]);
+        assert!(
+            response.len() <= MAX_FIXTURE_EVIDENCE_BYTES,
+            "downstream response exceeded the 64 KiB evidence ceiling"
+        );
+
+        let Some(header_end) = response
+            .windows(4)
+            .position(|window| window == b"\r\n\r\n")
+            .map(|position| position + 4)
+        else {
+            continue;
+        };
+
+        if response.len() < header_end + expected_body.len() {
+            continue;
+        }
+
+        assert_eq!(
+            &response[header_end..header_end + expected_body.len()],
+            expected_body,
+            "migration gateway should forward the admitted response body exactly"
+        );
+        return response;
     }
 }
 
@@ -153,8 +204,8 @@ fn sigterm_drains_routed_pg_erd_request_before_process_exit() {
             .send(())
             .expect("test should observe the routed in-flight request");
         release_response_rx
-            .recv_timeout(Duration::from_secs(V1_GRACE_PERIOD_SECONDS))
-            .expect("test should release the held response during the grace period");
+            .recv_timeout(Duration::from_secs(V1_TERMINATION_BUDGET_SECONDS))
+            .expect("test controller should release the held response before its hard watchdog");
         stream
             .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 7\r\nConnection: close\r\n\r\ndrained")
             .expect("held backend response should be writable");
@@ -175,18 +226,11 @@ fn sigterm_drains_routed_pg_erd_request_before_process_exit() {
         let mut stream = TcpStream::connect(gateway_address)
             .expect("migration gateway should accept downstream traffic");
         stream
-            .set_read_timeout(Some(Duration::from_secs(V1_TERMINATION_BUDGET_SECONDS)))
-            .expect("downstream timeout should be configurable");
-        stream
             .write_all(
                 b"GET /api/held HTTP/1.1\r\nHost: app.example:8080\r\nConnection: close\r\n\r\n",
             )
             .expect("downstream request should be writable");
-        let mut response = String::new();
-        stream
-            .read_to_string(&mut response)
-            .expect("drained downstream response should be readable");
-        response
+        read_response_through_body(&mut stream, b"drained")
     });
 
     request_seen_rx
@@ -208,10 +252,10 @@ fn sigterm_drains_routed_pg_erd_request_before_process_exit() {
         .join()
         .expect("downstream request thread should complete");
     assert!(
-        response.starts_with("HTTP/1.1 200"),
-        "routed in-flight request should complete during graceful drain: {response:?}"
+        response.starts_with(b"HTTP/1.1 200 "),
+        "routed in-flight request should complete during graceful drain: {:?}",
+        String::from_utf8_lossy(&response)
     );
-    assert!(response.ends_with("\r\n\r\ndrained"));
     assert!(
         signal_sent_at.elapsed() < Duration::from_secs(V1_GRACE_PERIOD_SECONDS + 1),
         "routed response should complete during the configured grace period"

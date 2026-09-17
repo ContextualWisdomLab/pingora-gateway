@@ -24,8 +24,8 @@ async-trait = "0.1.89"
 bytes = "1.10.1"
 env_logger = "0.11.8"
 log = { version = "0.4.28", features = ["std"] }
-pingora = { version = "=0.8.0", git = "https://github.com/cloudflare/pingora.git", rev = "09696b51bc59315353d96686355861604d0bb48c", features = ["proxy", "openssl"] }
-pingora-prometheus = { version = "=0.8.0", git = "https://github.com/cloudflare/pingora.git", rev = "09696b51bc59315353d96686355861604d0bb48c" }
+pingora = { version = "=0.9.0", features = ["proxy", "openssl"] }
+pingora-prometheus = "=0.9.0"
 serde = { version = "1.0.219", features = ["derive"] }
 serde_yaml = { package = "yaml_serde", version = "0.10.7" }
 thiserror = "2.0.16"
