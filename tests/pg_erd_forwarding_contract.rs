@@ -93,6 +93,26 @@ fn malformed_host_authority_fails_closed_through_transport_derivation() {
 }
 
 #[test]
+fn oversized_numeric_host_port_fails_closed_before_forwarding() {
+    let client = PingoraSocketAddr::from(SocketAddr::from((Ipv4Addr::LOCALHOST, 49152)));
+    let mut request =
+        RequestHeader::build("GET", b"/api", None).expect("fixture request must be valid");
+    request
+        .insert_header("Host", "app.example:65536")
+        .expect("out-of-range port is still valid generic HTTP field data");
+
+    let error = ForwardingContext::from_downstream_transport(
+        Some(&client),
+        &request,
+        &request,
+        DownstreamScheme::Http,
+    )
+    .expect_err("numeric Host ports above u16 must fail closed before forwarding");
+
+    assert_eq!(error.etype, ErrorType::HTTPStatus(400));
+}
+
+#[test]
 fn non_host_uri_syntax_is_rejected_before_becoming_forwarded_authority() {
     let client = PingoraSocketAddr::from(SocketAddr::from((Ipv4Addr::LOCALHOST, 49152)));
 
