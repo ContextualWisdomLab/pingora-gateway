@@ -159,7 +159,7 @@ fn write_migration_config(
     file
 }
 
-/// Waits for a complete process-local readiness response instead of treating bare TCP accept as ready.
+/// Waits for a complete process-local readiness response inside one absolute activation deadline.
 fn wait_until_ready(address: SocketAddr, process: &mut Child) {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
@@ -170,12 +170,22 @@ fn wait_until_ready(address: SocketAddr, process: &mut Child) {
             panic!("migration gateway exited before becoming ready: {status}");
         }
 
-        if let Ok(mut stream) = TcpStream::connect_timeout(&address, Duration::from_millis(100)) {
+        let connect_budget = deadline.saturating_duration_since(Instant::now());
+        assert!(
+            !connect_budget.is_zero(),
+            "migration gateway did not become ready within 10s"
+        );
+
+        if let Ok(mut stream) =
+            TcpStream::connect_timeout(&address, connect_budget.min(Duration::from_millis(100)))
+        {
+            let write_budget = deadline.saturating_duration_since(Instant::now());
+            assert!(
+                !write_budget.is_zero(),
+                "migration gateway did not become ready within 10s"
+            );
             stream
-                .set_read_timeout(Some(Duration::from_millis(250)))
-                .expect("readiness read timeout should be configurable");
-            stream
-                .set_write_timeout(Some(Duration::from_millis(250)))
+                .set_write_timeout(Some(write_budget.min(Duration::from_millis(250))))
                 .expect("readiness write timeout should be configurable");
 
             if stream
@@ -187,6 +197,15 @@ fn wait_until_ready(address: SocketAddr, process: &mut Child) {
                 let mut response = Vec::new();
                 let mut buffer = [0_u8; 1024];
                 loop {
+                    let read_budget = deadline.saturating_duration_since(Instant::now());
+                    assert!(
+                        !read_budget.is_zero(),
+                        "migration gateway did not become ready within 10s"
+                    );
+                    stream
+                        .set_read_timeout(Some(read_budget.min(Duration::from_millis(250))))
+                        .expect("readiness read timeout should be configurable");
+
                     match stream.read(&mut buffer) {
                         Ok(0) => break,
                         Ok(read) => {
@@ -215,11 +234,12 @@ fn wait_until_ready(address: SocketAddr, process: &mut Child) {
             }
         }
 
+        let retry_budget = deadline.saturating_duration_since(Instant::now());
         assert!(
-            Instant::now() < deadline,
+            !retry_budget.is_zero(),
             "migration gateway did not become ready within 10s"
         );
-        thread::sleep(Duration::from_millis(25));
+        thread::sleep(retry_budget.min(Duration::from_millis(25)));
     }
 }
 
