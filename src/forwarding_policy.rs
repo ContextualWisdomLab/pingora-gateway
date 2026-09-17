@@ -429,6 +429,7 @@ mod tests {
             "",
             "app.example:",
             "app.example:0",
+            "app.example:65536",
             "2001:db8::1",
             "[::1",
             "[::1]junk",
