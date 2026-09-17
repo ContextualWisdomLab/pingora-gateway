@@ -73,6 +73,31 @@ fn pg_erd_forwarding_rebuilds_transport_identity_instead_of_trusting_request_hea
 }
 
 #[test]
+fn https_host_without_explicit_port_uses_external_default_port() {
+    let client = PingoraSocketAddr::from(SocketAddr::from((Ipv4Addr::LOCALHOST, 49152)));
+    let mut request =
+        RequestHeader::build("GET", b"/api", None).expect("fixture request must be valid");
+    request
+        .insert_header("Host", "secure.example")
+        .expect("fixture Host must be valid");
+
+    let context = ForwardingContext::from_downstream_transport(
+        Some(&client),
+        &request,
+        &request,
+        DownstreamScheme::Https,
+    )
+    .expect("HTTPS Host without an explicit port must derive forwarding metadata");
+
+    assert_eq!(context, ForwardingContext::new(
+        IpAddr::V4(Ipv4Addr::LOCALHOST),
+        "secure.example".to_string(),
+        443,
+        DownstreamScheme::Https,
+    ));
+}
+
+#[test]
 fn malformed_host_authority_fails_closed_through_transport_derivation() {
     let client = PingoraSocketAddr::from(SocketAddr::from((Ipv4Addr::LOCALHOST, 49152)));
     let mut request =
