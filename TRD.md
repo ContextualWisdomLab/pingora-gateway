@@ -29,7 +29,9 @@ Custom upstream trust-bundle bytes are not preloaded during YAML parsing. Peer/t
 
 ## Request and forwarding policy
 
-Pingora's standard upstream-request policy handles hop-by-hop and connection-nominated headers. The generic gateway additionally removes request-controlled `Forwarded`, `X-Forwarded-For`, `X-Forwarded-Host`, `X-Forwarded-Port`, `X-Forwarded-Proto`, `X-Forwarded-Server`, and `X-Real-IP`, then emits only gateway-owned `Forwarded: proto=http` for its current cleartext downstream contract. Generic v1 deliberately makes no client-IP identity or downstream proxy-provenance claim.
+Every immutable Pingora upstream peer uses `HttpUpstreamRequestPolicy::deny_upgrades()`. This retains the pinned supplier's standard hop-by-hop and `Connection`-nomination sanitization but changes its HTTP/1 upgrade policy from the default `WebSocketOnly` behavior to `Deny`. The separate transport-neutral admission guard remains authoritative for returning HTTP 501 before application admission or origin selection. Keeping both boundaries aligned prevents callback/composition changes from implicitly enabling a supplier protocol capability that the versioned gateway contract does not admit.
+
+The generic gateway additionally removes request-controlled `Forwarded`, `X-Forwarded-For`, `X-Forwarded-Host`, `X-Forwarded-Port`, `X-Forwarded-Proto`, `X-Forwarded-Server`, and `X-Real-IP`, then emits only gateway-owned `Forwarded: proto=http` for its current cleartext downstream contract. Generic v1 deliberately makes no client-IP identity or downstream proxy-provenance claim.
 
 The pg-erd migration callback uses the separate Ingress Forwarding Policy. Request-controlled `Forwarded`, `X-Forwarded-*`, `X-Real-IP` and legacy `X-Forwarded-Server` values are discarded. `X-Forwarded-For` and `X-Real-IP` are rebuilt from the accepted client socket, `X-Forwarded-Host` preserves original Host authority, and `X-Forwarded-Port` comes from an explicit Host port or the admitted scheme default rather than the process listener bind. The currently characterized legacy entry point is cleartext `web`, so downstream scheme is explicitly `http`; HTTPS forwarding semantics require a separate downstream-TLS contract.
 
@@ -51,6 +53,6 @@ A protected release remains blocked until exact-head CI, strict Clippy, warning-
 
 ## Protocol and migration limits
 
-Generic v1 remains a cleartext downstream HTTP proxy with one explicit upstream per process. Downstream TLS termination, HTTP/2 admission, H2-to-H1 Cookie normalization, HTTP/3/QUIC, WebSocket/Extended CONNECT, dynamic reload, Kubernetes Gateway API, and consumer-specific multi-route behavior are versioned increments with separate realistic RED-to-GREEN evidence.
+Generic v1 remains a cleartext downstream HTTP proxy with one explicit upstream per process. HTTP/1 Upgrade is explicitly denied both before request admission and at immutable peer construction; that is non-support evidence, not WebSocket parity. Downstream TLS termination, HTTP/2 admission, H2-to-H1 Cookie normalization, HTTP/3/QUIC, versioned WebSocket/Extended CONNECT, dynamic reload, Kubernetes Gateway API, and consumer-specific multi-route behavior are separate increments with realistic RED-to-GREEN evidence.
 
 The pg-erd migration stack is a bounded consumer-characterization adapter and does not widen generic v1. Promotion still requires unchanged exact-head formatting, compile/test, strict Clippy, rustdoc, owned-production coverage, routed traffic/load/failure evidence, immutable release identity, consumer deployment pin, shadow/canary, rollback rehearsal, protected cutover, and verified legacy removal.
