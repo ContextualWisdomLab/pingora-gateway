@@ -89,12 +89,15 @@ fn https_host_without_explicit_port_uses_external_default_port() {
     )
     .expect("HTTPS Host without an explicit port must derive forwarding metadata");
 
-    assert_eq!(context, ForwardingContext::new(
-        IpAddr::V4(Ipv4Addr::LOCALHOST),
-        "secure.example".to_string(),
-        443,
-        DownstreamScheme::Https,
-    ));
+    assert_eq!(
+        context,
+        ForwardingContext::new(
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+            "secure.example".to_string(),
+            443,
+            DownstreamScheme::Https,
+        )
+    );
 }
 
 #[test]
