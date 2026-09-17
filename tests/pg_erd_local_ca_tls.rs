@@ -3,7 +3,7 @@
 #![cfg(unix)]
 
 use std::fs;
-use std::io::{Read, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -14,6 +14,7 @@ use pingora::tls::ssl::{SslAcceptor, SslFiletype, SslMethod};
 use tempfile::{tempdir, NamedTempFile};
 
 const MAX_REQUEST_HEADER_BYTES: usize = 64 * 1024;
+const MAX_RESPONSE_HEADER_BYTES: usize = 64 * 1024;
 const SOCKET_IO_TIMEOUT: Duration = Duration::from_secs(5);
 
 struct GatewayProcess(Child);
@@ -158,22 +159,65 @@ fn write_migration_config(
     file
 }
 
-/// Waits for the real listener while failing immediately if the process exits during activation.
-fn wait_until_listening(address: SocketAddr, process: &mut Child) {
+/// Waits for a complete process-local readiness response instead of treating bare TCP accept as ready.
+fn wait_until_ready(address: SocketAddr, process: &mut Child) {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         if let Some(status) = process
             .try_wait()
             .expect("gateway process state should be readable")
         {
-            panic!("migration gateway exited before accepting traffic: {status}");
+            panic!("migration gateway exited before becoming ready: {status}");
         }
-        if TcpStream::connect_timeout(&address, Duration::from_millis(100)).is_ok() {
-            return;
+
+        if let Ok(mut stream) = TcpStream::connect_timeout(&address, Duration::from_millis(100)) {
+            stream
+                .set_read_timeout(Some(Duration::from_millis(250)))
+                .expect("readiness read timeout should be configurable");
+            stream
+                .set_write_timeout(Some(Duration::from_millis(250)))
+                .expect("readiness write timeout should be configurable");
+
+            if stream
+                .write_all(
+                    b"GET /readyz HTTP/1.1\r\nHost: gateway.local\r\nConnection: close\r\n\r\n",
+                )
+                .is_ok()
+            {
+                let mut response = Vec::new();
+                let mut buffer = [0_u8; 1024];
+                loop {
+                    match stream.read(&mut buffer) {
+                        Ok(0) => break,
+                        Ok(read) => {
+                            response.extend_from_slice(&buffer[..read]);
+                            if response.len() > MAX_RESPONSE_HEADER_BYTES {
+                                break;
+                            }
+                            if response.windows(4).any(|window| window == b"\r\n\r\n") {
+                                if response.starts_with(b"HTTP/1.1 200 ") {
+                                    return;
+                                }
+                                break;
+                            }
+                        }
+                        Err(error)
+                            if matches!(
+                                error.kind(),
+                                ErrorKind::WouldBlock | ErrorKind::TimedOut
+                            ) =>
+                        {
+                            break;
+                        }
+                        Err(_) => break,
+                    }
+                }
+            }
         }
+
         assert!(
             Instant::now() < deadline,
-            "migration gateway did not start within 10s"
+            "migration gateway did not become ready within 10s"
         );
         thread::sleep(Duration::from_millis(25));
     }
@@ -191,7 +235,7 @@ fn spawn_gateway(config: &NamedTempFile, listener: SocketAddr) -> GatewayProcess
         .stderr(Stdio::inherit())
         .spawn()
         .expect("compiled migration gateway binary should start");
-    wait_until_listening(listener, &mut child);
+    wait_until_ready(listener, &mut child);
     GatewayProcess(child)
 }
 
