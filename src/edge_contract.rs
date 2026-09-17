@@ -14,6 +14,20 @@ use thiserror::Error;
 /// The only configuration version implemented by this release line.
 pub const CURRENT_GATEWAY_CONFIG_VERSION: u32 = 1;
 
+/// Maximum global data-plane worker count admitted by this configuration contract.
+///
+/// Pingora applies this global value to services that do not provide a service-level override.
+/// The production proxy follows it so `HttpProxy` runtime and shutdown sharding stay aligned,
+/// while the low-volume Prometheus service is explicitly fixed at one worker. Capping the global
+/// data-plane value at 256 prevents unbounded proxy thread fan-out while still covering the
+/// 128-core NUMA class that motivated explicit topology control. Raising this limit requires fresh
+/// capacity and shutdown-contention evidence rather than inheriting host CPU count.
+pub const MAX_SERVICE_THREADS_PER_SERVICE: usize = 256;
+
+const fn default_service_threads() -> usize {
+    1
+}
+
 /// Fail-closed configuration for one gateway process.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -28,6 +42,14 @@ pub struct GatewayConfig {
     pub max_request_body_bytes: u64,
     /// Maximum number of non-health downstream requests admitted concurrently by this process.
     pub max_in_flight_requests: usize,
+    /// Global worker count used by the data-plane proxy service.
+    ///
+    /// Pingora services may override the global value; production composition keeps Prometheus at
+    /// one worker. Omitted version-1 configurations retain the historical one-proxy-worker
+    /// topology. Operators must set this explicitly when profiling or deploying a multi-worker
+    /// proxy; it is never derived from host CPU count.
+    #[serde(default = "default_service_threads")]
+    pub service_threads: usize,
     /// Maximum number of reusable upstream keepalive connections retained by Pingora.
     pub upstream_keepalive_pool_size: usize,
     /// Explicit set of upstream services that the gateway may contact.
@@ -119,6 +141,17 @@ pub enum GatewayConfigError {
     /// A zero in-flight budget would reject every proxied request.
     #[error("max_in_flight_requests must be greater than zero")]
     InvalidInFlightRequestLimit,
+    /// A zero data-plane worker count would construct an invalid proxy runtime topology.
+    #[error("service_threads must be greater than zero")]
+    InvalidServiceThreads,
+    /// The declared global data-plane worker topology exceeds this contract's safety ceiling.
+    #[error("service_threads {actual} exceeds the data-plane maximum {max}")]
+    ServiceThreadsExceedLimit {
+        /// Operator-requested global worker count followed by the proxy service.
+        actual: usize,
+        /// Maximum global data-plane worker count admitted by this contract version.
+        max: usize,
+    },
     /// A zero keepalive pool silently disables reusable upstream connections and changes capacity.
     #[error("upstream_keepalive_pool_size must be greater than zero")]
     InvalidUpstreamKeepalivePoolSize,
@@ -217,6 +250,15 @@ impl GatewayConfig {
         }
         if self.max_in_flight_requests == 0 {
             return Err(GatewayConfigError::InvalidInFlightRequestLimit);
+        }
+        if self.service_threads == 0 {
+            return Err(GatewayConfigError::InvalidServiceThreads);
+        }
+        if self.service_threads > MAX_SERVICE_THREADS_PER_SERVICE {
+            return Err(GatewayConfigError::ServiceThreadsExceedLimit {
+                actual: self.service_threads,
+                max: MAX_SERVICE_THREADS_PER_SERVICE,
+            });
         }
         if self.upstream_keepalive_pool_size == 0 {
             return Err(GatewayConfigError::InvalidUpstreamKeepalivePoolSize);

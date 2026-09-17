@@ -8,6 +8,7 @@ listener: 0.0.0.0:6188
 metrics_listener: 127.0.0.1:6192
 max_request_body_bytes: 1048576
 max_in_flight_requests: 128
+service_threads: 1
 upstream_keepalive_pool_size: 32
 upstreams:
   - name: application
@@ -23,7 +24,11 @@ upstreams:
       idle_ms: 10000
 ```
 
-Unknown fields are rejected. `version` must be `1`. `listener`, `metrics_listener`, and `address` are socket addresses with non-zero ports. Port zero is rejected because this deployment contract requires stable operator-declared listener authority and a concrete connectable upstream rather than OS-selected ephemeral listener ports or unusable upstream destinations. Traffic and metrics listeners must not overlap one effective socket authority. Equal addresses, same-port same-family wildcard/concrete aliases, exact IPv4-mapped IPv6 aliases of the same IPv4 address, an IPv4 wildcard paired with any mapped IPv4 authority, a mapped IPv4 wildcard paired with any native or mapped IPv4 authority, and the platform-dependent same-port IPv6-wildcard/IPv4 combination all fail closed; distinct concrete non-aliased addresses may use the same port. `max_request_body_bytes`, `max_in_flight_requests`, and `upstream_keepalive_pool_size` must all be positive. Generic v1 requires exactly one upstream and a non-empty stable upstream name. Every timeout must be positive.
+Unknown fields are rejected. `version` must be `1`. `listener`, `metrics_listener`, and `address` are socket addresses with non-zero ports. Port zero is rejected because this deployment contract requires stable operator-declared listener authority and a concrete connectable upstream rather than OS-selected ephemeral listener ports or unusable upstream destinations. Traffic and metrics listeners must not overlap one effective socket authority. Equal addresses, same-port same-family wildcard/concrete aliases, exact IPv4-mapped IPv6 aliases of the same IPv4 address, an IPv4 wildcard paired with any mapped IPv4 authority, a mapped IPv4 wildcard paired with any native or mapped IPv4 authority, and the platform-dependent same-port IPv6-wildcard/IPv4 combination all fail closed; distinct concrete non-aliased addresses may use the same port. `max_request_body_bytes`, `max_in_flight_requests`, `service_threads`, and `upstream_keepalive_pool_size` must all be positive. `service_threads` must not exceed 256. Generic v1 requires exactly one upstream and a non-empty stable upstream name. Every timeout must be positive.
+
+`service_threads` is the validated data-plane worker count passed into Pingora `ServerConf::threads`. The proxy service follows that global value, and Pingora's `HttpProxy` uses the same value to size its sharded graceful-shutdown notification path. The process also registers a Prometheus service, but both production composition roots explicitly override that low-volume metrics listener to one worker instead of multiplying telemetry workers with proxy capacity. Existing unreleased version-1 configurations that omit the field therefore preserve one proxy worker plus one metrics worker; new deployment and profiling configurations should state the proxy value explicitly. The gateway never infers it from host CPU count. Values of zero or more than 256 fail closed before listener activation. The 256-worker ceiling is a safety boundary rather than a deployment recommendation: raising it requires a later contract decision backed by capacity, scheduler and shutdown-contention evidence. Increasing the value within the admitted range makes a multi-worker proxy topology executable, but does not by itself prove NUMA scaling, shutdown-tail behavior, or production capacity.
+
+The field name remains `service_threads` because it maps to Pingora's global `ServerConf` contract; it must not be interpreted as “multiply every registered service by this value.” Service-level overrides are part of the production composition. Capacity evidence must therefore record the configured proxy worker count, registered service count, metrics-service override, CPU/socket/NUMA topology and derived configured service-worker slots separately. Those slots are not a total OS process-thread count because Pingora/runtime internals may own additional threads.
 
 The timeout fields map directly to the pinned Pingora peer options rather than defining a second gateway timer model. In particular, `read_ms` is a **per-read inactivity budget**: Pingora waits at most that long for each individual upstream `read()` and resets the timer after a successful read. It is not a total-response deadline. A connected upstream that sends no response bytes is therefore bounded by `read_ms`, while a slow-drip response can remain alive across multiple successful reads. Generic v1 still has no whole-response lifetime and must not infer one from `read_ms`.
 
@@ -33,13 +38,13 @@ Generic v1 has no operator-facing HTTP/1 request-header byte/count field. At the
 
 `tls: true` requires non-empty `sni`, which Pingora uses for SNI and hostname verification together with certificate verification. `trust_bundle_file` is optional and, when present, must be an absolute path to a non-empty PEM certificate bundle readable during peer activation before listeners open. The bundle supplies trust anchors for that upstream instead of changing certificate-authority ownership: issuance and rotation remain external responsibilities. If `trust_bundle_file` is omitted, Pingora uses platform trust roots. `tls: false` forbids both `sni` and `trust_bundle_file`.
 
-The generic contract does not include route tables, user-selected destinations, credentials, downstream certificates, ACME, retry counts, static roots, WebSocket switches, or load-balancer policy. Adding one of those fields changes public semantics and requires a versioned contract/ADR plus behavior tests.
+The generic contract does not include route tables, user-selected destinations, credentials, downstream certificates, ACME, retry counts, static roots, WebSocket switches, or load-balancer policy. Adding one of those fields changes public semantics and requires a versioned contract/ADR plus behavior tests. `service_threads` is the pre-release runtime-capacity exception recorded in ADR 0012: omission preserves the only previously characterized proxy topology, while explicit use is bounded and executable before the first immutable gateway release.
 
 Generic v1 downstream transport is cleartext TCP. Before proxying, the generic adapter removes request-controlled `Forwarded`, `X-Forwarded-For`, `X-Forwarded-Host`, `X-Forwarded-Port`, `X-Forwarded-Proto`, `X-Forwarded-Server`, and `X-Real-IP`, then emits only gateway-owned `Forwarded: proto=http` to the upstream; it does not assert client identity. Upstream HTTP remains HTTP/1.1-only in this release line.
 
 ## Bounded `cwl-pingora-pg-erd-migration` candidate
 
-The dedicated pg-erd migration binary consumes a different, migration-specific Admin Config profile. Version 1 remains readable only to preserve the existing unreleased characterization stack. Version 2 is the opt-in response-lifetime increment and requires an explicit positive `max_upstream_response_body_ms`; version 1 rejects that field so the old contract cannot silently acquire new timing semantics.
+The dedicated pg-erd migration binary consumes a different, migration-specific Admin Config profile. Version 1 remains readable only to preserve the existing unreleased characterization stack. Version 2 is the opt-in response-lifetime increment and requires an explicit positive `max_upstream_response_body_ms`; version 1 rejects that field so the old contract cannot silently acquire new timing semantics. Both unreleased versions admit the runtime-only `service_threads` data-plane capacity control; omission preserves the historical one-proxy-worker topology while the metrics service remains fixed at one worker. ADR 0012 records this bounded pre-release addition separately from routing or product semantics.
 
 ```yaml
 version: 2
@@ -48,6 +53,7 @@ metrics_listener: 127.0.0.1:6192
 max_request_body_bytes: 1048576
 max_in_flight_requests: 128
 max_upstream_response_body_ms: 30000
+service_threads: 1
 upstream_keepalive_pool_size: 32
 upstreams:
   - name: backend
@@ -70,7 +76,9 @@ upstreams:
       idle_ms: 10000
 ```
 
-The numeric value above is an illustrative configuration example, not a pg-erd production SLO. A deployment owner must choose the version-2 value from its observed long-response contract before canary or cutover. Version 2 rejects zero or a missing response-body lifetime rather than substituting a hidden default.
+The numeric response-lifetime value above is an illustrative configuration example, not a pg-erd production SLO. A deployment owner must choose the version-2 value from its observed long-response contract before canary or cutover. Version 2 rejects zero or a missing response-body lifetime rather than substituting a hidden default.
+
+As in the generic runtime, `service_threads` sets Pingora's global worker count used by the proxy service and by `HttpProxy` shutdown-notifier sharding. The metrics service explicitly overrides itself to one worker. The admitted proxy range is 1 through 256 inclusive. Omitting the field preserves one proxy worker for compatibility with the existing unreleased characterization stack, while representative multi-worker/NUMA profiling must name the explicit proxy value used for the run and the metrics override. The gateway does not derive worker count from CPU availability, and a high-core host with `service_threads: 1` is not evidence for multi-worker contention or scaling. The 256 ceiling limits accidental data-plane thread fan-out and is not itself a recommended production setting.
 
 `max_upstream_response_body_ms` starts when Pingora invokes the upstream-response-header filter for the first non-informational response, before body-progress callbacks are processed. Runtime Isolation compares elapsed monotonic time only when a non-empty upstream body chunk is actually observed. Once that progress boundary is at or beyond the configured lifetime, the callback raises an upstream-scoped fatal error. Empty/end-of-stream bookkeeping callbacks do not create a false timeout. If the response status/header was already committed, the gateway terminates that incomplete downstream response instead of inventing a second status or silently routing to the other pg-erd origin. The ordinary request context then drops its in-flight admission lease.
 
@@ -88,4 +96,4 @@ The migration profile cannot configure product authentication/business rules, Ke
 
 ## Shared observability boundary
 
-Both binaries reserve `/livez` and `/readyz` for process health and use the dedicated metrics listener for low-cardinality Prometheus telemetry. Operators should normally bind metrics to loopback, a pod-only address, or another access-controlled observability network rather than the public traffic address. Shared application telemetry is limited to request count, request-error count, observed request-body bytes, and backpressure rejection count. Access logs record only response status, coarse success/error outcome, and observed request-body byte count; request URI, host, client identity, authorization, cookies, tokens, and configured credentials are intentionally absent.
+Both binaries reserve `/livez` and `/readyz` for process health and use the dedicated metrics listener for low-cardinality Prometheus telemetry. The metrics service is intentionally fixed to one Pingora worker and is not scaled by the data-plane `service_threads` value. Operators should normally bind metrics to loopback, a pod-only address, or another access-controlled observability network rather than the public traffic address. Shared application telemetry is limited to request count, request-error count, observed request-body bytes, and backpressure rejection count. Access logs record only response status, coarse success/error outcome, and observed request-body byte count; request URI, host, client identity, authorization, cookies, tokens, and configured credentials are intentionally absent.

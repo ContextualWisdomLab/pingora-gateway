@@ -8,9 +8,8 @@ use std::env;
 use std::fmt::Display;
 use std::process::ExitCode;
 
-use cwl_pingora_gateway::gateway_proxy::GatewayProxy;
 use cwl_pingora_gateway::logging_policy::init_runtime_logging;
-use cwl_pingora_gateway::runtime_policy::build_server_conf;
+use cwl_pingora_gateway::runtime_composition::compose_gateway_runtime;
 use cwl_pingora_gateway::startup::GatewayCommand;
 use pingora::prelude::{http_proxy_service, Server};
 use pingora::server::RunArgs;
@@ -28,15 +27,14 @@ fn main() -> ExitCode {
         Ok(config) => config,
         Err(error) => return exit_with_error(error),
     };
-    let proxy = match GatewayProxy::try_from_config(&config) {
-        Ok(proxy) => proxy,
+    let (proxy, server_conf) = match compose_gateway_runtime(&config) {
+        Ok(runtime) => runtime,
         Err(error) => return exit_with_error(error),
     };
     let listener = config.listener.to_string();
     let metrics_listener = config.metrics_listener.to_string();
 
-    let mut server =
-        Server::new_with_opt_and_conf(None, build_server_conf(config.upstream_keepalive_pool_size));
+    let mut server = Server::new_with_opt_and_conf(None, server_conf);
     server.bootstrap();
 
     let mut proxy_service = http_proxy_service(&server.configuration, proxy);
@@ -44,6 +42,10 @@ fn main() -> ExitCode {
     server.add_service(proxy_service);
 
     let mut metrics_service = pingora_prometheus::prometheus_http_service();
+    // Pingora's global `threads` value also sizes HttpProxy shutdown sharding, so the proxy must
+    // keep that exact value. The low-volume metrics listener is isolated at one worker instead of
+    // multiplying operator-facing telemetry threads with proxy capacity.
+    metrics_service.threads = Some(1);
     metrics_service.add_tcp(&metrics_listener);
     server.add_service(metrics_service);
 
