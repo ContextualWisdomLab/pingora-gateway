@@ -1,6 +1,6 @@
 # ADR 0004: Characterize pg-erd-cloud path precedence before Pingora activation
 
-- Status: Accepted for characterization; runtime activation remains blocked
+- Status: Proposed; characterization is executable, runtime activation remains blocked
 - Date: 2026-09-02
 
 ## Context
