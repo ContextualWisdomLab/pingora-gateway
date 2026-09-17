@@ -421,11 +421,16 @@ mod tests {
     }
 
     #[test]
-    fn migration_via_mapping_covers_http10_http3_and_rejects_http09() {
+    fn migration_via_mapping_covers_http10_http11_http3_and_rejects_http09() {
         assert_eq!(
             migration_gateway_via_value(Version::HTTP_10)
                 .expect("HTTP/1.0 Via token must be supported"),
             "1.0 cwl-pingora-gateway"
+        );
+        assert_eq!(
+            migration_gateway_via_value(Version::HTTP_11)
+                .expect("HTTP/1.1 Via token must be supported"),
+            "1.1 cwl-pingora-gateway"
         );
         assert_eq!(
             migration_gateway_via_value(Version::HTTP_3)
