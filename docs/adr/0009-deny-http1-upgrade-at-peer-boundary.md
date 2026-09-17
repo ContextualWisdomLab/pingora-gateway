@@ -10,7 +10,7 @@ Generic v1 and the bounded pg-erd migration candidate already reject uncharacter
 
 At pinned supplier revision `09696b51bc59315353d96686355861604d0bb48c`, `standard()`/`default()` retains `H1UpgradePolicy::WebSocketOnly`. Pingora therefore retains WebSocket forwarding capability below a CWL contract that deliberately admits no WebSocket policy. The current callbacks prevent that capability from being reached, but the transport object itself did not encode the same invariant. A later callback/composition refactor could consequently widen the protocol surface without changing the transport-neutral admission contract.
 
-Fresh supplier verification on 2026-09-09 still finds protected `cloudflare/pingora/main` at `09696b51bc59315353d96686355861604d0bb48c`, issue `cloudflare/pingora#946` open, and proposed repair `cloudflare/pingora#947` open/unmerged. That supplier state reinforces fail-closed admission; it is not consumed as mutable dependency authority.
+Fresh supplier verification on 2026-09-17 finds protected `cloudflare/pingora/main` at `4487f7b2ab50f159e4a2cf4f6a6b813f61bb6e19`, issue `cloudflare/pingora#946` open, and proposed repair `cloudflare/pingora#947` open/unmerged. That supplier state reinforces fail-closed admission; it is not consumed as mutable dependency authority.
 
 ## Constraints
 
