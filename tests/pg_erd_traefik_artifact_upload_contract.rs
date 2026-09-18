@@ -74,10 +74,9 @@ fn characterization_receipt_cross_binds_uploaded_source_marker() {
     for required in [
         "grep -Fx -- \"gateway_source_sha=$EXPECTED_SHA\"",
         "grep -Fx -- \"consumer_source_sha=$PG_ERD_SOURCE_SHA\"",
-        "recorded_source_identity_sha256",
-        "gateway_source_sha=$EXPECTED_SHA",
-        "consumer_source_sha=$PG_ERD_SOURCE_SHA",
-        "source_identity_sha256=$recorded_source_identity_sha256",
+        "recorded_source_identity_sha256=\"$(sha256sum",
+        "printf 'gateway_source_sha=%s\\nconsumer_source_sha=%s\\nsource_identity_sha256=%s\\n'",
+        "\"$recorded_source_identity_sha256\"",
     ] {
         assert!(
             WORKFLOW.contains(required),
