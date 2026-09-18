@@ -289,11 +289,44 @@ fn masked_client_text_frame(payload: &[u8]) -> Vec<u8> {
     frame
 }
 
+fn read_exact_before(
+    stream: &mut TcpStream,
+    buffer: &mut [u8],
+    deadline: Instant,
+    context: &str,
+) {
+    let mut offset = 0;
+    while offset < buffer.len() {
+        let now = Instant::now();
+        assert!(
+            now < deadline,
+            "{context} exceeded the absolute frame deadline"
+        );
+        stream
+            .set_read_timeout(Some(deadline.saturating_duration_since(now)))
+            .expect("frame read timeout must be configurable");
+        match stream.read(&mut buffer[offset..]) {
+            Ok(0) => panic!("{context} closed before the frame completed"),
+            Ok(read) => offset += read,
+            Err(error)
+                if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) =>
+            {
+                panic!("{context} exceeded the absolute frame deadline: {error}")
+            }
+            Err(error) => panic!("{context} should remain readable: {error}"),
+        }
+    }
+}
+
 fn read_client_text_frame(stream: &mut TcpStream) -> Vec<u8> {
+    let deadline = Instant::now() + IO_DEADLINE;
     let mut prefix = [0_u8; 2];
-    stream
-        .read_exact(&mut prefix)
-        .expect("origin must receive a complete client WebSocket frame prefix");
+    read_exact_before(
+        stream,
+        &mut prefix,
+        deadline,
+        "origin client-frame prefix",
+    );
     assert_eq!(prefix[0], 0x81, "client fixture must send one FIN text frame");
     assert_ne!(
         prefix[1] & 0x80,
@@ -304,13 +337,14 @@ fn read_client_text_frame(stream: &mut TcpStream) -> Vec<u8> {
     assert!(payload_len < 126, "fixture does not admit extended lengths");
 
     let mut mask = [0_u8; 4];
-    stream
-        .read_exact(&mut mask)
-        .expect("origin must receive the client WebSocket mask");
+    read_exact_before(stream, &mut mask, deadline, "origin client-frame mask");
     let mut payload = vec![0_u8; payload_len];
-    stream
-        .read_exact(&mut payload)
-        .expect("origin must receive the client WebSocket payload");
+    read_exact_before(
+        stream,
+        &mut payload,
+        deadline,
+        "origin client-frame payload",
+    );
     for (index, byte) in payload.iter_mut().enumerate() {
         *byte ^= mask[index % mask.len()];
     }
@@ -327,10 +361,14 @@ fn server_text_frame(payload: &[u8]) -> Vec<u8> {
 }
 
 fn read_server_text_frame(stream: &mut TcpStream) -> Vec<u8> {
+    let deadline = Instant::now() + IO_DEADLINE;
     let mut prefix = [0_u8; 2];
-    stream
-        .read_exact(&mut prefix)
-        .expect("client must receive a complete server WebSocket frame prefix");
+    read_exact_before(
+        stream,
+        &mut prefix,
+        deadline,
+        "client server-frame prefix",
+    );
     assert_eq!(prefix[0], 0x81, "origin fixture must echo one FIN text frame");
     assert_eq!(
         prefix[1] & 0x80,
@@ -340,9 +378,12 @@ fn read_server_text_frame(stream: &mut TcpStream) -> Vec<u8> {
     let payload_len = usize::from(prefix[1] & 0x7f);
     assert!(payload_len < 126, "fixture does not admit extended lengths");
     let mut payload = vec![0_u8; payload_len];
-    stream
-        .read_exact(&mut payload)
-        .expect("client must receive the server WebSocket payload");
+    read_exact_before(
+        stream,
+        &mut payload,
+        deadline,
+        "client server-frame payload",
+    );
     payload
 }
 
@@ -380,9 +421,6 @@ Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n\
             .expect("origin 101 response must be writable");
         stream.flush().expect("origin 101 response must flush");
 
-        stream
-            .set_read_timeout(Some(IO_DEADLINE))
-            .expect("origin tunnel timeout must be configurable");
         let payload = read_client_text_frame(&mut stream);
         assert_eq!(payload, WEBSOCKET_PAYLOAD);
         stream
@@ -453,9 +491,6 @@ X-CWL-Delay-Request-Body: 200\r\n\
         .expect("upgraded tunnel must remain writable after delayed request-body completion");
     client.flush().expect("WebSocket client frame must flush");
 
-    client
-        .set_read_timeout(Some(IO_DEADLINE))
-        .expect("client tunnel timeout must be configurable");
     let echoed = read_server_text_frame(&mut client);
     assert_eq!(echoed, WEBSOCKET_PAYLOAD);
 
