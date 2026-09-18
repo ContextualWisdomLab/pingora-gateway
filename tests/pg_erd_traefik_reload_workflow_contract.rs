@@ -54,17 +54,24 @@ fn harness_uses_the_exact_consumer_traefik_shape_without_product_policy_copying(
 }
 
 #[test]
-fn harness_distinguishes_in_place_and_atomic_replace_reload_semantics() {
+fn harness_distinguishes_observations_from_controlled_recreate_fallbacks() {
     for required in [
         "in_place_reload_detected",
+        "lkg_generation_requires_recreate",
+        "live_reload_observation_path",
+        "malformed_last_known_good",
+        "semantic_invalid_observable",
+        "recovery_requires_recreate",
+        "post_invalid_recovery_requires_recreate",
         "atomic_replace_detected",
         "atomic_replace_after_recreate_detected",
-        "malformed_last_known_good",
+        "final_baseline_requires_recreate",
         "recovery_detected",
         "concurrent_probe_failures",
         "X-CWL-Reload-Generation",
         "mv \"$replacement\" \"$dynamic_file\"",
         "--force-recreate traefik",
+        "[[ \"$concurrent_probe_samples\" -ge 20 ]]",
     ] {
         assert!(
             HARNESS.contains(required),
