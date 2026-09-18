@@ -22,13 +22,9 @@ fn public_boundary_covers_default_bracket_and_percent_encoded_authority() {
         ("exa%6Dple.example", DownstreamScheme::Http, 80),
     ] {
         let request = request_with_host(host);
-        let context = ForwardingContext::from_downstream_transport(
-            Some(&client),
-            &request,
-            &request,
-            scheme,
-        )
-        .expect("admitted Host syntax must derive forwarding authority");
+        let context =
+            ForwardingContext::from_downstream_transport(Some(&client), &request, &request, scheme)
+                .expect("admitted Host syntax must derive forwarding authority");
 
         assert_eq!(
             context,
@@ -47,7 +43,14 @@ fn public_boundary_covers_default_bracket_and_percent_encoded_authority() {
 fn public_boundary_covers_remaining_malformed_authority_shapes() {
     let client = PingoraSocketAddr::from(SocketAddr::from((Ipv4Addr::LOCALHOST, 49152)));
 
-    for host in ["", "[::1", "[::1]junk", "app[example", "app]example", ":8080"] {
+    for host in [
+        "",
+        "[::1",
+        "[::1]junk",
+        "app[example",
+        "app]example",
+        ":8080",
+    ] {
         let request = request_with_host(host);
         let error = ForwardingContext::from_downstream_transport(
             Some(&client),
