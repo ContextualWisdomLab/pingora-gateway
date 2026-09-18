@@ -104,6 +104,24 @@ fn invalid_reload_observations_use_bounded_transition_windows() {
 }
 
 #[test]
+fn post_invalid_recovery_requires_a_fresh_generation_marker() {
+    for required in [
+        "post_invalid_recovery_candidate",
+        "render_generation \"post-invalid-recovery\"",
+        "activate_generation_with_fallback \"$post_invalid_recovery_candidate\" \"post-invalid-recovery\" \"post_invalid_recovery_requires_recreate\"",
+    ] {
+        assert!(
+            HARNESS.contains(required),
+            "post-invalid recovery must prove a fresh generation transition: {required}"
+        );
+    }
+    assert!(
+        !HARNESS.contains("activate_generation_with_fallback \"$recovery_candidate\" \"recovery\" \"post_invalid_recovery_requires_recreate\""),
+        "post-invalid recovery must not accept the already-visible recovery generation as fresh evidence"
+    );
+}
+
+#[test]
 fn recreate_fallback_preserves_the_container_logs_that_caused_it() {
     assert!(
         HARNESS.contains(">>\"$PG_ERD_TRAEFIK_LOG\""),
