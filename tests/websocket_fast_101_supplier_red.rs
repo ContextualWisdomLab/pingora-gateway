@@ -32,6 +32,7 @@ const IO_DEADLINE: Duration = Duration::from_secs(5);
 const MAX_HEADER_BYTES: usize = 64 * 1024;
 const WEBSOCKET_PAYLOAD: &[u8] = b"cwl-fast-101";
 const CLIENT_MASK: [u8; 4] = [0x12, 0x34, 0x56, 0x78];
+const RFC_SAMPLE_KEY: &str = "dGhlIHNhbXBsZSBub25jZQ==";
 const RFC_SAMPLE_ACCEPT: &str = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=";
 
 #[derive(Clone)]
@@ -149,6 +150,27 @@ fn status_code(header: &[u8]) -> Option<u16> {
         return None;
     }
     status.parse().ok()
+}
+
+fn header_value<'a>(header: &'a [u8], name: &str) -> Option<&'a str> {
+    let text = std::str::from_utf8(header).ok()?;
+    text.split("\r\n")
+        .skip(1)
+        .take_while(|line| !line.is_empty())
+        .find_map(|line| {
+            let (field_name, value) = line.split_once(':')?;
+            field_name
+                .eq_ignore_ascii_case(name)
+                .then_some(value.trim())
+        })
+}
+
+fn header_has_token(header: &[u8], name: &str, expected: &str) -> bool {
+    header_value(header, name).is_some_and(|value| {
+        value
+            .split(',')
+            .any(|token| token.trim().eq_ignore_ascii_case(expected))
+    })
 }
 
 fn wait_for_ready(address: SocketAddr, child: &mut Child) {
@@ -283,14 +305,23 @@ fn spawn_fast_101_echo_origin(listener: TcpListener) -> thread::JoinHandle<()> {
     thread::spawn(move || {
         let (mut stream, _) = listener.accept().expect("origin must accept proxy connection");
         let request = read_header(&mut stream, "origin upgrade request");
-        let request_text = String::from_utf8_lossy(&request).to_ascii_lowercase();
         assert!(
-            request_text.contains("upgrade: websocket\r\n"),
-            "supplier proxy must forward the WebSocket Upgrade field: {request_text:?}"
+            header_has_token(&request, "Upgrade", "websocket"),
+            "supplier proxy must forward Upgrade: websocket"
         );
         assert!(
-            request_text.contains("connection: upgrade\r\n"),
-            "supplier proxy must forward a normalized Connection: upgrade field: {request_text:?}"
+            header_has_token(&request, "Connection", "upgrade"),
+            "supplier proxy must forward a normalized Connection: upgrade token"
+        );
+        assert_eq!(
+            header_value(&request, "Sec-WebSocket-Version"),
+            Some("13"),
+            "supplier proxy must preserve the WebSocket version"
+        );
+        assert_eq!(
+            header_value(&request, "Sec-WebSocket-Key"),
+            Some(RFC_SAMPLE_KEY),
+            "supplier proxy must preserve the case-sensitive WebSocket key"
         );
 
         stream
@@ -358,13 +389,18 @@ X-CWL-Delay-Request-Body: 200\r\n\
         "supplier proxy must first establish the HTTP/1 upgrade: {}",
         String::from_utf8_lossy(&response)
     );
-    let response_text = String::from_utf8_lossy(&response).to_ascii_lowercase();
     assert!(
-        response_text.contains(&format!(
-            "sec-websocket-accept: {}\r\n",
-            RFC_SAMPLE_ACCEPT.to_ascii_lowercase()
-        )),
-        "origin must return the RFC 6455 accept value for the fixed fixture key: {response_text:?}"
+        header_has_token(&response, "Connection", "upgrade"),
+        "valid WebSocket 101 must preserve the Connection: upgrade token"
+    );
+    assert!(
+        header_has_token(&response, "Upgrade", "websocket"),
+        "valid WebSocket 101 must preserve Upgrade: websocket"
+    );
+    assert_eq!(
+        header_value(&response, "Sec-WebSocket-Accept"),
+        Some(RFC_SAMPLE_ACCEPT),
+        "proxy must preserve the case-sensitive RFC 6455 accept value"
     );
 
     // Let the deliberately delayed end-of-request-body event arrive after the 101. Pingora 0.9.0
