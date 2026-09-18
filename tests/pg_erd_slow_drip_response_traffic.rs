@@ -109,12 +109,11 @@ fn read_header_block(
 }
 
 fn probe_http_status(address: SocketAddr, path: &str, deadline: Instant) -> Option<u16> {
-    let connect_timeout = remaining(deadline, "connecting readiness probe")
-        .min(Duration::from_millis(100));
+    let connect_timeout =
+        remaining(deadline, "connecting readiness probe").min(Duration::from_millis(100));
     let mut stream = TcpStream::connect_timeout(&address, connect_timeout).ok()?;
-    let request = format!(
-        "GET {path} HTTP/1.1\r\nHost: readiness.invalid\r\nConnection: close\r\n\r\n"
-    );
+    let request =
+        format!("GET {path} HTTP/1.1\r\nHost: readiness.invalid\r\nConnection: close\r\n\r\n");
     set_write_timeout_to_remaining(&stream, deadline, "writing readiness probe");
     stream.write_all(request.as_bytes()).ok()?;
     let headers = read_header_block(&mut stream, deadline, "reading readiness response").ok()?;
@@ -139,8 +138,8 @@ fn wait_until_http_status(address: SocketAddr, path: &str, process: &mut Child, 
             return;
         }
 
-        let sleep_for = remaining(deadline, "waiting to retry readiness")
-            .min(Duration::from_millis(25));
+        let sleep_for =
+            remaining(deadline, "waiting to retry readiness").min(Duration::from_millis(25));
         thread::sleep(sleep_for);
     }
 }
@@ -165,11 +164,9 @@ fn start_gateway(
 
 fn raw_request(address: SocketAddr, request: &[u8]) -> String {
     let deadline = Instant::now() + FIXTURE_IO_TIMEOUT;
-    let mut downstream = TcpStream::connect_timeout(
-        &address,
-        remaining(deadline, "connecting bounded request"),
-    )
-    .expect("gateway should accept traffic");
+    let mut downstream =
+        TcpStream::connect_timeout(&address, remaining(deadline, "connecting bounded request"))
+            .expect("gateway should accept traffic");
     set_write_timeout_to_remaining(&downstream, deadline, "writing bounded request");
     downstream
         .write_all(request)
@@ -183,7 +180,9 @@ fn raw_request(address: SocketAddr, request: &[u8]) -> String {
             Ok(0) => break,
             Ok(read) => response.extend_from_slice(&buffer[..read]),
             Err(error) if error.kind() == ErrorKind::ConnectionReset => break,
-            Err(error) => panic!("gateway response should complete inside absolute deadline: {error}"),
+            Err(error) => {
+                panic!("gateway response should complete inside absolute deadline: {error}")
+            }
         }
     }
     String::from_utf8_lossy(&response).into_owned()
@@ -372,7 +371,10 @@ fn compiled_pg_erd_terminates_continuous_response_drip_without_poisoning_other_r
     );
     assert_eq!(header_values(&headers, "Content-Length"), vec!["20"]);
     let body = &partial[header_end..];
-    assert!(!body.is_empty(), "body progress must cross the callback boundary");
+    assert!(
+        !body.is_empty(),
+        "body progress must cross the callback boundary"
+    );
     assert!(
         body.len() < 20,
         "configured lifetime must terminate before the declared body completes"
