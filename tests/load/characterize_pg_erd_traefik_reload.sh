@@ -101,6 +101,10 @@ cleanup() {
     chmod "$dynamic_mode" "$dynamic_file" || true
   fi
   capture_traefik_log cleanup
+  record traefik_log_sha256 "$(sha256sum "$PG_ERD_TRAEFIK_LOG" | awk '{print $1}')"
+  if (( status == 0 )); then
+    record result characterization-complete
+  fi
   docker compose -f "$compose_file" down -v --remove-orphans >/dev/null 2>&1 || true
   rm -f .env
   rm -rf secrets
@@ -356,7 +360,5 @@ record concurrent_probe_log_sha256 "$(sha256sum "$probe_log" | awk '{print $1}')
 [[ "$concurrent_probe_samples" -ge 20 ]]
 
 capture_traefik_log final
-record traefik_log_sha256 "$(sha256sum "$PG_ERD_TRAEFIK_LOG" | awk '{print $1}')"
-record result characterization-complete
 
 git diff --exit-code -- compose.prod.yaml deploy/traefik/dynamic.yaml
