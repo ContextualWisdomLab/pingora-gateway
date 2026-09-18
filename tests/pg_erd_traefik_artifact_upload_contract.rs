@@ -72,10 +72,11 @@ fn artifact_set_self_binds_exact_gateway_and_consumer_sources() {
 #[test]
 fn characterization_receipt_cross_binds_uploaded_source_marker() {
     for required in [
-        "grep -Fx -- \"gateway_source_sha=$EXPECTED_SHA\"",
-        "grep -Fx -- \"consumer_source_sha=$PG_ERD_SOURCE_SHA\"",
+        "grep -Fx -- \"gateway_source_sha=$EXPECTED_SHA\" \"$PG_ERD_TRAEFIK_SOURCE_IDENTITY\"",
+        "grep -Fx -- \"consumer_source_sha=$PG_ERD_SOURCE_SHA\" \"$PG_ERD_TRAEFIK_SOURCE_IDENTITY\"",
+        "grep -Fx -- \"consumer_source_sha=$PG_ERD_SOURCE_SHA\" \"$PG_ERD_TRAEFIK_RELOAD_EVIDENCE\"",
         "recorded_source_identity_sha256=\"$(sha256sum",
-        "printf 'gateway_source_sha=%s\\nconsumer_source_sha=%s\\nsource_identity_sha256=%s\\n'",
+        "printf 'gateway_source_sha=%s\\nsource_identity_sha256=%s\\n'",
         "\"$recorded_source_identity_sha256\"",
     ] {
         assert!(
