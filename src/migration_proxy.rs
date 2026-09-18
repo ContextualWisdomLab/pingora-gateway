@@ -8,9 +8,13 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use bytes::Bytes;
+use log::error;
 use pingora::prelude::{
     Error, ErrorType, HttpPeer, ProxyHttp, RequestHeader, ResponseHeader, Session,
 };
+use pingora::protocols::http::ServerSession;
+use pingora::proxy::FailToProxy;
+use pingora::ErrorSource;
 use thiserror::Error;
 
 use crate::forwarding_policy::{DownstreamScheme, ForwardingContext};
@@ -34,17 +38,6 @@ pub enum MigrationGatewayProxyError {
     },
 }
 
-impl MigrationGatewayProxyError {
-    /// Maps an adapter-local route miss to the bounded HTTP response exposed at the edge.
-    pub fn into_pingora(self) -> Box<Error> {
-        let Self::UnmatchedRoute { .. } = self;
-        Error::explain(
-            ErrorType::HTTPStatus(404),
-            "request path does not match a characterized edge route",
-        )
-    }
-}
-
 /// Per-request state for the characterized multi-route Pingora adapter.
 #[derive(Debug)]
 pub struct MigrationRequestContext {
@@ -54,7 +47,6 @@ pub struct MigrationRequestContext {
 }
 
 impl MigrationRequestContext {
-    /// Creates isolated per-request accounting with no in-flight admission lease yet acquired.
     fn new(limits: RuntimeIsolationLimits) -> Self {
         Self {
             request_body: RequestBodyBudget::new(limits),
@@ -74,9 +66,6 @@ pub struct MigrationGatewayProxy {
 
 impl MigrationGatewayProxy {
     /// Creates callbacks over an already validated delivery plan and runtime-isolation contract.
-    ///
-    /// Construction has no remaining fallible work: peer materialization already happened in
-    /// `MigrationDeliveryPlan`, and `RuntimeIsolationLimits` can exist only after validation.
     pub fn new(delivery: MigrationDeliveryPlan, limits: RuntimeIsolationLimits) -> Self {
         Self {
             delivery,
@@ -85,10 +74,7 @@ impl MigrationGatewayProxy {
         }
     }
 
-    /// Backward-compatible constructor for callers that still consume the earlier result shape.
-    ///
-    /// No runtime error can be produced at this boundary; later fail-closed errors are request
-    /// routing, body, forwarding, transport, or upstream failures handled by Pingora callbacks.
+    /// Backward-compatible constructor retaining the earlier result-shaped API.
     pub fn try_new(
         delivery: MigrationDeliveryPlan,
         limits: RuntimeIsolationLimits,
@@ -119,15 +105,12 @@ impl MigrationGatewayProxy {
 
     /// Applies every characterized edge-owned response header using replacement semantics.
     pub fn apply_response_headers(&self, response: &mut ResponseHeader) -> pingora::Result<()> {
-        for rule in self.delivery.response_header_rules() {
-            response
-                .insert_header(rule.name.clone(), rule.value.as_str())
-                .expect("validated response-header policy must remain representable at delivery");
-        }
-        Ok(())
+        self.delivery
+            .response_header_rules()
+            .iter()
+            .try_for_each(|rule| response.insert_header(rule.name.clone(), rule.value.as_str()))
     }
 
-    /// Acquires one process-local in-flight lease or rejects before upstream work begins.
     fn admit_request(&self, ctx: &mut MigrationRequestContext) -> pingora::Result<()> {
         if let Some(admission) = self.admission_budget.acquire() {
             ctx.admission = Some(admission);
@@ -141,7 +124,6 @@ impl MigrationGatewayProxy {
         ))
     }
 
-    /// Rejects an already-declared request body that exceeds the configured byte budget.
     fn reject_oversize_declared_body(
         session: &Session,
         ctx: &MigrationRequestContext,
@@ -161,7 +143,20 @@ impl MigrationGatewayProxy {
     }
 }
 
-/// Maps the transport-neutral body-limit violation to the stable fail-closed HTTP status.
+fn pg_erd_forwarding_context(
+    session: &Session,
+    upstream_request: &RequestHeader,
+) -> pingora::Result<ForwardingContext> {
+    // The characterized pg-erd Traefik configuration exposes only the clear-text `web`
+    // entryPoint. Downstream TLS is a separate migration contract and must not be invented here.
+    ForwardingContext::from_downstream_transport(
+        session.client_addr(),
+        upstream_request,
+        session.req_header(),
+        DownstreamScheme::Http,
+    )
+}
+
 fn body_rejection_to_pingora(rejection: BodyLimitExceeded) -> Box<Error> {
     let _ = (rejection.observed, rejection.limit);
     Error::explain(
@@ -170,13 +165,11 @@ fn body_rejection_to_pingora(rejection: BodyLimitExceeded) -> Box<Error> {
     )
 }
 
-/// Maps a versioned response-body lifetime breach to an upstream-scoped Pingora failure.
 fn response_body_lifetime_to_pingora(rejection: ResponseBodyLifetimeExceeded) -> Box<Error> {
     let _ = (rejection.elapsed, rejection.limit);
     Error::new_up(ErrorType::Custom("UpstreamResponseBodyLifetimeExceeded"))
 }
 
-/// Starts the lifetime on the first final upstream response header without reset on later headers.
 fn start_response_body_lifetime(
     is_informational: bool,
     ctx: &mut MigrationRequestContext,
@@ -187,7 +180,6 @@ fn start_response_body_lifetime(
     }
 }
 
-/// Applies the lifetime only to actual body progress, not empty/end-of-stream bookkeeping callbacks.
 fn enforce_response_body_lifetime(
     body: &Option<Bytes>,
     ctx: &MigrationRequestContext,
@@ -201,16 +193,36 @@ fn enforce_response_body_lifetime(
     Ok(None)
 }
 
+fn unmatched_route_to_pingora(_error: MigrationGatewayProxyError) -> Box<Error> {
+    Error::explain(
+        ErrorType::HTTPStatus(404),
+        "request path does not match a characterized edge route",
+    )
+}
+
+fn proxy_error_status(error: &Error) -> u16 {
+    if let ErrorType::HTTPStatus(code) = &error.etype {
+        return *code;
+    }
+
+    match &error.esource {
+        ErrorSource::Upstream => 502,
+        ErrorSource::Downstream => match &error.etype {
+            ErrorType::WriteError | ErrorType::ReadError | ErrorType::ConnectionClosed => 0,
+            _ => 400,
+        },
+        ErrorSource::Internal | ErrorSource::Unset => 500,
+    }
+}
+
 #[async_trait]
 impl ProxyHttp for MigrationGatewayProxy {
     type CTX = MigrationRequestContext;
 
-    /// Creates request-local body and admission accounting for a new downstream exchange.
     fn new_ctx(&self) -> Self::CTX {
         MigrationRequestContext::new(self.limits)
     }
 
-    /// Serves process health locally and admits ordinary traffic before any upstream selection.
     async fn request_filter(
         &self,
         session: &mut Session,
@@ -233,7 +245,6 @@ impl ProxyHttp for MigrationGatewayProxy {
         }
     }
 
-    /// Accounts streamed request bytes so chunked bodies cannot bypass the declared-length gate.
     async fn request_body_filter(
         &self,
         _session: &mut Session,
@@ -244,13 +255,12 @@ impl ProxyHttp for MigrationGatewayProxy {
     where
         Self::CTX: Send + Sync,
     {
-        let chunk_bytes = body.as_ref().map_or(0_usize, Bytes::len) as u64;
+        let chunk_bytes = body.as_ref().map_or(0_u64, |chunk| chunk.len() as u64);
         ctx.request_body
             .observe_chunk(chunk_bytes)
             .map_err(body_rejection_to_pingora)
     }
 
-    /// Resolves only a prevalidated peer admitted by the immutable characterized route plan.
     async fn upstream_peer(
         &self,
         session: &mut Session,
@@ -258,10 +268,9 @@ impl ProxyHttp for MigrationGatewayProxy {
     ) -> pingora::Result<Box<HttpPeer>> {
         self.build_upstream_peer(session.req_header().uri.path())
             .map(Box::new)
-            .map_err(MigrationGatewayProxyError::into_pingora)
+            .map_err(unmatched_route_to_pingora)
     }
 
-    /// Rebuilds forwarding identity from the accepted socket and Host authority before origin I/O.
     async fn upstream_request_filter(
         &self,
         session: &mut Session,
@@ -271,17 +280,10 @@ impl ProxyHttp for MigrationGatewayProxy {
     where
         Self::CTX: Send + Sync,
     {
-        let forwarding = ForwardingContext::from_downstream_transport(
-            session.client_addr(),
-            session.server_addr(),
-            upstream_request,
-            session.req_header(),
-            DownstreamScheme::Http,
-        )?;
+        let forwarding = pg_erd_forwarding_context(session, upstream_request)?;
         self.apply_upstream_request_policy(upstream_request, &forwarding)
     }
 
-    /// Starts the versioned response-body lifetime at the first non-informational upstream header.
     async fn upstream_response_filter(
         &self,
         _session: &mut Session,
@@ -299,7 +301,6 @@ impl ProxyHttp for MigrationGatewayProxy {
         Ok(())
     }
 
-    /// Applies the characterized edge-owned response fields with replacement semantics.
     async fn response_filter(
         &self,
         _session: &mut Session,
@@ -312,7 +313,6 @@ impl ProxyHttp for MigrationGatewayProxy {
         self.apply_response_headers(upstream_response)
     }
 
-    /// Enforces the versioned lifetime at real upstream body-progress boundaries only.
     fn upstream_response_body_filter(
         &self,
         _session: &mut Session,
@@ -323,7 +323,36 @@ impl ProxyHttp for MigrationGatewayProxy {
         enforce_response_body_lifetime(body, ctx, Instant::now())
     }
 
-    /// Emits only the shared low-cardinality completion observation for the finished request.
+    async fn fail_to_proxy(
+        &self,
+        session: &mut Session,
+        error_value: &Error,
+        _ctx: &mut Self::CTX,
+    ) -> FailToProxy {
+        let status = proxy_error_status(error_value);
+        if status > 0 {
+            let mut response = ServerSession::generate_error(status);
+            if let Err(policy_error) = self.apply_response_headers(&mut response) {
+                error!(
+                    "validated pg-erd response policy could not be applied to local error response: {policy_error}"
+                );
+            }
+            if let Err(write_error) = session
+                .write_response_header(Box::new(response), true)
+                .await
+            {
+                error!(
+                    "failed to send policy-complete error response to downstream: {write_error}"
+                );
+            }
+        }
+
+        FailToProxy {
+            error_code: status,
+            can_reuse_downstream: false,
+        }
+    }
+
     async fn logging(&self, session: &mut Session, error: Option<&Error>, ctx: &mut Self::CTX)
     where
         Self::CTX: Send + Sync,
@@ -334,19 +363,66 @@ impl ProxyHttp for MigrationGatewayProxy {
 
 #[cfg(test)]
 mod tests {
+    use std::net::SocketAddr;
     use std::time::{Duration, Instant};
 
     use bytes::Bytes;
-    use pingora::prelude::{ErrorSource, ErrorType};
+    use pingora::prelude::{Error, ErrorType};
+    use pingora::ErrorSource;
 
     use super::{
-        body_rejection_to_pingora, enforce_response_body_lifetime,
-        response_body_lifetime_to_pingora, start_response_body_lifetime,
-        MigrationGatewayProxyError, MigrationRequestContext,
+        body_rejection_to_pingora, enforce_response_body_lifetime, proxy_error_status,
+        response_body_lifetime_to_pingora, start_response_body_lifetime, unmatched_route_to_pingora,
+        MigrationGatewayProxy, MigrationGatewayProxyError, MigrationRequestContext,
     };
+    use crate::edge_contract::{UpstreamConfig, UpstreamTimeouts};
+    use crate::edge_routing::{RouteMatch, RouteRule};
+    use crate::http_policy::ResponseHeaderRule;
+    use crate::migration_delivery::MigrationDeliveryPlan;
+    use crate::migration_plan::EdgeMigrationPlan;
     use crate::runtime_isolation::{
         BodyLimitExceeded, ResponseBodyLifetimeExceeded, RuntimeIsolationLimits,
     };
+
+    fn admission_proxy() -> (MigrationGatewayProxy, RuntimeIsolationLimits) {
+        let plan = EdgeMigrationPlan::try_new(
+            vec!["backend".to_string()],
+            vec![RouteRule {
+                name: "backend".to_string(),
+                priority: 100,
+                matcher: RouteMatch::Exact("/".to_string()),
+                upstream: "backend".to_string(),
+            }],
+            vec![ResponseHeaderRule {
+                name: "X-Content-Type-Options".to_string(),
+                value: "nosniff".to_string(),
+            }],
+        )
+        .expect("admission fixture migration plan must be valid");
+        let delivery = MigrationDeliveryPlan::try_new(
+            plan,
+            vec![UpstreamConfig {
+                name: "backend".to_string(),
+                address: SocketAddr::from(([127, 0, 0, 1], 18081)),
+                tls: false,
+                sni: None,
+                trust_bundle_file: None,
+                timeouts: UpstreamTimeouts {
+                    connection_ms: 100,
+                    total_connection_ms: 200,
+                    read_ms: 200,
+                    write_ms: 200,
+                    idle_ms: 500,
+                },
+            }],
+        )
+        .expect("admission fixture delivery must be valid");
+        let limits = RuntimeIsolationLimits::try_new(8, 1)
+            .expect("admission fixture isolation limits must be valid");
+        let proxy = MigrationGatewayProxy::try_new(delivery, limits)
+            .expect("admission fixture proxy must activate");
+        (proxy, limits)
+    }
 
     #[test]
     fn migration_context_starts_without_an_admission_lease() {
@@ -354,6 +430,28 @@ mod tests {
         let ctx = MigrationRequestContext::new(limits);
         assert_eq!(ctx.request_body.observed(), 0);
         assert!(ctx.admission.is_none());
+    }
+
+    #[test]
+    fn admission_budget_rejects_and_recovers_after_lease_release() {
+        let (proxy, limits) = admission_proxy();
+        let mut held = MigrationRequestContext::new(limits);
+        let mut rejected = MigrationRequestContext::new(limits);
+
+        proxy
+            .admit_request(&mut held)
+            .expect("first request must acquire the single admission lease");
+        let error = proxy
+            .admit_request(&mut rejected)
+            .expect_err("second concurrent request must fail closed");
+        assert_eq!(error.etype, ErrorType::HTTPStatus(503));
+        assert!(rejected.admission.is_none());
+
+        drop(held);
+        proxy
+            .admit_request(&mut rejected)
+            .expect("released admission lease must make capacity reusable");
+        assert!(rejected.admission.is_some());
     }
 
     #[test]
@@ -412,10 +510,9 @@ mod tests {
         });
         assert_eq!(body_error.etype, ErrorType::HTTPStatus(413));
 
-        let route_error = MigrationGatewayProxyError::UnmatchedRoute {
+        let route_error = unmatched_route_to_pingora(MigrationGatewayProxyError::UnmatchedRoute {
             request_path: "/missing".to_string(),
-        }
-        .into_pingora();
+        });
         assert_eq!(route_error.etype, ErrorType::HTTPStatus(404));
 
         let lifetime_error = response_body_lifetime_to_pingora(ResponseBodyLifetimeExceeded {
@@ -427,5 +524,27 @@ mod tests {
             ErrorType::Custom("UpstreamResponseBodyLifetimeExceeded")
         );
         assert_eq!(lifetime_error.esource, ErrorSource::Upstream);
+    }
+
+    #[test]
+    fn proxy_error_status_preserves_pingora_failure_mapping() {
+        let explicit = Error::explain(ErrorType::HTTPStatus(503), "saturated");
+        assert_eq!(proxy_error_status(&explicit), 503);
+
+        let mut upstream = Error::explain(ErrorType::ConnectError, "origin unavailable");
+        upstream.esource = ErrorSource::Upstream;
+        assert_eq!(proxy_error_status(&upstream), 502);
+
+        let mut downstream = Error::explain(ErrorType::InvalidHTTPHeader, "bad request");
+        downstream.esource = ErrorSource::Downstream;
+        assert_eq!(proxy_error_status(&downstream), 400);
+
+        let mut closed = Error::explain(ErrorType::ConnectionClosed, "peer closed");
+        closed.esource = ErrorSource::Downstream;
+        assert_eq!(proxy_error_status(&closed), 0);
+
+        let mut internal = Error::explain(ErrorType::InternalError, "internal failure");
+        internal.esource = ErrorSource::Internal;
+        assert_eq!(proxy_error_status(&internal), 500);
     }
 }
