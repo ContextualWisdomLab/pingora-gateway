@@ -38,6 +38,13 @@ jobs:
       - name: Verify consumer checkout identity
         shell: bash
         run: test "$(git -C consumer/pg-erd-cloud rev-parse HEAD)" = "$PG_ERD_SOURCE_SHA"
+      - name: Persist exact characterization source identity
+        shell: bash
+        run: |
+          printf 'gateway_source_sha=%s\nconsumer_source_sha=%s\n' \
+            "$EXPECTED_SHA" \
+            "$PG_ERD_SOURCE_SHA" \
+            >"$RUNNER_TEMP/pg-erd-traefik-source-identity.txt"
       - name: Verify characterization runtime prerequisites
         shell: bash
         run: |
@@ -59,6 +66,7 @@ jobs:
         with:
           name: pg-erd-traefik-reload-${{ env.PG_ERD_SOURCE_SHA }}-${{ env.EXPECTED_SHA }}
           path: |
+            ${{ runner.temp }}/pg-erd-traefik-source-identity.txt
             ${{ runner.temp }}/pg-erd-traefik-reload.txt
             ${{ runner.temp }}/pg-erd-traefik-log.txt
             ${{ runner.temp }}/pg-erd-traefik-concurrent-probes.txt
