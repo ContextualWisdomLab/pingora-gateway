@@ -76,10 +76,10 @@ jobs:
           test -f "$PG_ERD_TRAEFIK_PROBE_LOG"
           grep -Fx -- "gateway_source_sha=$EXPECTED_SHA" "$PG_ERD_TRAEFIK_SOURCE_IDENTITY" >/dev/null
           grep -Fx -- "consumer_source_sha=$PG_ERD_SOURCE_SHA" "$PG_ERD_TRAEFIK_SOURCE_IDENTITY" >/dev/null
+          grep -Fx -- "consumer_source_sha=$PG_ERD_SOURCE_SHA" "$PG_ERD_TRAEFIK_RELOAD_EVIDENCE" >/dev/null
           recorded_source_identity_sha256="$(sha256sum "$PG_ERD_TRAEFIK_SOURCE_IDENTITY" | awk '{print $1}')"
-          printf 'gateway_source_sha=%s\nconsumer_source_sha=%s\nsource_identity_sha256=%s\n' \
+          printf 'gateway_source_sha=%s\nsource_identity_sha256=%s\n' \
             "$EXPECTED_SHA" \
-            "$PG_ERD_SOURCE_SHA" \
             "$recorded_source_identity_sha256" \
             >>"$PG_ERD_TRAEFIK_RELOAD_EVIDENCE"
       - name: Upload Traefik reload characterization evidence
