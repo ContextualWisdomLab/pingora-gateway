@@ -29,11 +29,15 @@ On an affected supplier, the delayed original request-body completion is misclas
 
 This RED is not WebSocket enablement. It does not provide H2 Extended CONNECT, H3/RFC 9220, long-lived timeout policy, production backpressure, consumer parity, canary, rollback, or cutover evidence. Those remain #112 acceptance gates.
 
-## Fixture integrity repair
+## Fixture integrity repairs
 
-Current-head review found a test-infrastructure failure path independent of the supplier race: the spawned proxy was wrapped in its cleanup guard only after `/readyz` succeeded, while the origin accept thread was started before readiness. A readiness timeout or early child exit could therefore escape the child cleanup guard and leave an origin thread blocked in `accept()`. The fixture also released its selected listener reservation before child command construction, unnecessarily widening the local reservation-to-bind race.
+Current-head review first found a test-infrastructure failure path independent of the supplier race: the spawned proxy was wrapped in its cleanup guard only after `/readyz` succeeded, while the origin accept thread was started before readiness. A readiness timeout or early child exit could therefore escape the child cleanup guard and leave an origin thread blocked in `accept()`. The fixture also released its selected listener reservation before child command construction, unnecessarily widening the local reservation-to-bind race.
 
 Ordinary repair `75a42783b26c31e52d3f5325de395e2cf392ff93` wraps the child process before readiness polling, keeps the loopback listener reservation through child command construction and releases it only immediately before spawn, and starts the origin accept thread only after `/readyz` has completed. `/readyz` is handled locally by the test proxy, so this ordering does not require an origin connection. The fast-101 delay, RFC 6455 handshake/frame oracle, supplier dependency, timeout values, and production fail-closed Upgrade policy are unchanged.
+
+A second review found that the WebSocket frame readers bounded each blocking socket read but did not bound the complete frame. `read_exact()` can make multiple reads for the prefix, mask, and payload; with a fixed five-second socket timeout, partial progress could renew the wall-clock evidence window and allow a slow-drip frame to exceed the intended five-second fixture budget. Header evidence already uses one absolute deadline, so the frame path was weaker than the surrounding fixture contract.
+
+Ordinary repair `d3ad47b860d35efc3a4803d327a4c01d1791a6cc` adds one absolute deadline per client or server WebSocket frame. Every partial read receives only the remaining duration, and the outer renewable socket timeout assignments are removed. The five-second budget, RFC 6455 masking and payload oracles, fast-101 ordering control, supplier dependency, and production fail-closed Upgrade policy are unchanged. This is evidence-boundedness repair only; it is not a gateway timeout policy.
 
 ## Primary evidence
 
