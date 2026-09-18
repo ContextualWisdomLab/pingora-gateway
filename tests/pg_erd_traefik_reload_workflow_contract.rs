@@ -101,6 +101,37 @@ fn recreate_fallback_preserves_the_container_logs_that_caused_it() {
 }
 
 #[test]
+fn uploaded_traefik_log_digest_covers_the_final_cleanup_snapshot() {
+    let cleanup_start = HARNESS.find("cleanup() {").expect("missing cleanup function");
+    let cleanup_end = HARNESS[cleanup_start..]
+        .find("\n}\ntrap cleanup EXIT")
+        .map(|offset| cleanup_start + offset)
+        .expect("missing cleanup function terminator");
+    let cleanup = &HARNESS[cleanup_start..cleanup_end];
+
+    let capture = cleanup
+        .find("capture_traefik_log cleanup")
+        .expect("cleanup must preserve a final Traefik log snapshot");
+    let digest = cleanup
+        .find("record traefik_log_sha256")
+        .expect("the uploaded Traefik log digest must be finalized during cleanup");
+
+    assert!(
+        capture < digest,
+        "the log digest must be recorded only after the final cleanup snapshot is appended"
+    );
+    assert_eq!(
+        HARNESS.matches("record traefik_log_sha256").count(),
+        1,
+        "exactly one final digest must describe the uploaded Traefik log artifact"
+    );
+    assert!(
+        !cleanup[digest..].contains("capture_traefik_log"),
+        "no Traefik log snapshot may mutate the artifact after its digest is recorded"
+    );
+}
+
+#[test]
 fn evidence_is_bounded_payload_free_and_uploaded_even_on_failure() {
     for required in [
         "PG_ERD_TRAEFIK_RELOAD_EVIDENCE",
