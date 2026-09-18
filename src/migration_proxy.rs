@@ -215,6 +215,13 @@ fn proxy_error_status(error: &Error) -> u16 {
     }
 }
 
+fn proxy_error_response_status(error: &Error, response_already_written: bool) -> u16 {
+    if response_already_written {
+        return 0;
+    }
+    proxy_error_status(error)
+}
+
 #[async_trait]
 impl ProxyHttp for MigrationGatewayProxy {
     type CTX = MigrationRequestContext;
@@ -329,7 +336,7 @@ impl ProxyHttp for MigrationGatewayProxy {
         error_value: &Error,
         _ctx: &mut Self::CTX,
     ) -> FailToProxy {
-        let status = proxy_error_status(error_value);
+        let status = proxy_error_response_status(error_value, session.response_written().is_some());
         if status > 0 {
             let mut response = ServerSession::generate_error(status);
             if let Err(policy_error) = self.apply_response_headers(&mut response) {
@@ -371,9 +378,10 @@ mod tests {
     use pingora::ErrorSource;
 
     use super::{
-        body_rejection_to_pingora, enforce_response_body_lifetime, proxy_error_status,
-        response_body_lifetime_to_pingora, start_response_body_lifetime, unmatched_route_to_pingora,
-        MigrationGatewayProxy, MigrationGatewayProxyError, MigrationRequestContext,
+        body_rejection_to_pingora, enforce_response_body_lifetime, proxy_error_response_status,
+        proxy_error_status, response_body_lifetime_to_pingora, start_response_body_lifetime,
+        unmatched_route_to_pingora, MigrationGatewayProxy, MigrationGatewayProxyError,
+        MigrationRequestContext,
     };
     use crate::edge_contract::{UpstreamConfig, UpstreamTimeouts};
     use crate::edge_routing::{RouteMatch, RouteRule};
@@ -524,6 +532,8 @@ mod tests {
             ErrorType::Custom("UpstreamResponseBodyLifetimeExceeded")
         );
         assert_eq!(lifetime_error.esource, ErrorSource::Upstream);
+        assert_eq!(proxy_error_response_status(&lifetime_error, true), 0);
+        assert_eq!(proxy_error_response_status(&lifetime_error, false), 502);
     }
 
     #[test]
