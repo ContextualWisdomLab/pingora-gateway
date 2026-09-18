@@ -26,6 +26,7 @@ grep -F -- "--providers.file.watch=true" "$compose_file" >/dev/null
 grep -F -- "./deploy/traefik/dynamic.yaml:/etc/traefik/dynamic.yaml:ro" "$compose_file" >/dev/null
 git diff --exit-code -- compose.prod.yaml deploy/traefik/dynamic.yaml
 
+dynamic_mode="$(stat -c '%a' "$dynamic_file")"
 baseline="$(mktemp "$RUNNER_TEMP/pg-erd-dynamic-baseline.XXXXXX.yaml")"
 cp "$dynamic_file" "$baseline"
 probe_log="$RUNNER_TEMP/pg-erd-traefik-concurrent-probes.txt"
@@ -37,23 +38,34 @@ rm -f "$probe_stop"
 
 compose_project="cwl_pg_erd_reload_${GITHUB_RUN_ID:-manual}_${GITHUB_RUN_ATTEMPT:-1}"
 export COMPOSE_PROJECT_NAME="$compose_project"
-edge_port="$(python3 - <<'PY'
+read -r edge_port postgres_port < <(python3 - <<'PY'
 import socket
-with socket.socket() as sock:
-    sock.bind(("127.0.0.1", 0))
-    print(sock.getsockname()[1])
+ports = []
+for _ in range(2):
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        ports.append(sock.getsockname()[1])
+print(*ports)
 PY
-)"
+)
 
 cp .env.example .env
-python3 - "$edge_port" <<'PY'
+python3 - "$edge_port" "$postgres_port" <<'PY'
 from pathlib import Path
 import sys
 path = Path(".env")
-text = path.read_text()
-text = text.replace("POSTGRES_PASSWORD=change-me-long-random", "POSTGRES_PASSWORD=cwl-characterization-only-password")
-text = text.replace("TRAEFIK_HTTP_PORT=8080", f"TRAEFIK_HTTP_PORT={sys.argv[1]}")
-path.write_text(text)
+lines = []
+for line in path.read_text().splitlines():
+    if line.startswith("APP_SECRET="):
+        continue
+    if line.startswith("POSTGRES_PASSWORD="):
+        line = "POSTGRES_PASSWORD=cwl-characterization-only-password"
+    elif line.startswith("POSTGRES_PORT="):
+        line = f"POSTGRES_PORT={sys.argv[2]}"
+    elif line.startswith("TRAEFIK_HTTP_PORT="):
+        line = f"TRAEFIK_HTTP_PORT={sys.argv[1]}"
+    lines.append(line)
+path.write_text("\n".join(lines) + "\n")
 PY
 mkdir -p secrets
 printf '%s\n' 'cwl-characterization-only-app-secret-00000000000000000000' >secrets/app_secret
@@ -80,33 +92,42 @@ cleanup() {
   fi
   if [[ -f "$baseline" && -f "$dynamic_file" ]]; then
     cat "$baseline" >"$dynamic_file" || true
+    chmod "$dynamic_mode" "$dynamic_file" || true
   fi
   capture_traefik_log
   docker compose -f "$compose_file" down -v --remove-orphans >/dev/null 2>&1 || true
   rm -f .env
   rm -rf secrets
+  trap - EXIT
   exit "$status"
 }
 trap cleanup EXIT
 
-response_headers() {
-  curl --silent --show-error --max-time 2 --dump-header - --output /dev/null "$base_url/healthz"
-}
-
-status_code() {
-  curl --silent --show-error --max-time 2 --output /dev/null --write-out '%{http_code}' "$base_url/healthz" 2>/dev/null || printf '000'
-}
-
-generation_header() {
-  response_headers 2>/dev/null \
-    | tr -d '\r' \
-    | awk -F': *' 'tolower($1) == "x-cwl-reload-generation" {print $2; exit}'
+observe_health() {
+  local output code generation
+  output="$(
+    curl --silent --show-error --max-time 2 \
+      --dump-header - \
+      --output /dev/null \
+      --write-out 'CWL_STATUS:%{http_code}\n' \
+      "$base_url/healthz" 2>/dev/null || true
+  )"
+  code="$(printf '%s\n' "$output" | awk -F: '$1 == "CWL_STATUS" {print $2}' | tail -n 1)"
+  generation="$(
+    printf '%s\n' "$output" \
+      | tr -d '\r' \
+      | awk -F': *' 'tolower($1) == "x-cwl-reload-generation" {print $2; exit}'
+  )"
+  [[ -n "$code" ]] || code="000"
+  [[ -n "$generation" ]] || generation="none"
+  printf '%s %s\n' "$code" "$generation"
 }
 
 wait_for_status_200() {
-  local deadline=$((SECONDS + 120))
+  local deadline=$((SECONDS + 120)) code generation
   while (( SECONDS < deadline )); do
-    if [[ "$(status_code)" == "200" ]]; then
+    read -r code generation < <(observe_health)
+    if [[ "$code" == "200" ]]; then
       return 0
     fi
     sleep 1
@@ -117,9 +138,10 @@ wait_for_status_200() {
 wait_for_generation() {
   local expected="$1"
   local seconds="${2:-15}"
-  local deadline=$((SECONDS + seconds))
+  local deadline=$((SECONDS + seconds)) code generation
   while (( SECONDS < deadline )); do
-    if [[ "$(status_code)" == "200" && "$(generation_header || true)" == "$expected" ]]; then
+    read -r code generation < <(observe_health)
+    if [[ "$code" == "200" && "$generation" == "$expected" ]]; then
       return 0
     fi
     sleep 0.2
@@ -129,9 +151,10 @@ wait_for_generation() {
 
 wait_for_generation_absent() {
   local seconds="${1:-15}"
-  local deadline=$((SECONDS + seconds))
+  local deadline=$((SECONDS + seconds)) code generation
   while (( SECONDS < deadline )); do
-    if [[ "$(status_code)" == "200" && -z "$(generation_header || true)" ]]; then
+    read -r code generation < <(observe_health)
+    if [[ "$code" == "200" && "$generation" == "none" ]]; then
       return 0
     fi
     sleep 0.2
@@ -168,9 +191,7 @@ start_concurrent_probe() {
     set +e
     while [[ ! -e "$probe_stop" ]]; do
       now_ms="$(date +%s%3N)"
-      code="$(status_code)"
-      generation="$(generation_header 2>/dev/null || true)"
-      [[ -n "$generation" ]] || generation="none"
+      read -r code generation < <(observe_health)
       printf 'timestamp_ms=%s status=%s generation=%s\n' "$now_ms" "$code" "$generation" >>"$probe_log"
       sleep 0.05
     done
@@ -210,15 +231,14 @@ write_in_place "$lkg_candidate"
 wait_for_generation "last-known-good" 15
 printf 'http:\n  routers: [\n' >"$dynamic_file"
 sleep 2
-malformed_status="$(status_code)"
-malformed_generation="$(generation_header 2>/dev/null || true)"
+read -r malformed_status malformed_generation < <(observe_health)
 if [[ "$malformed_status" == "200" && "$malformed_generation" == "last-known-good" ]]; then
   malformed_last_known_good=true
 else
   malformed_last_known_good=false
 fi
 record malformed_status "$malformed_status"
-record malformed_generation "${malformed_generation:-none}"
+record malformed_generation "$malformed_generation"
 record malformed_last_known_good "$malformed_last_known_good"
 
 recovery_candidate="$(mktemp "$RUNNER_TEMP/pg-erd-recovery.XXXXXX.yaml")"
@@ -244,14 +264,16 @@ Path(sys.argv[2]).write_text(text.replace(needle, "      service: missing-cwl-ch
 PY
 write_in_place "$semantic_invalid"
 sleep 2
-record semantic_invalid_status "$(status_code)"
-record semantic_invalid_generation "$(generation_header 2>/dev/null || printf 'none')"
+read -r semantic_invalid_status semantic_invalid_generation < <(observe_health)
+record semantic_invalid_status "$semantic_invalid_status"
+record semantic_invalid_generation "$semantic_invalid_generation"
 
 write_in_place "$recovery_candidate"
 wait_for_generation "recovery" 15
 
 atomic_candidate="$(mktemp "$(dirname "$dynamic_file")/.cwl-dynamic-replacement.XXXXXX")"
 render_generation "atomic-replace" "$atomic_candidate"
+chmod "$dynamic_mode" "$atomic_candidate"
 replacement="$atomic_candidate"
 atomic_started_ms="$(date +%s%3N)"
 mv "$replacement" "$dynamic_file"
@@ -277,6 +299,7 @@ record atomic_replace_after_recreate_detected "$atomic_replace_after_recreate_de
 [[ "$atomic_replace_after_recreate_detected" == true ]]
 
 write_in_place "$baseline"
+chmod "$dynamic_mode" "$dynamic_file"
 wait_for_generation_absent 15
 record final_baseline_recovered true
 
