@@ -17,13 +17,15 @@ Fresh supplier verification on 2026-09-18:
 - the proposed repair `cloudflare/pingora#947@1e8488b0627370831832744fc6e65614396c310d` remains open/unmerged and therefore is not dependency authority;
 - latest public Pingora release remains 0.9.0, published 2026-09-09. No later release-qualified identity contains a maintainer disposition for #946.
 
-The upstream reproducer controls scheduler ordering by delaying the request-body callback. The CWL RED keeps that causal mechanism but uses its own loopback origin and raw post-101 payload so it does not copy the supplier implementation fix.
+The upstream reproducer controls scheduler ordering by delaying the request-body callback. The CWL RED keeps that causal mechanism but uses its own loopback origin and RFC 6455 opening handshake/frame exchange so it does not copy the supplier implementation fix.
 
 ## Executable RED
 
-`released_pingora_keeps_fast_101_upgrade_tunnel_bidirectional` launches a test-only Pingora process and a loopback origin. The origin returns `101` immediately. The proxy delays request-body handling by 200 ms, forcing the response to win the ordering race. After the 101 is observed, the client waits 300 ms and then sends `cwl-fast-101`; the unchanged acceptance requires the origin to receive and echo those bytes.
+`released_pingora_keeps_fast_101_upgrade_tunnel_bidirectional` launches a test-only Pingora process and a loopback origin. The fixed RFC 6455 sample key `dGhlIHNhbXBsZSBub25jZQ==` is answered with the corresponding `Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=`. The origin returns that valid `101` immediately while the proxy delays request-body handling by 200 ms, forcing the response to win the ordering race.
 
-On an affected supplier, the delayed original request-body completion is misclassified as tunnel completion and the post-101 write/read fails. A future GREEN is valid only against a maintainer-integrated, release-qualified Pingora identity, with this test unchanged apart from dependency/version evidence required by that release transition.
+After the 101 is observed, the client waits 300 ms and sends a FIN text frame carrying `cwl-fast-101` with a client mask as required by RFC 6455. The origin unmasks and validates that payload, then sends an unmasked server FIN text frame containing the same bytes. The client must receive and validate the echoed frame. This proves post-handshake bidirectional tunnel survival at WebSocket frame level rather than crediting a header-only smoke test.
+
+On an affected supplier, the delayed original request-body completion is misclassified as tunnel completion and the post-101 frame write/read fails. A future GREEN is valid only against a maintainer-integrated, release-qualified Pingora identity, with this test unchanged apart from dependency/version evidence required by that release transition.
 
 This RED is not WebSocket enablement. It does not provide H2 Extended CONNECT, H3/RFC 9220, long-lived timeout policy, production backpressure, consumer parity, canary, rollback, or cutover evidence. Those remain #112 acceptance gates.
 
