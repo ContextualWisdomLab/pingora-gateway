@@ -57,6 +57,7 @@ jobs:
       - name: Characterize exact Traefik file-provider reload semantics
         shell: bash
         env:
+          PG_ERD_TRAEFIK_SOURCE_IDENTITY: ${{ runner.temp }}/pg-erd-traefik-source-identity.txt
           PG_ERD_TRAEFIK_RELOAD_EVIDENCE: ${{ runner.temp }}/pg-erd-traefik-reload.txt
           PG_ERD_TRAEFIK_LOG: ${{ runner.temp }}/pg-erd-traefik-log.txt
         run: bash tests/load/characterize_pg_erd_traefik_reload.sh "$GITHUB_WORKSPACE/consumer/pg-erd-cloud"
