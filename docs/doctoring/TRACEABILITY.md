@@ -14,6 +14,7 @@ This document maps material edge-runtime, protocol, toolchain, container, and su
 | Pingora 0.9.0 and current protected supplier source still have no release-qualified removal of `derivative 2.2.0` | Released/tagged workspace source at `702f690...`; protected `cloudflare/pingora/main@4487f7b2ab50f159e4a2cf4f6a6b813f61bb6e19`; open upstream #889; RustSec RUSTSEC-2024-0388; downstream foundation #1 current Security Scan independently fails only the introduced `derivative 2.2.0` finding | #54 remains intentionally RED and foundation promotion remains fail-closed until a maintainer-integrated, later release-qualified supplier identity removes the package, preserves #62 semantics, and the consumer lock/security evidence is regenerated. |
 | Released 0.9.0 does not close H2→H1 Cookie coalescing | Released proxy sanitizer at `702f690...`; downstream #53 real TLS/H2→H1 wire RED; open/unmerged contributor #901 | Multiple H2 Cookie fields must be reconstructed as one H1 Cookie field using the protocol-defined delimiter before release credit. |
 | Zero-length application writes must not own the H1 chunk terminator | Pingora issue/PR lineage #935/#936; contributor #936 remains open/unmerged | `finish()` must remain the sole chunk-terminator owner; async and cancel-safe write paths require regression evidence before release credit. |
+| Current protected Pingora source still exposes the scheduler-dependent HTTP/1 Upgrade/WebSocket fast-`101` teardown root | Protected `cloudflare/pingora/main@4487f7b2ab50f159e4a2cf4f6a6b813f61bb6e19`; open issue #946; open/unmerged contributor repair `#947@1e8488b0627370831832744fc6e65614396c310d`; latest published release remains 0.9.0 | Keep CWL HTTP/1 Upgrade fail closed. Do not pin #947 or infer WebSocket support from H2/TLS. #112 remains blocked until a maintainer-integrated release-qualified supplier identity exists and unchanged fast-`101`, constrained-CPU, bidirectional, disconnect/backpressure/drain acceptance turns GREEN. |
 | A Traefik file-provider `watch=true` flag on a single bind-mounted file is not, by itself, evidence that live mutation is a supported consumer contract | Traefik Labs, current File Provider documentation: file watching uses filesystem notifications; mounted/bound file links can break on rename/replacement and the documented mitigation is a bound parent directory with `directory`; protected pg-erd consumer source plus #109/#110 characterization | Do not create generic shared Pingora hot reload from configuration presence alone. First prove source-bound in-place/rename behavior and owner intent on protected consumer evidence; without positive evidence, use versioned startup configuration plus controlled restart/redeployment, readiness, drain, and rollback. |
 
 ## Protocol and security standards
@@ -25,9 +26,10 @@ This document maps material edge-runtime, protocol, toolchain, container, and su
 | HTTP/2 | RFC 9113 | H2 framing/connection rules; Section 8.2.3 permits Cookie field splitting and requires recombination before a non-H2 hop. |
 | QUIC transport | RFC 9000 | Transport basis for HTTP/3 acceptance. |
 | HTTP/3 | RFC 9114 | HTTP semantics over QUIC; no H3 product credit without executable interoperability evidence. |
-| WebSocket | RFC 6455 | Upgrade/framing semantics for HTTP/1.1 WebSocket acceptance. |
-| WebSocket over HTTP/2 | RFC 8441 | Extended CONNECT path when H2 WebSocket support is in scope. |
-| WebSocket over HTTP/3 | RFC 9220 | Extended CONNECT/bootstrap path when H3 WebSocket support is in scope. |
+| WebSocket | RFC 6455 | Upgrade/framing semantics for HTTP/1.1 WebSocket acceptance; the client waits for the server's opening-handshake response before sending further WebSocket data. |
+| HTTP/1.1 optimistic protocol transition | RFC 9931 | Security requirements for protocol-transition data sent before acceptance; updates RFC 9112 and reinforces fail-closed handling of uncharacterized Upgrade paths. |
+| WebSocket over HTTP/2 | RFC 8441 | Extended CONNECT path when H2 WebSocket support is in scope; requires H2 protocol advertisement and `:protocol`, not HTTP/1 Upgrade emulation. |
+| WebSocket over HTTP/3 | RFC 9220 | Extended CONNECT/bootstrap path when H3 WebSocket support is in scope; no H3/QUIC WebSocket credit without separate executable evidence. |
 | Forwarded header | RFC 7239 | Forwarding grammar; request-supplied client identity remains untrusted until an explicit trust contract admits it. |
 | TLS 1.3 | RFC 9846 (July 2026) | Current TLS 1.3 protocol specification; it obsoletes RFC 8446 and leaves application identity verification to the application protocol profile. |
 | TLS service identity | RFC 9525 | Certificate/service identity representation and verification for TLS applications. |
@@ -53,13 +55,17 @@ The repository distinguishes four evidence classes:
 3. **release authority** — maintainer/protected integration plus immutable/versioned dependency or gateway artifact identity;
 4. **deployment evidence** — exact artifact exercised in parity, shadow/canary, rollback and cutover traffic.
 
-A later class is never inferred solely from an earlier one. In particular, contributor PR CI is not release authority, a GitHub Release label is not a consumer lock, a loopback p95 is not WAN/TLS production SLO evidence, a configured watcher is not proof of an operational live-reload contract, and disappearance of Nginx/OpenResty strings is not migration completion.
+A later class is never inferred solely from an earlier one. In particular, contributor PR CI is not release authority, a GitHub Release label is not a consumer lock, a loopback p95 is not WAN/TLS production SLO evidence, a configured watcher is not proof of an operational live-reload contract, an idle-host WebSocket smoke pass is not race-closure evidence, and disappearance of Nginx/OpenResty strings is not migration completion.
 
 ## References
 
 Bishop, M. (2022). *HTTP/3* (RFC 9114). RFC Editor. https://www.rfc-editor.org/rfc/rfc9114
 
 Cloudflare. (2026, September 9). *Pingora 0.9.0* [Software release]. GitHub. https://github.com/cloudflare/pingora/releases/tag/0.9.0
+
+Cloudflare. (n.d.). *HTTP/1 upgrade torn down when the upstream's 101 is read before the request's empty body* (Issue #946). GitHub. https://github.com/cloudflare/pingora/issues/946
+
+Cloudflare. (n.d.). *Keep an upgraded tunnel open when the request body ends after 101* (Pull request #947). GitHub. https://github.com/cloudflare/pingora/pull/947
 
 Cloudflare. (n.d.). *Pingora configurable H1 request-header limits* (Pull request #1000). GitHub. https://github.com/cloudflare/pingora/pull/1000
 
@@ -100,6 +106,8 @@ Rust Release Team. (2026, September 3). *Announcing Rust 1.98.1*. Rust Blog. htt
 Saint-Andre, P., & Salz, R. (2023). *Service identity in TLS* (RFC 9525). RFC Editor. https://www.rfc-editor.org/rfc/rfc9525
 
 Salz, R., & Aviram, N. (2026). *New protocols using TLS must require TLS 1.3* (RFC 9852, BCP 195). RFC Editor. https://www.rfc-editor.org/rfc/rfc9852
+
+Schwartz, B. M. (2026). *Security considerations for optimistic protocol transitions in HTTP/1.1* (RFC 9931). RFC Editor. https://www.rfc-editor.org/rfc/rfc9931
 
 Thomson, M., & Benfield, C. (2022). *HTTP/2* (RFC 9113). RFC Editor. https://www.rfc-editor.org/rfc/rfc9113
 
