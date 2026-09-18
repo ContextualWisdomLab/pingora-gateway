@@ -355,7 +355,9 @@ fi
 record semantic_invalid_observable "$semantic_invalid_observable"
 record semantic_invalid_status "$semantic_invalid_status"
 record semantic_invalid_generation "$semantic_invalid_generation"
-activate_generation_with_fallback "$recovery_candidate" "recovery" "post_invalid_recovery_requires_recreate"
+post_invalid_recovery_candidate="$(mktemp "$RUNNER_TEMP/pg-erd-post-invalid-recovery.XXXXXX.yaml")"
+render_generation "post-invalid-recovery" "$post_invalid_recovery_candidate"
+activate_generation_with_fallback "$post_invalid_recovery_candidate" "post-invalid-recovery" "post_invalid_recovery_requires_recreate"
 
 atomic_candidate="$(mktemp "$(dirname "$dynamic_file")/.cwl-dynamic-replacement.XXXXXX")"
 render_generation "atomic-replace" "$atomic_candidate"
