@@ -26,7 +26,7 @@ Protected CWL `main` remains outside the dependency-ordered candidate stack and 
 
 Public supplier authority is split deliberately. Protected `cloudflare/pingora/main` is prospective source authority; the latest published dependency release remains Pingora `0.9.0`, published on 2026-09-09. Its GitHub Release metadata is mutable (`immutable=false`) and has no attached assets, so downstream package authority comes from exact registry source/checksum plus Cargo-generated lock evidence rather than the GitHub Release object alone.
 
-Released 0.9.0 closes the previously characterized graceful-shutdown lost-wakeup supplier correctness gap, but does **not** close the current `derivative 2.2.0 / RUSTSEC-2024-0388` intake root, configurable monotonic whole-H1-header lifetime, configurable H1 parser admission, H2→H1 Cookie normalization, or zero-length H1 chunk-terminator defect. Those remain separate supplier-owner paths.
+Released 0.9.0 closes the previously characterized graceful-shutdown lost-wakeup supplier correctness gap, but does **not** close the current `derivative 2.2.0 / RUSTSEC-2024-0388` intake root, configurable monotonic whole-H1-header lifetime, configurable H1 parser admission, H2→H1 Cookie normalization, zero-length H1 chunk-terminator defect, or the HTTP/1 Upgrade/WebSocket fast-`101` race tracked by upstream #946. Those remain separate supplier-owner paths.
 
 ## Foundation and supply-chain security root — #1 / #54 / #62 / upstream #889
 
@@ -92,6 +92,18 @@ Protected `pg-erd-cloud` evidence uses Traefik's file provider with `filename`, 
 
 Do not implement a generic shared Pingora hot-reload subsystem merely because Traefik `watch=true` exists. After the parent stack is current and #110 integrates, run the source-bound manual characterization from protected `main`. If the product owner confirms live mutation as an operational contract, design versioned Admin Config reload semantics with validated full snapshots, atomic generation publication, invalid-generation rejection, last-known-good/fail-closed behavior, bounded synchronization, recovery/drain/rollback, and realistic traffic evidence. Without positive consumer evidence, the default migration contract is versioned startup configuration plus controlled restart/redeployment with readiness, drain, and rollback.
 
+## WebSocket / protocol-transition migration root — #28 / #29 / #33 / #112 / upstream #946/#947
+
+The reusable gateway contract remains intentionally fail-closed for uncharacterized HTTP/1 protocol transition. #29 supplies the request/admission guard and #33 independently denies Upgrade capability in immutable Pingora peers; both have been normally merged into the non-default candidate ancestry, but protected `main` and an immutable gateway release have not yet promoted that candidate contract. Removing either guard is not WebSocket enablement.
+
+A real product signal exists in Naruon standalone live-E2E Nginx: it forwards `Upgrade`/`Connection` and uses a 600-second read/send timeout. That is consumer evidence, not a reusable gateway default. It does not establish Kubernetes ingress behavior, Traefik/Keycloak behavior, product auth/CORS/subprotocol policy, timeout policy, TLS/certificate ownership, or rollback semantics.
+
+Current supplier authority is still RED for HTTP/1 WebSocket. Protected `cloudflare/pingora/main@4487f7b2ab50f159e4a2cf4f6a6b813f61bb6e19` does not contain a maintainer-integrated disposition for #946. The open race tears down an upgraded tunnel when a fast upstream `101 Switching Protocols` is processed before the queued empty request-body completion; reported reproduction was 40/40 survival on an idle 10-core macOS host but only 34/40 in a 2-CPU Linux container. Contributor #947 remains open/unmerged at `1e8488b0627370831832744fc6e65614396c310d`; mutable contributor code is not dependency authority. Latest published Pingora remains 0.9.0, so no release-qualified supplier fix exists.
+
+#112 owns the future reusable transport acceptance and remains blocked. HTTP/1.1 WebSocket, HTTP/2 Extended CONNECT, and HTTP/3 Extended CONNECT are separate protocol contracts: RFC 6455 WebSocket over H1 cannot be inferred from TLS/H2 support; RFC 8441 requires H2 `SETTINGS_ENABLE_CONNECT_PROTOCOL` plus `CONNECT`/`:protocol=websocket`; RFC 9220 adapts Extended CONNECT to H3/QUIC. RFC 9931 (March 2026) further makes optimistic HTTP/1.1 protocol-transition security explicit and WebSocket already requires waiting for the opening-handshake response before post-handshake data.
+
+GREEN requires a maintainer-integrated **release-qualified Pingora identity**, then an explicit versioned gateway opt-in derived from real consumer routes/profiles. The unchanged acceptance must prove fast-`101` ordering under constrained CPU/concurrency, bidirectional post-handshake traffic, close/reset/half-close propagation, bounded backpressure without whole-message buffering, long-lived timeout semantics, SIGTERM/drain and health behavior, rootless/read-only OCI execution, payload-free low-cardinality observability, 100% owned-production coverage, and current exact Supply/Security/review. H2 and H3 remain separate RED→GREEN lanes. Only after an immutable gateway release may a consumer claim parity → shadow/canary → observed rollback → cutover → legacy-proxy removal.
+
 ## Buyer-visible release and cutover gap
 
 `pingora-gateway` still has no GitHub Release inventory. A release-ready exact protected head must establish, without predecessor transfer:
@@ -100,18 +112,18 @@ Do not implement a generic shared Pingora hot-reload subsystem merely because Tr
 - SBOM, authenticated provenance, reproducibility, source/binary/image identity, and rollback evidence;
 - non-root/read-only runtime plus supply-chain/security gates;
 - TLS, HTTP/1.1, HTTP/2 and applicable HTTP/3 behavior;
-- WebSocket/streaming where an actual migrated product requires it;
+- WebSocket/streaming only where an actual migrated product requires it and only after #112's release-qualified supplier/transport acceptance;
 - timeout/retry/backpressure, header/cookie/client-IP/body-limit, health/drain, and failure traffic;
 - exact-head owned production rustdoc, test, and edge-case coverage contracts;
 - realistic concurrency/load with applicable buyer-path p95 `<= 20 ms`, no artificial warm-up or sample removal, and representative NUMA evidence where the claim depends on it;
 - parity → shadow/canary → observed rollback → cutover → verified legacy Nginx/OpenResty removal for each responsibility actually migrated.
 
-Repository Pages publication, contributor CI, loopback p95, mutable supplier metadata, or disappearance of Nginx strings is never sufficient by itself.
+Repository Pages publication, contributor CI, loopback p95, mutable supplier metadata, or disappearance of Nginx/OpenResty strings is never sufficient by itself.
 
 ## Current causal order
 
 The dependency-rooted order is:
 
-`#56 independent governance + maintainer-integrated/release-qualified #889 repair → #54/#62 ordinary reconciliation and absence/semantics/security revalidation on current compiler/foundation ancestry → foundation-equivalent Security/Supply/CodeQL/review GREEN + remaining #31/#61/#15/#104 prerequisites → normal protected foundation integration → #5/#6/#7/#11/#12 migration ancestry reconciliation and exact evidence → #110 protected-source characterization/owner disposition → ordinary release-line foundation inheritance through #44/#47 → #70 exact revalidation → protocol supplier roots (#447, #1000 successor, #901, #936/#976 successor) consumed only when release-qualified and required by the promoted path → immutable gateway release/provenance/reproducibility/rollback → representative parity/shadow/canary → cutover → verified legacy removal`.
+`#56 independent governance + maintainer-integrated/release-qualified #889 repair → #54/#62 ordinary reconciliation and absence/semantics/security revalidation on current compiler/foundation ancestry → foundation-equivalent Security/Supply/CodeQL/review GREEN + remaining #31/#61/#15/#104 prerequisites → normal protected foundation integration → #5/#6/#7/#11/#12 migration ancestry reconciliation and exact evidence → #110 protected-source characterization/owner disposition → ordinary release-line foundation inheritance through #44/#47 → #70 exact revalidation → protocol supplier roots (#447, #1000 successor, #901, #936/#976 successor, #946/#947 successor) consumed only when maintainer-integrated, release-qualified, and required by the promoted path → #112 versioned WebSocket transport acceptance only for a real consumer requirement → immutable gateway release/provenance/reproducibility/rollback → representative parity/shadow/canary → cutover → verified legacy removal`.
 
 Independent service/traffic children such as #39 move only after their direct parents are current and must reacquire their own exact evidence after any head change. Queued/in-progress checks remain incomplete evidence. A failed check is RCA/fix/rerun work, not a reason to weaken the gate. If a supplier or concurrent writer moves, reread and adopt/adapt the intervening delta instead of treating movement as a race or force-restacking it.
