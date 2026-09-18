@@ -81,7 +81,13 @@ record() {
 }
 
 capture_traefik_log() {
-  docker compose -f "$compose_file" logs --no-color traefik >"$PG_ERD_TRAEFIK_LOG" 2>&1 || true
+  local phase="${1:-snapshot}"
+  {
+    printf '=== traefik-log-snapshot phase=%s timestamp_ms=%s ===\n' "$phase" "$(date +%s%3N)"
+    container_id="$(docker compose -f "$compose_file" ps -q traefik 2>/dev/null || true)"
+    printf 'container_id=%s\n' "${container_id:-none}"
+    docker compose -f "$compose_file" logs --no-color traefik 2>&1 || true
+  } >>"$PG_ERD_TRAEFIK_LOG"
 }
 
 cleanup() {
@@ -94,7 +100,7 @@ cleanup() {
     cat "$baseline" >"$dynamic_file" || true
     chmod "$dynamic_mode" "$dynamic_file" || true
   fi
-  capture_traefik_log
+  capture_traefik_log cleanup
   docker compose -f "$compose_file" down -v --remove-orphans >/dev/null 2>&1 || true
   rm -f .env
   rm -rf secrets
@@ -187,7 +193,9 @@ write_in_place() {
 }
 
 force_recreate_traefik() {
+  capture_traefik_log pre-recreate
   docker compose -f "$compose_file" up -d --no-deps --force-recreate traefik
+  capture_traefik_log post-recreate
 }
 
 activate_generation_with_fallback() {
@@ -347,7 +355,7 @@ record concurrent_probe_failures "$concurrent_probe_failures"
 record concurrent_probe_log_sha256 "$(sha256sum "$probe_log" | awk '{print $1}')"
 [[ "$concurrent_probe_samples" -ge 20 ]]
 
-capture_traefik_log
+capture_traefik_log final
 record traefik_log_sha256 "$(sha256sum "$PG_ERD_TRAEFIK_LOG" | awk '{print $1}')"
 record result characterization-complete
 
