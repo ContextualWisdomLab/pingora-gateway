@@ -81,6 +81,29 @@ fn harness_distinguishes_observations_from_controlled_recreate_fallbacks() {
 }
 
 #[test]
+fn invalid_reload_observations_use_bounded_transition_windows() {
+    for required in [
+        "wait_for_observation_change",
+        "malformed_observation_window_ms",
+        "semantic_invalid_observation_window_ms",
+        "render_generation \"semantic-invalid\"",
+    ] {
+        assert!(
+            HARNESS.contains(required),
+            "invalid reload observation must wait for a bounded externally observable transition: {required}"
+        );
+    }
+    assert!(
+        !HARNESS.contains("printf 'http:\\n  routers: [\\n' >\"$dynamic_file\"\n  sleep 2"),
+        "malformed-input classification must not use a fixed sleep followed by one observation"
+    );
+    assert!(
+        !HARNESS.contains("write_in_place \"$semantic_invalid\"\n  sleep 2"),
+        "semantic-invalid classification must not use a fixed sleep followed by one observation"
+    );
+}
+
+#[test]
 fn recreate_fallback_preserves_the_container_logs_that_caused_it() {
     assert!(
         HARNESS.contains(">>\"$PG_ERD_TRAEFIK_LOG\""),
