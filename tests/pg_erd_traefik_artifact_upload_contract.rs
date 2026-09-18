@@ -1,29 +1,39 @@
 //! Fail-closed artifact-upload contract for pg-erd Traefik reload characterization.
 //!
 //! The characterization is useful only when a failed execution leaves an explicit
-//! evidence outcome. A missing receipt/log set must therefore fail the upload step
-//! instead of being silently ignored. The uploaded evidence set must also carry its
+//! evidence outcome. A missing receipt/log set must therefore fail the workflow
+//! instead of being silently accepted. The uploaded evidence set must also carry its
 //! own exact gateway and consumer source identity rather than relying on artifact
 //! names or GitHub UI metadata after download.
 
 const WORKFLOW: &str =
     include_str!("../.github/workflows/pg-erd-traefik-reload-characterization.yml");
-const HARNESS: &str = include_str!("load/characterize_pg_erd_traefik_reload.sh");
 
 #[test]
 fn missing_characterization_artifacts_fail_closed() {
     assert!(
         WORKFLOW.contains("if: ${{ always() }}"),
-        "characterization evidence upload must run even after a failed harness step"
+        "characterization evidence handling must run even after a failed harness step"
     );
     assert!(
         WORKFLOW.contains("if-no-files-found: error"),
-        "missing characterization artifacts must be an explicit workflow failure"
+        "an entirely missing characterization artifact set must be an explicit upload failure"
     );
     assert!(
         !WORKFLOW.contains("if-no-files-found: ignore"),
         "missing characterization artifacts must not be silently accepted"
     );
+    for required in [
+        "test -f \"$PG_ERD_TRAEFIK_SOURCE_IDENTITY\"",
+        "test -f \"$PG_ERD_TRAEFIK_RELOAD_EVIDENCE\"",
+        "test -f \"$PG_ERD_TRAEFIK_LOG\"",
+        "test -f \"$PG_ERD_TRAEFIK_PROBE_LOG\"",
+    ] {
+        assert!(
+            WORKFLOW.contains(required),
+            "every required evidence file must be checked before upload: {required}"
+        );
+    }
 }
 
 #[test]
@@ -42,34 +52,36 @@ fn artifact_set_self_binds_exact_gateway_and_consumer_sources() {
     }
 
     let marker = WORKFLOW
-        .find("pg-erd-traefik-source-identity.txt")
+        .find("Persist exact characterization source identity")
         .expect("missing source-identity marker creation");
     let characterization = WORKFLOW
         .find("Characterize exact Traefik file-provider reload semantics")
         .expect("missing characterization step");
+    let binding = WORKFLOW
+        .find("Cross-bind characterization receipt and artifact set")
+        .expect("missing receipt cross-binding step");
+    let upload = WORKFLOW
+        .find("Upload Traefik reload characterization evidence")
+        .expect("missing characterization upload step");
     assert!(
-        marker < characterization,
-        "source identity must be persisted before characterization can fail"
+        marker < characterization && characterization < binding && binding < upload,
+        "source marker must precede characterization, and receipt cross-binding must precede upload"
     );
 }
 
 #[test]
 fn characterization_receipt_cross_binds_uploaded_source_marker() {
-    assert!(
-        WORKFLOW.contains("PG_ERD_TRAEFIK_SOURCE_IDENTITY: ${{ runner.temp }}/pg-erd-traefik-source-identity.txt"),
-        "the harness must receive the exact uploaded source-identity marker path"
-    );
-
     for required in [
-        ": \"${EXPECTED_SHA:?EXPECTED_SHA must be set}\"",
-        ": \"${PG_ERD_TRAEFIK_SOURCE_IDENTITY:?PG_ERD_TRAEFIK_SOURCE_IDENTITY must be set}\"",
-        "record gateway_source_sha \"$EXPECTED_SHA\"",
-        "record consumer_source_sha \"$PG_ERD_SOURCE_SHA\"",
-        "record source_identity_sha256",
+        "grep -Fx -- \"gateway_source_sha=$EXPECTED_SHA\"",
+        "grep -Fx -- \"consumer_source_sha=$PG_ERD_SOURCE_SHA\"",
+        "recorded_source_identity_sha256",
+        "gateway_source_sha=$EXPECTED_SHA",
+        "consumer_source_sha=$PG_ERD_SOURCE_SHA",
+        "source_identity_sha256=$recorded_source_identity_sha256",
     ] {
         assert!(
-            HARNESS.contains(required),
-            "the receipt must cross-bind the detached source marker: {required}"
+            WORKFLOW.contains(required),
+            "receipt must cross-bind the detached source marker before upload: {required}"
         );
     }
 }
