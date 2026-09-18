@@ -29,6 +29,12 @@ On an affected supplier, the delayed original request-body completion is misclas
 
 This RED is not WebSocket enablement. It does not provide H2 Extended CONNECT, H3/RFC 9220, long-lived timeout policy, production backpressure, consumer parity, canary, rollback, or cutover evidence. Those remain #112 acceptance gates.
 
+## Fixture integrity repair
+
+Current-head review found a test-infrastructure failure path independent of the supplier race: the spawned proxy was wrapped in its cleanup guard only after `/readyz` succeeded, while the origin accept thread was started before readiness. A readiness timeout or early child exit could therefore escape the child cleanup guard and leave an origin thread blocked in `accept()`. The fixture also released its selected listener reservation before child command construction, unnecessarily widening the local reservation-to-bind race.
+
+Ordinary repair `75a42783b26c31e52d3f5325de395e2cf392ff93` wraps the child process before readiness polling, keeps the loopback listener reservation through child command construction and releases it only immediately before spawn, and starts the origin accept thread only after `/readyz` has completed. `/readyz` is handled locally by the test proxy, so this ordering does not require an origin connection. The fast-101 delay, RFC 6455 handshake/frame oracle, supplier dependency, timeout values, and production fail-closed Upgrade policy are unchanged.
+
 ## Primary evidence
 
 - Cloudflare Pingora issue #946, WebSocket upgrade race.
