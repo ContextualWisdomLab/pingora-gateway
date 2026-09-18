@@ -181,9 +181,7 @@ fn readiness_is_200(address: SocketAddr) -> bool {
     if stream.set_write_timeout(Some(READINESS_ATTEMPT)).is_err()
         || stream.set_read_timeout(Some(READINESS_ATTEMPT)).is_err()
         || stream
-            .write_all(
-                b"GET /readyz HTTP/1.1\r\nHost: supplier.test\r\nConnection: close\r\n\r\n",
-            )
+            .write_all(b"GET /readyz HTTP/1.1\r\nHost: supplier.test\r\nConnection: close\r\n\r\n")
             .is_err()
     {
         return false;
@@ -212,9 +210,7 @@ fn readiness_is_200(address: SocketAddr) -> bool {
                     return status_code(&header) == Some(200);
                 }
             }
-            Err(error)
-                if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) =>
-            {
+            Err(error) if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {
                 return false;
             }
             Err(_) => return false,
@@ -289,12 +285,7 @@ fn masked_client_text_frame(payload: &[u8]) -> Vec<u8> {
     frame
 }
 
-fn read_exact_before(
-    stream: &mut TcpStream,
-    buffer: &mut [u8],
-    deadline: Instant,
-    context: &str,
-) {
+fn read_exact_before(stream: &mut TcpStream, buffer: &mut [u8], deadline: Instant, context: &str) {
     let mut offset = 0;
     while offset < buffer.len() {
         let now = Instant::now();
@@ -309,9 +300,7 @@ fn read_exact_before(
             Ok(0) => panic!("{context} closed before the frame completed"),
             Ok(read) => offset += read,
             Err(error) if error.kind() == ErrorKind::Interrupted => continue,
-            Err(error)
-                if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) =>
-            {
+            Err(error) if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {
                 if Instant::now() < deadline {
                     continue;
                 }
@@ -325,13 +314,12 @@ fn read_exact_before(
 fn read_client_text_frame(stream: &mut TcpStream) -> Vec<u8> {
     let deadline = Instant::now() + IO_DEADLINE;
     let mut prefix = [0_u8; 2];
-    read_exact_before(
-        stream,
-        &mut prefix,
-        deadline,
-        "origin client-frame prefix",
+    read_exact_before(stream, &mut prefix, deadline, "origin client-frame prefix");
+    assert_eq!(
+        prefix[0],
+        0x81,
+        "client fixture must send one FIN text frame"
     );
-    assert_eq!(prefix[0], 0x81, "client fixture must send one FIN text frame");
     assert_ne!(
         prefix[1] & 0x80,
         0,
@@ -367,13 +355,12 @@ fn server_text_frame(payload: &[u8]) -> Vec<u8> {
 fn read_server_text_frame(stream: &mut TcpStream) -> Vec<u8> {
     let deadline = Instant::now() + IO_DEADLINE;
     let mut prefix = [0_u8; 2];
-    read_exact_before(
-        stream,
-        &mut prefix,
-        deadline,
-        "client server-frame prefix",
+    read_exact_before(stream, &mut prefix, deadline, "client server-frame prefix");
+    assert_eq!(
+        prefix[0],
+        0x81,
+        "origin fixture must echo one FIN text frame"
     );
-    assert_eq!(prefix[0], 0x81, "origin fixture must echo one FIN text frame");
     assert_eq!(
         prefix[1] & 0x80,
         0,
@@ -393,7 +380,9 @@ fn read_server_text_frame(stream: &mut TcpStream) -> Vec<u8> {
 
 fn spawn_fast_101_echo_origin(listener: TcpListener) -> thread::JoinHandle<()> {
     thread::spawn(move || {
-        let (mut stream, _) = listener.accept().expect("origin must accept proxy connection");
+        let (mut stream, _) = listener
+            .accept()
+            .expect("origin must accept proxy connection");
         let request = read_header(&mut stream, "origin upgrade request");
         assert!(
             header_has_token(&request, "Upgrade", "websocket"),
@@ -463,7 +452,9 @@ X-CWL-Delay-Request-Body: 200\r\n\
 \r\n",
         )
         .expect("WebSocket opening handshake must be writable");
-    client.flush().expect("WebSocket opening handshake must flush");
+    client
+        .flush()
+        .expect("WebSocket opening handshake must flush");
 
     let response = read_header(&mut client, "downstream upgrade response");
     assert_eq!(
