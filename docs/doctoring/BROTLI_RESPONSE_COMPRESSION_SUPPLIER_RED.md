@@ -22,13 +22,17 @@ RFC 7932 §9.2 defines `ISLAST` in the meta-block header and states that an `ISL
 - passes the exact emitted bytes to Node's strict `zlib.brotliDecompressSync` decoder;
 - requires decoder success and byte-for-byte equality with the original representation.
 
-On an affected supplier this desired-behavior test is expected to be RED with a strict-decoder truncation/end-of-stream error. The Node process is test tooling on the repository's pinned `ubuntu-24.04` CI runner, not a runtime dependency or production implementation. If the runner image ceases to provide the runtime, that is an evidence-infrastructure failure and must not be reclassified as supplier GREEN.
+On an affected supplier this desired-behavior test is expected to be RED with a strict-decoder truncation/end-of-stream error. That expected supplier failure is **not** an ordinary repository CI failure. `Cargo.toml` declares the integration target with `required-features = ["supplier-red"]`, while the default feature set is empty, so `cargo test --all-targets --locked --no-fail-fast` does not execute the intentionally failing supplier acceptance. `.github/workflows/brotli-supplier-characterization.yml` is the explicit evidence lane: it verifies exact checkout identity and the target isolation, runs only this target with `--features supplier-red`, and accepts a run as characterization evidence only when the desired-behavior test fails with the specific strict-decoder rejection fingerprint. Compilation, setup, Node-runtime, or unrelated test failures do not count as supplier RED.
+
+The characterization workflow deliberately exits nonzero if the desired-behavior test unexpectedly passes. That transition means the old RED receipt is stale and the exact supplier identity must be re-evaluated for RED→GREEN promotion; the workflow does not freeze the defect as desired behavior. It also does not use `continue-on-error`, weaken the ordinary CI gate, or suppress the failing assertion.
+
+The Node process is test tooling on the repository's pinned `ubuntu-24.04` evidence runner, not a runtime dependency or production implementation. If the runner image ceases to provide the runtime, that is an evidence-infrastructure failure and must not be reclassified as supplier GREEN.
 
 This first RED is intentionally narrow. It proves stream-finalization correctness only. Future enablement still requires the broader #114 contract: consumer-owned legacy behavior characterization, multi-chunk/zero/short/large bodies, disconnect/backpressure, negotiation/framing/double-encoding semantics, CPU/memory bounds, exact-head gates, maintainer-integrated release authority, immutable gateway release, and consumer parity/shadow/canary/rollback/cutover.
 
 ## Promotion order
 
-`#114 requirement → unchanged released-supplier RED → upstream maintainer disposition → release-qualified Pingora identity → unchanged strict-decoder GREEN → explicit versioned gateway capability only if a consumer needs it → immutable gateway release → consumer parity/shadow/canary/rollback/cutover`.
+`#114 requirement → isolated unchanged released-supplier RED receipt → upstream maintainer disposition → release-qualified Pingora identity → run the same desired-behavior acceptance as an ordinary GREEN gate → explicit versioned gateway capability only if a consumer needs it → immutable gateway release → consumer parity/shadow/canary/rollback/cutover`.
 
 Do not append a handcrafted terminal byte, copy a mutable upstream patch, weaken the strict decoder, enable Brotli opportunistically, or treat gzip/zstd as defective without separate evidence.
 
