@@ -24,7 +24,10 @@ fn workflow_is_manual_protected_main_only_and_source_bound() {
         "permissions:\n  contents: read",
         "cancel-in-progress: false",
     ] {
-        assert!(WORKFLOW.contains(required), "missing workflow authority bound: {required}");
+        assert!(
+            WORKFLOW.contains(required),
+            "missing workflow authority bound: {required}"
+        );
     }
     assert!(!WORKFLOW.contains("pull_request:"));
     assert!(!WORKFLOW.contains("push:"));
@@ -40,9 +43,14 @@ fn harness_uses_the_exact_consumer_traefik_shape_without_product_policy_copying(
         TRAEFIK_IMAGE,
         "./deploy/traefik/dynamic.yaml:/etc/traefik/dynamic.yaml:ro",
     ] {
-        assert!(HARNESS.contains(required), "missing exact consumer-shape assertion: {required}");
+        assert!(
+            HARNESS.contains(required),
+            "missing exact consumer-shape assertion: {required}"
+        );
     }
-    assert!(HARNESS.contains("git diff --exit-code -- compose.prod.yaml deploy/traefik/dynamic.yaml"));
+    assert!(HARNESS.contains(
+        "git diff --exit-code -- compose.prod.yaml deploy/traefik/dynamic.yaml"
+    ));
 }
 
 #[test]
@@ -58,7 +66,10 @@ fn harness_distinguishes_in_place_and_atomic_replace_reload_semantics() {
         "mv \"$replacement\" \"$dynamic_file\"",
         "--force-recreate traefik",
     ] {
-        assert!(HARNESS.contains(required), "missing reload characterization: {required}");
+        assert!(
+            HARNESS.contains(required),
+            "missing reload characterization: {required}"
+        );
     }
 }
 
@@ -76,7 +87,9 @@ fn evidence_is_bounded_payload_free_and_uploaded_even_on_failure() {
         "request body",
     ] {
         assert!(
-            WORKFLOW.contains(required) || HARNESS.contains(required) || TRACEABILITY.contains(required),
+            WORKFLOW.contains(required)
+                || HARNESS.contains(required)
+                || TRACEABILITY.contains(required),
             "missing evidence/privacy contract: {required}"
         );
     }
@@ -92,10 +105,13 @@ fn traceability_keeps_product_ownership_and_pingora_implementation_undecided() {
         "last-known-good",
         "single-file bind mount",
         "atomic rename/replace",
-        "no Pingora hot-reload implementation is selected",
+        "No Pingora hot-reload implementation is selected",
         "pg-erd-cloud owner",
         "product route policy remains consumer-owned",
     ] {
-        assert!(TRACEABILITY.contains(required), "missing traceability boundary: {required}");
+        assert!(
+            TRACEABILITY.contains(required),
+            "missing traceability boundary: {required}"
+        );
     }
 }
