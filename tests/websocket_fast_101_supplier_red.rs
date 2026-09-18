@@ -8,7 +8,7 @@
 //! end-of-request-body event.
 
 use std::env;
-use std::io::{Read, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::process::{Child, Command, Stdio};
 use std::thread;
@@ -29,6 +29,7 @@ const CHILD_ORIGIN_ENV: &str = "CWL_WEBSOCKET_SUPPLIER_ORIGIN";
 const FAST_101_BODY_DELAY: Duration = Duration::from_millis(200);
 const POST_101_SETTLE: Duration = Duration::from_millis(300);
 const IO_DEADLINE: Duration = Duration::from_secs(5);
+const READINESS_ATTEMPT: Duration = Duration::from_millis(250);
 const MAX_HEADER_BYTES: usize = 64 * 1024;
 const WEBSOCKET_PAYLOAD: &[u8] = b"cwl-fast-101";
 const CLIENT_MASK: [u8; 4] = [0x12, 0x34, 0x56, 0x78];
@@ -173,6 +174,54 @@ fn header_has_token(header: &[u8], name: &str, expected: &str) -> bool {
     })
 }
 
+fn readiness_is_200(address: SocketAddr) -> bool {
+    let Ok(mut stream) = TcpStream::connect_timeout(&address, Duration::from_millis(100)) else {
+        return false;
+    };
+    if stream.set_write_timeout(Some(READINESS_ATTEMPT)).is_err()
+        || stream.set_read_timeout(Some(READINESS_ATTEMPT)).is_err()
+        || stream
+            .write_all(
+                b"GET /readyz HTTP/1.1\r\nHost: supplier.test\r\nConnection: close\r\n\r\n",
+            )
+            .is_err()
+    {
+        return false;
+    }
+
+    let deadline = Instant::now() + READINESS_ATTEMPT;
+    let mut header = Vec::new();
+    let mut buffer = [0_u8; 512];
+    loop {
+        let now = Instant::now();
+        if now >= deadline
+            || stream
+                .set_read_timeout(Some(deadline.saturating_duration_since(now)))
+                .is_err()
+        {
+            return false;
+        }
+        match stream.read(&mut buffer) {
+            Ok(0) => return false,
+            Ok(read) => {
+                header.extend_from_slice(&buffer[..read]);
+                if header.len() > MAX_HEADER_BYTES {
+                    return false;
+                }
+                if header.windows(4).any(|window| window == b"\r\n\r\n") {
+                    return status_code(&header) == Some(200);
+                }
+            }
+            Err(error)
+                if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) =>
+            {
+                return false;
+            }
+            Err(_) => return false,
+        }
+    }
+}
+
 fn wait_for_ready(address: SocketAddr, child: &mut Child) {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
@@ -182,24 +231,9 @@ fn wait_for_ready(address: SocketAddr, child: &mut Child) {
         {
             panic!("supplier-proxy child exited before readiness: {status}");
         }
-
-        if let Ok(mut stream) = TcpStream::connect_timeout(&address, Duration::from_millis(100)) {
-            stream
-                .set_write_timeout(Some(Duration::from_millis(250)))
-                .expect("readiness write timeout must be configurable");
-            if stream
-                .write_all(
-                    b"GET /readyz HTTP/1.1\r\nHost: supplier.test\r\nConnection: close\r\n\r\n",
-                )
-                .is_ok()
-            {
-                let header = read_header(&mut stream, "supplier-proxy readiness response");
-                if status_code(&header) == Some(200) {
-                    return;
-                }
-            }
+        if readiness_is_200(address) {
+            return;
         }
-
         assert!(
             Instant::now() < deadline,
             "supplier-proxy child did not become HTTP-ready within 10 seconds"
