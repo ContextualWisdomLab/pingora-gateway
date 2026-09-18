@@ -2,18 +2,19 @@
 
 //! Real-listener post-commit upstream TCP reset acceptance for the dedicated pg-erd migration.
 //!
-//! This contract distinguishes an abortive upstream close after a valid response header and partial
-//! body have already crossed the proxy from both the pre-header reset and orderly truncation cases.
-//! Once downstream response commitment exists, the gateway must preserve that status/framing,
-//! terminate the incomplete response, record the transport failure, and keep unrelated routing
-//! healthy rather than inventing retry/failover or a second HTTP status.
+//! This contract distinguishes an abortive upstream close after a valid response header has crossed
+//! the origin-side TCP connection from both the pre-header reset and orderly truncation cases. The
+//! origin emits a partial body, waits for the peer TCP stack to acknowledge all emitted bytes, and
+//! only then resets. Downstream body delivery is deliberately not a prerequisite for releasing the
+//! abort because proxy buffering is not response-commit authority. The gateway must preserve the
+//! first downstream status/framing, terminate the incomplete response, record the transport failure,
+//! and keep unrelated routing healthy rather than inventing retry/failover or a second HTTP status.
 
 use core::ffi::c_void;
 use std::io::{ErrorKind, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::os::fd::AsRawFd;
 use std::process::{Child, Command, Stdio};
-use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -21,7 +22,8 @@ use tempfile::NamedTempFile;
 
 const SOL_SOCKET: i32 = 1;
 const SO_LINGER: i32 = 13;
-const MAX_ORIGIN_REQUEST_HEADER_BYTES: usize = 64 * 1024;
+const SIOCOUTQ: usize = 0x5411;
+const MAX_HTTP_HEADER_BYTES: usize = 64 * 1024;
 
 #[repr(C)]
 struct Linger {
@@ -37,6 +39,7 @@ unsafe extern "C" {
         option_value: *const c_void,
         option_len: u32,
     ) -> i32;
+    fn ioctl(socket: i32, request: usize, ...) -> i32;
 }
 
 struct GatewayProcess(Child);
@@ -89,8 +92,109 @@ fn write_config(
     file
 }
 
-/// Waits for one listener while failing immediately if the child exits, so a
-/// startup defect cannot be misreported as post-commit transport behavior.
+/// Parses only an exact HTTP/1.1 three-digit status token so case changes or
+/// numeric-prefix lookalikes cannot satisfy the response-status oracle.
+fn exact_http_1_1_status_code(response: &str) -> Option<u16> {
+    let status_line = response.split("\r\n").next()?;
+    let mut fields = status_line.split_ascii_whitespace();
+    if fields.next()? != "HTTP/1.1" {
+        return None;
+    }
+    let status = fields.next()?;
+    if status.len() != 3 || !status.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    status.parse().ok()
+}
+
+/// Returns the remaining per-operation timeout without allowing one operation to outlive the caller.
+fn bounded_timeout(deadline: Instant, cap: Duration) -> Option<Duration> {
+    let remaining = deadline.checked_duration_since(Instant::now())?;
+    if remaining.is_zero() {
+        return None;
+    }
+    Some(remaining.min(cap))
+}
+
+/// Attempts one bounded application-level readiness exchange. A successful TCP
+/// handshake alone is not sufficient to admit the failure fixture.
+fn probe_readyz(address: SocketAddr, deadline: Instant) -> bool {
+    let Some(connect_timeout) = bounded_timeout(deadline, Duration::from_millis(100)) else {
+        return false;
+    };
+    let Ok(mut stream) = TcpStream::connect_timeout(&address, connect_timeout) else {
+        return false;
+    };
+    let Some(write_timeout) = bounded_timeout(deadline, Duration::from_millis(250)) else {
+        return false;
+    };
+    if stream.set_write_timeout(Some(write_timeout)).is_err() {
+        return false;
+    }
+    if stream
+        .write_all(b"GET /readyz HTTP/1.1\r\nHost: readiness.local\r\nConnection: close\r\n\r\n")
+        .is_err()
+    {
+        return false;
+    }
+
+    let mut response = Vec::new();
+    let mut buffer = [0_u8; 1024];
+    loop {
+        let Some(read_timeout) = bounded_timeout(deadline, Duration::from_millis(250)) else {
+            return false;
+        };
+        if stream.set_read_timeout(Some(read_timeout)).is_err() {
+            return false;
+        }
+        match stream.read(&mut buffer) {
+            Ok(0) => return false,
+            Ok(read) => {
+                response.extend_from_slice(&buffer[..read]);
+                if response.len() > MAX_HTTP_HEADER_BYTES {
+                    return false;
+                }
+                if let Some(header_end) = response
+                    .windows(4)
+                    .position(|window| window == b"\r\n\r\n")
+                    .map(|position| position + 4)
+                {
+                    let headers = String::from_utf8_lossy(&response[..header_end]);
+                    return exact_http_1_1_status_code(&headers) == Some(200);
+                }
+            }
+            Err(_) => return false,
+        }
+    }
+}
+
+/// Waits for complete `/readyz` HTTP/1.1 200 while failing immediately if the
+/// child exits, preventing a bare listener from manufacturing startup evidence.
+fn wait_until_http_ready(address: SocketAddr, process: &mut Child) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if let Some(status) = process
+            .try_wait()
+            .expect("gateway process state should be readable")
+        {
+            panic!("gateway exited before application readiness: {status}");
+        }
+        assert!(
+            Instant::now() < deadline,
+            "gateway did not become application-ready within 10s"
+        );
+        if probe_readyz(address, deadline) {
+            return;
+        }
+        let Some(sleep_budget) = bounded_timeout(deadline, Duration::from_millis(25)) else {
+            panic!("gateway did not become application-ready within 10s");
+        };
+        thread::sleep(sleep_budget);
+    }
+}
+
+/// Waits only for metrics-listener presence. The later real `/metrics` request
+/// remains the application-level identity oracle for that separate service.
 fn wait_until_listening(address: SocketAddr, process: &mut Child) {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
@@ -98,26 +202,30 @@ fn wait_until_listening(address: SocketAddr, process: &mut Child) {
             .try_wait()
             .expect("gateway process state should be readable")
         {
-            panic!("gateway exited before accepting traffic: {status}");
+            panic!("gateway exited before metrics listener startup: {status}");
         }
         if TcpStream::connect_timeout(&address, Duration::from_millis(100)).is_ok() {
             return;
         }
         assert!(
             Instant::now() < deadline,
-            "gateway did not start within 10s"
+            "metrics listener did not start within 10s"
         );
         thread::sleep(Duration::from_millis(25));
     }
 }
 
-/// Starts the compiled pg-erd composition root and proves both traffic and
-/// metrics listeners are live before the characterized reset is injected.
+/// Starts the compiled pg-erd composition root after retaining both socket
+/// reservations through config construction and until the child-bind handoff.
 fn start_gateway(
     config: &NamedTempFile,
+    gateway_reservation: TcpListener,
+    metrics_reservation: TcpListener,
     gateway_address: SocketAddr,
     metrics_address: SocketAddr,
 ) -> GatewayProcess {
+    drop(gateway_reservation);
+    drop(metrics_reservation);
     let mut child = Command::new(env!("CARGO_BIN_EXE_cwl-pingora-pg-erd-migration"))
         .args(["--config", config.path().to_str().expect("UTF-8 temp path")])
         .stdin(Stdio::null())
@@ -125,18 +233,22 @@ fn start_gateway(
         .stderr(Stdio::null())
         .spawn()
         .expect("compiled pg-erd migration binary should start");
-    wait_until_listening(gateway_address, &mut child);
+    wait_until_http_ready(gateway_address, &mut child);
     wait_until_listening(metrics_address, &mut child);
     GatewayProcess(child)
 }
 
 /// Sends a small raw HTTP/1.1 request with a finite downstream read budget for
-/// readiness, metrics and independent-route recovery probes.
+/// metrics, readiness re-checks, and independent-route recovery probes.
 fn raw_request(address: SocketAddr, request: &[u8]) -> String {
-    let mut downstream = TcpStream::connect(address).expect("gateway should accept traffic");
+    let mut downstream = TcpStream::connect_timeout(&address, Duration::from_secs(1))
+        .expect("gateway should accept traffic");
     downstream
         .set_read_timeout(Some(Duration::from_secs(5)))
         .expect("downstream timeout should be configurable");
+    downstream
+        .set_write_timeout(Some(Duration::from_secs(1)))
+        .expect("downstream write timeout should be configurable");
     downstream
         .write_all(request)
         .expect("downstream request should be writable");
@@ -147,53 +259,56 @@ fn raw_request(address: SocketAddr, request: &[u8]) -> String {
     response
 }
 
-/// Holds the backend reset until the downstream has observed the committed
-/// response header and `partial` prefix, then records EOF versus propagated RST.
+/// Reads the incomplete downstream response until EOF or propagated RST under
+/// one absolute five-second budget. Partial progress cannot renew that budget.
 fn raw_request_until_committed_then_reset(
     address: SocketAddr,
     request: &[u8],
-    reset_release: mpsc::Sender<()>,
 ) -> (Vec<u8>, DownstreamTermination) {
-    let mut downstream = TcpStream::connect(address).expect("gateway should accept traffic");
+    let mut downstream = TcpStream::connect_timeout(&address, Duration::from_secs(1))
+        .expect("gateway should accept traffic");
     downstream
-        .set_read_timeout(Some(Duration::from_secs(5)))
-        .expect("downstream timeout should be configurable");
+        .set_write_timeout(Some(Duration::from_secs(1)))
+        .expect("downstream write timeout should be configurable");
     downstream
         .write_all(request)
         .expect("downstream request should be writable");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    read_downstream_until_termination(&mut downstream, deadline)
+}
 
+/// Reads downstream evidence without allowing successful partial reads to
+/// extend the caller's absolute termination deadline.
+fn read_downstream_until_termination(
+    downstream: &mut TcpStream,
+    deadline: Instant,
+) -> (Vec<u8>, DownstreamTermination) {
     let mut response = Vec::new();
     let mut buffer = [0_u8; 1024];
-    let mut reset_released = false;
     loop {
+        let read_timeout = bounded_timeout(deadline, Duration::from_secs(5))
+            .expect("post-commit reset response exceeded its absolute fixture deadline");
+        downstream
+            .set_read_timeout(Some(read_timeout))
+            .expect("downstream timeout should be configurable");
         match downstream.read(&mut buffer) {
             Ok(0) => return (response, DownstreamTermination::Eof),
             Ok(read) => {
                 response.extend_from_slice(&buffer[..read]);
-                if !reset_released {
-                    if let Some(header_end) = response
-                        .windows(4)
-                        .position(|window| window == b"\r\n\r\n")
-                        .map(|position| position + 4)
-                    {
-                        if response.len() >= header_end + b"partial".len() {
-                            assert_eq!(
-                                &response[header_end..header_end + b"partial".len()],
-                                b"partial",
-                                "downstream must observe the committed body prefix before reset"
-                            );
-                            reset_release
-                                .send(())
-                                .expect("backend reset fixture should still await release");
-                            reset_released = true;
-                        }
-                    }
-                }
+                assert!(
+                    response.len() <= MAX_HTTP_HEADER_BYTES,
+                    "post-commit fixture response exceeded its bounded evidence envelope"
+                );
             }
             Err(error) if error.kind() == ErrorKind::ConnectionReset => {
                 return (response, DownstreamTermination::ConnectionReset);
             }
-            Err(error) => panic!("post-commit reset response should terminate, not stall: {error}"),
+            Err(error) if matches!(error.kind(), ErrorKind::TimedOut | ErrorKind::WouldBlock) => {
+                panic!(
+                    "post-commit reset response exceeded its absolute fixture deadline: {error}"
+                );
+            }
+            Err(error) => panic!("post-commit reset response should terminate cleanly: {error}"),
         }
     }
 }
@@ -207,25 +322,39 @@ fn get(address: SocketAddr, path: &str) -> String {
     )
 }
 
-/// Keeps origin-side request reads finite so a forwarding defect fails before
-/// the intended reset phase instead of hanging the acceptance suite.
+/// Keeps origin-side request reads inside one absolute five-second budget so a
+/// slow-drip forwarding defect cannot renew a per-read socket timeout forever.
 fn read_request_headers(stream: &mut TcpStream) -> String {
-    stream
-        .set_read_timeout(Some(Duration::from_secs(5)))
-        .expect("origin request timeout should be configurable");
+    read_request_headers_until(stream, Instant::now() + Duration::from_secs(5))
+}
+
+/// Reads one origin request header block without allowing partial progress to
+/// extend the caller's absolute deadline.
+fn read_request_headers_until(stream: &mut TcpStream, deadline: Instant) -> String {
     let mut bytes = Vec::new();
     let mut buffer = [0_u8; 1024];
     loop {
-        let read = stream
-            .read(&mut buffer)
-            .expect("origin request should be readable before the fixture deadline");
+        let read_timeout = bounded_timeout(deadline, Duration::from_secs(5))
+            .expect("origin request headers exceeded the absolute fixture deadline");
+        stream
+            .set_read_timeout(Some(read_timeout))
+            .expect("origin request timeout should be configurable");
+        let read = match stream.read(&mut buffer) {
+            Ok(read) => read,
+            Err(error) if matches!(error.kind(), ErrorKind::TimedOut | ErrorKind::WouldBlock) => {
+                panic!("origin request headers exceeded the absolute fixture deadline: {error}");
+            }
+            Err(error) => {
+                panic!("origin request should be readable before the fixture deadline: {error}")
+            }
+        };
         assert!(
             read > 0,
             "gateway closed origin request before headers completed"
         );
         bytes.extend_from_slice(&buffer[..read]);
         assert!(
-            bytes.len() <= MAX_ORIGIN_REQUEST_HEADER_BYTES,
+            bytes.len() <= MAX_HTTP_HEADER_BYTES,
             "gateway origin request headers exceeded the fixture bound"
         );
         if bytes.windows(4).any(|window| window == b"\r\n\r\n") {
@@ -250,31 +379,48 @@ fn header_values<'a>(headers: &'a str, name: &str) -> Vec<&'a str> {
         .collect()
 }
 
-/// Parses only an exact HTTP/1.1 three-digit status token so case changes or
-/// numeric-prefix lookalikes cannot satisfy the response-status oracle.
-fn exact_http_1_1_status_code(response: &str) -> Option<u16> {
-    let status_line = response.split("\r\n").next()?;
-    let mut fields = status_line.split_ascii_whitespace();
-    if fields.next()? != "HTTP/1.1" {
-        return None;
-    }
-    let status = fields.next()?;
-    if status.len() != 3 || !status.bytes().all(|byte| byte.is_ascii_digit()) {
-        return None;
-    }
-    status.parse().ok()
+/// Requires exactly one complete Prometheus sample line so duplicate or
+/// numeric-prefix values cannot manufacture the expected counter evidence.
+fn contains_exact_metric_sample(metrics: &str, sample: &str) -> bool {
+    let mut exact = metrics
+        .lines()
+        .filter(|line| line.trim_end_matches('\r') == sample);
+    exact.next().is_some() && exact.next().is_none()
 }
 
-/// Requires a complete Prometheus sample line so numeric-prefix values cannot
-/// manufacture the expected exact counter sample.
-fn contains_exact_metric_sample(metrics: &str, sample: &str) -> bool {
-    metrics
-        .lines()
-        .any(|line| line.trim_end_matches('\r') == sample)
+/// Waits until Linux reports no response bytes outstanding in the origin TCP
+/// send queue. Linux implements SIOCOUTQ as `write_seq - snd_una`, so zero means
+/// the peer TCP stack has acknowledged every byte emitted before the abort.
+fn wait_until_peer_acknowledged_response(stream: &TcpStream) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let mut pending_bytes = 0_i32;
+        // SAFETY: SIOCOUTQ expects a live socket fd and a writable `int *` result buffer.
+        // `pending_bytes` remains valid for the duration of this synchronous ioctl call.
+        let result = unsafe { ioctl(stream.as_raw_fd(), SIOCOUTQ, &mut pending_bytes as *mut i32) };
+        assert_eq!(
+            result,
+            0,
+            "Linux SIOCOUTQ should expose the origin send queue: {}",
+            std::io::Error::last_os_error()
+        );
+        assert!(
+            pending_bytes >= 0,
+            "Linux SIOCOUTQ cannot report a negative send-queue size: {pending_bytes}"
+        );
+        if pending_bytes == 0 {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "origin response bytes were not acknowledged before the fixture deadline: {pending_bytes} bytes remain"
+        );
+        thread::sleep(Duration::from_millis(5));
+    }
 }
 
 /// Configures Linux abortive-close semantics on the established origin socket
-/// so this phase exercises a real TCP reset after response commitment.
+/// so this phase exercises a real TCP reset after response bytes were acknowledged.
 fn reset_on_close(stream: &TcpStream) {
     let linger = Linger {
         onoff: 1,
@@ -316,8 +462,113 @@ fn exact_status_code_rejects_case_and_numeric_prefix_lookalikes() {
     assert_eq!(exact_http_1_1_status_code("HTTP/1.1 2000 OK\r\n"), None);
 }
 
-/// Rejects numeric-prefix metric values so a larger counter cannot satisfy the
-/// expected single post-commit transport error.
+/// Proves the pg-erd readiness oracle cannot be extended by a peer that continuously drips headers.
+#[test]
+fn readiness_probe_honors_absolute_deadline_under_slow_header_drip() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("slow readiness fixture should bind");
+    let address = listener
+        .local_addr()
+        .expect("slow readiness fixture address");
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("probe should connect");
+        let mut request = [0_u8; 1024];
+        let _ = stream
+            .read(&mut request)
+            .expect("probe request should be readable");
+        for byte in b"HTTP/1.1 200 OK\r\nCache-Control: no-store\r\n" {
+            if stream.write_all(&[*byte]).is_err() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+    });
+
+    let started = Instant::now();
+    let deadline = started + Duration::from_millis(350);
+    assert!(!probe_readyz(address, deadline));
+    assert!(
+        started.elapsed() < Duration::from_millis(700),
+        "pg-erd readiness probe must not reset its total budget on each read"
+    );
+    server
+        .join()
+        .expect("slow readiness fixture should complete");
+}
+
+/// Proves origin header evidence is bounded by one absolute budget even when a
+/// peer keeps making partial progress before each socket-level read timeout.
+#[test]
+fn origin_header_read_does_not_allow_slow_drip_to_renew_total_budget() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("slow origin fixture should bind");
+    let address = listener.local_addr().expect("slow origin fixture address");
+    let client = thread::spawn(move || {
+        let mut stream = TcpStream::connect(address).expect("origin fixture should accept client");
+        for byte in b"GET /api/x" {
+            if stream.write_all(&[*byte]).is_err() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(700));
+        }
+    });
+    let (mut stream, _) = listener.accept().expect("origin fixture should accept");
+    let started = Instant::now();
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _ = read_request_headers(&mut stream);
+    }));
+    assert!(
+        result.is_err(),
+        "incomplete slow-drip headers must fail closed"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(6),
+        "origin header evidence must use one absolute five-second deadline"
+    );
+    client.join().expect("slow origin fixture should complete");
+}
+
+/// Proves downstream termination evidence is bounded by one absolute budget
+/// even when the peer keeps delivering partial response bytes.
+#[test]
+fn downstream_termination_read_does_not_allow_slow_drip_to_renew_total_budget() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("slow downstream fixture should bind");
+    let address = listener
+        .local_addr()
+        .expect("slow downstream fixture address");
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("downstream probe should connect");
+        let mut request = [0_u8; 1024];
+        let _ = stream
+            .read(&mut request)
+            .expect("downstream probe request should be readable");
+        for byte in b"0123456789" {
+            if stream.write_all(&[*byte]).is_err() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(700));
+        }
+    });
+    let started = Instant::now();
+    let result = std::panic::catch_unwind(|| {
+        let _ = raw_request_until_committed_then_reset(
+            address,
+            b"GET /slow HTTP/1.1\r\nHost: app.example\r\nConnection: close\r\n\r\n",
+        );
+    });
+    assert!(
+        result.is_err(),
+        "slow-drip downstream termination must fail closed"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(6),
+        "downstream termination evidence must use one absolute five-second deadline"
+    );
+    server
+        .join()
+        .expect("slow downstream fixture should complete");
+}
+
+/// Rejects numeric-prefix and duplicate metric samples so the oracle proves one
+/// post-commit transport error rather than merely finding at least one matching line.
 #[test]
 fn exact_metric_sample_rejects_numeric_prefix_lookalikes() {
     let metrics = "# TYPE cwl_pingora_gateway_request_errors_total counter\ncwl_pingora_gateway_request_errors_total 10\n";
@@ -325,15 +576,20 @@ fn exact_metric_sample_rejects_numeric_prefix_lookalikes() {
         metrics,
         "cwl_pingora_gateway_request_errors_total 1"
     ));
+
+    let duplicated = "# TYPE cwl_pingora_gateway_request_errors_total counter\ncwl_pingora_gateway_request_errors_total 1\ncwl_pingora_gateway_request_errors_total 1\n";
+    assert!(
+        !contains_exact_metric_sample(duplicated, "cwl_pingora_gateway_request_errors_total 1"),
+        "duplicate exact samples must not satisfy the exactly-one error contract"
+    );
 }
 
-/// Proves an origin RST after downstream commitment preserves the first status
-/// and framing, terminates the short body, records one error and spares sibling routing.
+/// Proves an origin RST after the response bytes were acknowledged by the peer
+/// preserves the first downstream status/framing and spares sibling routing.
 #[test]
 fn compiled_pg_erd_post_commit_reset_preserves_committed_status_and_independent_routing() {
     let backend = TcpListener::bind("127.0.0.1:0").expect("backend fixture should bind");
     let backend_address = backend.local_addr().expect("backend address should exist");
-    let (reset_release, reset_wait) = mpsc::channel();
     let backend_origin = thread::spawn(move || {
         let (mut stream, _) = backend
             .accept()
@@ -345,12 +601,11 @@ fn compiled_pg_erd_post_commit_reset_preserves_committed_status_and_independent_
             .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 20\r\nConnection: close\r\n\r\npartial")
             .expect("committed backend response should be writable");
 
-        // The origin abort is released only after the downstream has observed the committed header
-        // and body prefix. This makes the transport phase causal instead of relying on a sleep that
-        // can race scheduler or socket-buffer timing on loaded CI runners.
-        reset_wait
-            .recv_timeout(Duration::from_secs(10))
-            .expect("downstream should observe the committed prefix before fixture timeout");
+        // Waiting on downstream delivery formed a circular oracle under slower instrumented runs:
+        // origin waited for downstream header forwarding while the intermediary could wait for
+        // origin completion. Instead, require Linux transport evidence that every emitted header
+        // and partial-body byte reached and was acknowledged by the peer TCP stack before the RST.
+        wait_until_peer_acknowledged_response(&stream);
         reset_on_close(&stream);
         drop(stream);
     });
@@ -380,14 +635,17 @@ fn compiled_pg_erd_post_commit_reset_preserves_committed_status_and_independent_
         backend_address,
         frontend_address,
     );
-    drop(gateway_reservation);
-    drop(metrics_reservation);
-    let _process = start_gateway(&config, gateway_address, metrics_address);
+    let _process = start_gateway(
+        &config,
+        gateway_reservation,
+        metrics_reservation,
+        gateway_address,
+        metrics_address,
+    );
 
     let (partial, termination) = raw_request_until_committed_then_reset(
         gateway_address,
         b"GET /api/post-commit-reset HTTP/1.1\r\nHost: app.example:8080\r\nConnection: close\r\n\r\n",
-        reset_release,
     );
     assert!(
         matches!(
@@ -413,7 +671,10 @@ fn compiled_pg_erd_post_commit_reset_preserves_committed_status_and_independent_
         "the committed response must retain exactly one declared framing field: {headers:?}"
     );
     let body = &partial[header_end..];
-    assert_eq!(body, b"partial");
+    assert!(
+        b"partial".starts_with(body),
+        "any body bytes that cross before the abort must be an exact prefix of origin bytes: {body:?}"
+    );
     assert!(
         body.len() < 20,
         "fixture must reset before its declared response body completes"
