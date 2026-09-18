@@ -26,13 +26,13 @@ This evidence makes an accidentally enabled or unused watcher plausible, but it 
 
 Traefik's File provider documentation states that `providers.file.watch=true` watches for filesystem changes and that `filename` and `directory` are mutually exclusive. It recommends `directory`. The same documentation warns that orchestrator bind mounts can miss filesystem notifications when the host file is renamed/replaced; for Docker specifically, renaming a host file can break the link to an individually mounted file, so Traefik recommends binding the parent directory instead.
 
-Docker documents bind mounts as host paths mounted into a container and describes read-only bind mounts and their host coupling. Together these sources make the current consumer's atomic rename/replace behavior an executable question rather than an assumption.
+Docker documents bind mounts as host paths mounted into a container and describes read-only bind mounts and their host coupling. Docker Compose also specifies that when a published host port is omitted the container runtime allocates an unassigned host port, and `--project-directory` can preserve the consumer project base when a generated Compose file is used. These contracts let the characterization isolate host-port allocation from the edge semantics without a bind-then-release race.
 
 ## Executable characterization
 
 `.github/workflows/pg-erd-traefik-reload-characterization.yml` is manual-only and protected-main-only. It pins the pg-erd-cloud source SHA above, checks out both source identities without persisted credentials, and executes `tests/load/characterize_pg_erd_traefik_reload.sh` against an ephemeral checkout. The consumer repository is never pushed or otherwise mutated.
 
-The harness uses the exact production-style Compose and verifies the exact Traefik image, `filename`, `watch`, and single-file bind-mount shape before startup. It then records:
+The harness verifies the exact production-style Compose image, `filename`, `watch`, and single-file bind-mount shape before startup. For CI-only host publication it derives a temporary runtime Compose file from that pinned source, changing only the two loopback host-port mappings to Docker-managed ephemeral ports; relative build, env, secret, and bind-mount paths continue to resolve from the exact consumer project directory. The generated file is runner-local, its digest is recorded, and the consumer's tracked Compose is left byte-identical. It then records:
 
 - baseline `/healthz` availability;
 - whether an in-place write is observed and its observed reload latency;
@@ -52,6 +52,8 @@ Current-range review also identified a timing false-GREEN in the invalid-input o
 
 The subsequent exact-range review found a separate stale-generation false-GREEN in that recovery step. After the semantic-invalid candidate, the harness rewrote the same earlier `recovery` generation and immediately waited for generation `recovery`. If the invalid candidate never became externally visible, the still-visible pre-invalid `recovery` marker could satisfy that predicate without proving any new valid configuration was consumed. Source-level RED `bc98ca4bf1d51c2bbb15fc402fc3bbedb973a9bc` requires a distinct post-invalid recovery marker. Causal repair `a64808ae79e2f4e39b850559485c846bd6cb3c7c` renders `post-invalid-recovery` into a new candidate and records `post_invalid_recovery_requires_recreate=false` only when that new marker is observed; otherwise the existing controlled recreation path is taken and the same fresh marker must then appear. The repair changes only characterization evidence integrity, not consumer configuration or gateway runtime semantics.
 
+A further harness review found a non-deterministic startup RED unrelated to Traefik semantics. The harness selected two ephemeral host ports by binding `127.0.0.1:0`, reading the assigned numbers, closing those sockets, and only later starting Compose. Another process could claim either released port in that interval, turning a valid characterization into an environmental bind failure. Source-level RED `9d02664f04a013c18096109cd33b76ce005671d3` rejects this bind-then-close TOCTOU. Causal repair `7f99b9ba3547aac137813ac5da284c9d81c8a79b` derives a runner-local Compose file whose two host publications omit the host port while retaining loopback binding, lets Docker allocate the unassigned ports when containers are created, discovers Traefik's actual mapping with `docker compose port`, and refreshes an atomic endpoint file after every controlled Traefik recreation so the concurrent probe follows the current container mapping. Contract follow-up `9d5516004fcc3cfa6ff4cdcd0a2dbcf94cf6f09b` binds the executable checks to that runtime endpoint model. This changes only test-harness host publication; the pinned consumer Compose, product routes, file-provider shape, and gateway runtime remain unchanged.
+
 The generated `X-CWL-Reload-Generation` header exists only in the ephemeral checked-out fixture and is a transport-neutral observation marker. It is not added to pg-erd-cloud or to the shared gateway API.
 
 The first harness intentionally does not claim long-lived WebSocket/H2 stream generation semantics or a production Pingora reload design. If the pg-erd-cloud owner confirms that live mutation is supported, a successor RED must add in-flight/long-lived connection generation behavior before issue #109 can close. If the owner selects controlled deployment/restart, those live-reload semantics become non-requirements and restart/drain/rollback acceptance becomes authoritative instead.
@@ -70,7 +72,11 @@ No mutable consumer branch, product-source copy, provider-specific business rout
 
 ## References
 
-Docker, Inc. (2026). *Bind mounts*. Docker Docs. https://docs.docker.com/engine/storage/bind-mounts/
+Docker, Inc. (2026a). *Bind mounts*. Docker Docs. https://docs.docker.com/engine/storage/bind-mounts/
+
+Docker, Inc. (2026b). *Define services in Docker Compose: Ports*. Docker Docs. https://docs.docker.com/reference/compose-file/services/#ports
+
+Docker, Inc. (2026c). *docker compose*. Docker Docs. https://docs.docker.com/reference/cli/docker/compose/
 
 Traefik Labs. (n.d.). *File provider*. Traefik Proxy documentation. Retrieved September 18, 2026, from https://doc.traefik.io/traefik/providers/file/
 
