@@ -8,6 +8,7 @@
 
 const WORKFLOW: &str =
     include_str!("../.github/workflows/pg-erd-traefik-reload-characterization.yml");
+const HARNESS: &str = include_str!("load/characterize_pg_erd_traefik_reload.sh");
 
 #[test]
 fn missing_characterization_artifacts_fail_closed() {
@@ -50,4 +51,25 @@ fn artifact_set_self_binds_exact_gateway_and_consumer_sources() {
         marker < characterization,
         "source identity must be persisted before characterization can fail"
     );
+}
+
+#[test]
+fn characterization_receipt_cross_binds_uploaded_source_marker() {
+    assert!(
+        WORKFLOW.contains("PG_ERD_TRAEFIK_SOURCE_IDENTITY: ${{ runner.temp }}/pg-erd-traefik-source-identity.txt"),
+        "the harness must receive the exact uploaded source-identity marker path"
+    );
+
+    for required in [
+        ": \"${EXPECTED_SHA:?EXPECTED_SHA must be set}\"",
+        ": \"${PG_ERD_TRAEFIK_SOURCE_IDENTITY:?PG_ERD_TRAEFIK_SOURCE_IDENTITY must be set}\"",
+        "record gateway_source_sha \"$EXPECTED_SHA\"",
+        "record consumer_source_sha \"$PG_ERD_SOURCE_SHA\"",
+        "record source_identity_sha256",
+    ] {
+        assert!(
+            HARNESS.contains(required),
+            "the receipt must cross-bind the detached source marker: {required}"
+        );
+    }
 }
