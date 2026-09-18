@@ -186,6 +186,24 @@ write_in_place() {
   cat "$source" >"$dynamic_file"
 }
 
+force_recreate_traefik() {
+  docker compose -f "$compose_file" up -d --no-deps --force-recreate traefik
+}
+
+activate_generation_with_fallback() {
+  local candidate="$1"
+  local generation="$2"
+  local receipt_key="$3"
+  write_in_place "$candidate"
+  if wait_for_generation "$generation" 15; then
+    record "$receipt_key" false
+    return 0
+  fi
+  record "$receipt_key" true
+  force_recreate_traefik
+  wait_for_generation "$generation" 30
+}
+
 start_concurrent_probe() {
   (
     set +e
@@ -227,33 +245,38 @@ record in_place_reload_detected "$in_place_reload_detected"
 
 lkg_candidate="$(mktemp "$RUNNER_TEMP/pg-erd-lkg.XXXXXX.yaml")"
 render_generation "last-known-good" "$lkg_candidate"
-write_in_place "$lkg_candidate"
-wait_for_generation "last-known-good" 15
-printf 'http:\n  routers: [\n' >"$dynamic_file"
-sleep 2
-read -r malformed_status malformed_generation < <(observe_health)
-if [[ "$malformed_status" == "200" && "$malformed_generation" == "last-known-good" ]]; then
-  malformed_last_known_good=true
+activate_generation_with_fallback "$lkg_candidate" "last-known-good" "lkg_generation_requires_recreate"
+lkg_generation_requires_recreate="$(awk -F= '$1 == "lkg_generation_requires_recreate" {print $2}' "$PG_ERD_TRAEFIK_RELOAD_EVIDENCE" | tail -n 1)"
+if [[ "$lkg_generation_requires_recreate" == false ]]; then
+  live_reload_observation_path=true
+  printf 'http:\n  routers: [\n' >"$dynamic_file"
+  sleep 2
+  read -r malformed_status malformed_generation < <(observe_health)
+  if [[ "$malformed_status" == "200" && "$malformed_generation" == "last-known-good" ]]; then
+    malformed_last_known_good=true
+  else
+    malformed_last_known_good=false
+  fi
 else
-  malformed_last_known_good=false
+  live_reload_observation_path=false
+  malformed_status=not-observable
+  malformed_generation=not-observable
+  malformed_last_known_good=not-observable
 fi
+record live_reload_observation_path "$live_reload_observation_path"
 record malformed_status "$malformed_status"
 record malformed_generation "$malformed_generation"
 record malformed_last_known_good "$malformed_last_known_good"
 
 recovery_candidate="$(mktemp "$RUNNER_TEMP/pg-erd-recovery.XXXXXX.yaml")"
 render_generation "recovery" "$recovery_candidate"
-write_in_place "$recovery_candidate"
-if wait_for_generation "recovery" 15; then
-  recovery_detected=true
-else
-  recovery_detected=false
-fi
-record recovery_detected "$recovery_detected"
-[[ "$recovery_detected" == true ]]
+activate_generation_with_fallback "$recovery_candidate" "recovery" "recovery_requires_recreate"
+record recovery_detected true
+recovery_requires_recreate="$(awk -F= '$1 == "recovery_requires_recreate" {print $2}' "$PG_ERD_TRAEFIK_RELOAD_EVIDENCE" | tail -n 1)"
 
-semantic_invalid="$(mktemp "$RUNNER_TEMP/pg-erd-semantic-invalid.XXXXXX.yaml")"
-python3 - "$recovery_candidate" "$semantic_invalid" <<'PY'
+if [[ "$live_reload_observation_path" == true && "$recovery_requires_recreate" == false ]]; then
+  semantic_invalid="$(mktemp "$RUNNER_TEMP/pg-erd-semantic-invalid.XXXXXX.yaml")"
+  python3 - "$recovery_candidate" "$semantic_invalid" <<'PY'
 from pathlib import Path
 import sys
 text = Path(sys.argv[1]).read_text()
@@ -262,14 +285,18 @@ if text.count(needle) < 1:
     raise SystemExit("healthz service anchor changed")
 Path(sys.argv[2]).write_text(text.replace(needle, "      service: missing-cwl-characterization-service\n", 1))
 PY
-write_in_place "$semantic_invalid"
-sleep 2
-read -r semantic_invalid_status semantic_invalid_generation < <(observe_health)
+  write_in_place "$semantic_invalid"
+  sleep 2
+  read -r semantic_invalid_status semantic_invalid_generation < <(observe_health)
+  record semantic_invalid_observable true
+else
+  semantic_invalid_status=not-observable
+  semantic_invalid_generation=not-observable
+  record semantic_invalid_observable false
+fi
 record semantic_invalid_status "$semantic_invalid_status"
 record semantic_invalid_generation "$semantic_invalid_generation"
-
-write_in_place "$recovery_candidate"
-wait_for_generation "recovery" 15
+activate_generation_with_fallback "$recovery_candidate" "recovery" "post_invalid_recovery_requires_recreate"
 
 atomic_candidate="$(mktemp "$(dirname "$dynamic_file")/.cwl-dynamic-replacement.XXXXXX")"
 render_generation "atomic-replace" "$atomic_candidate"
@@ -289,7 +316,7 @@ record atomic_replace_detected "$atomic_replace_detected"
 
 # Recreate only the Traefik container against the replaced host path. This is a
 # characterization control proving whether controlled recreation consumes the new inode.
-docker compose -f "$compose_file" up -d --no-deps --force-recreate traefik
+force_recreate_traefik
 if wait_for_generation "atomic-replace" 30; then
   atomic_replace_after_recreate_detected=true
 else
@@ -300,7 +327,14 @@ record atomic_replace_after_recreate_detected "$atomic_replace_after_recreate_de
 
 write_in_place "$baseline"
 chmod "$dynamic_mode" "$dynamic_file"
-wait_for_generation_absent 15
+if wait_for_generation_absent 15; then
+  final_baseline_requires_recreate=false
+else
+  final_baseline_requires_recreate=true
+  force_recreate_traefik
+  wait_for_generation_absent 30
+fi
+record final_baseline_requires_recreate "$final_baseline_requires_recreate"
 record final_baseline_recovered true
 
 touch "$probe_stop"
@@ -311,6 +345,7 @@ concurrent_probe_failures="$(awk '$0 !~ / status=200 / {count++} END {print coun
 record concurrent_probe_samples "$concurrent_probe_samples"
 record concurrent_probe_failures "$concurrent_probe_failures"
 record concurrent_probe_log_sha256 "$(sha256sum "$probe_log" | awk '{print $1}')"
+[[ "$concurrent_probe_samples" -ge 20 ]]
 
 capture_traefik_log
 record traefik_log_sha256 "$(sha256sum "$PG_ERD_TRAEFIK_LOG" | awk '{print $1}')"
