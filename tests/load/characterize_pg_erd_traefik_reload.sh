@@ -172,6 +172,34 @@ wait_for_generation_absent() {
   return 1
 }
 
+wait_for_observation_change() {
+  local baseline_code="$1"
+  local baseline_generation="$2"
+  local seconds="${3:-15}"
+  local deadline=$((SECONDS + seconds)) code generation
+  local candidate_code="" candidate_generation="" consecutive=0
+  while (( SECONDS < deadline )); do
+    read -r code generation < <(observe_health)
+    if [[ "$code" == "$baseline_code" && "$generation" == "$baseline_generation" ]]; then
+      candidate_code=""
+      candidate_generation=""
+      consecutive=0
+    elif [[ "$code" == "$candidate_code" && "$generation" == "$candidate_generation" ]]; then
+      consecutive=$((consecutive + 1))
+    else
+      candidate_code="$code"
+      candidate_generation="$generation"
+      consecutive=1
+    fi
+    if (( consecutive >= 3 )); then
+      printf '%s %s\n' "$candidate_code" "$candidate_generation"
+      return 0
+    fi
+    sleep 0.2
+  done
+  return 1
+}
+
 render_generation() {
   local generation="$1"
   local output="$2"
@@ -261,19 +289,25 @@ activate_generation_with_fallback "$lkg_candidate" "last-known-good" "lkg_genera
 lkg_generation_requires_recreate="$(awk -F= '$1 == "lkg_generation_requires_recreate" {print $2}' "$PG_ERD_TRAEFIK_RELOAD_EVIDENCE" | tail -n 1)"
 if [[ "$lkg_generation_requires_recreate" == false ]]; then
   live_reload_observation_path=true
+  malformed_started_ms="$(date +%s%3N)"
   printf 'http:\n  routers: [\n' >"$dynamic_file"
-  sleep 2
-  read -r malformed_status malformed_generation < <(observe_health)
-  if [[ "$malformed_status" == "200" && "$malformed_generation" == "last-known-good" ]]; then
-    malformed_last_known_good=true
-  else
+  if read -r malformed_status malformed_generation < <(
+    wait_for_observation_change "200" "last-known-good" 15
+  ); then
     malformed_last_known_good=false
+  else
+    malformed_status=200
+    malformed_generation=last-known-good
+    malformed_last_known_good=true
   fi
+  malformed_finished_ms="$(date +%s%3N)"
+  record malformed_observation_window_ms "$((malformed_finished_ms - malformed_started_ms))"
 else
   live_reload_observation_path=false
   malformed_status=not-observable
   malformed_generation=not-observable
   malformed_last_known_good=not-observable
+  record malformed_observation_window_ms unavailable
 fi
 record live_reload_observation_path "$live_reload_observation_path"
 record malformed_status "$malformed_status"
@@ -288,24 +322,37 @@ recovery_requires_recreate="$(awk -F= '$1 == "recovery_requires_recreate" {print
 
 if [[ "$live_reload_observation_path" == true && "$recovery_requires_recreate" == false ]]; then
   semantic_invalid="$(mktemp "$RUNNER_TEMP/pg-erd-semantic-invalid.XXXXXX.yaml")"
-  python3 - "$recovery_candidate" "$semantic_invalid" <<'PY'
+  render_generation "semantic-invalid" "$semantic_invalid"
+  python3 - "$semantic_invalid" <<'PY'
 from pathlib import Path
 import sys
-text = Path(sys.argv[1]).read_text()
+path = Path(sys.argv[1])
+text = path.read_text()
 needle = "      service: backend\n"
 if text.count(needle) < 1:
     raise SystemExit("healthz service anchor changed")
-Path(sys.argv[2]).write_text(text.replace(needle, "      service: missing-cwl-characterization-service\n", 1))
+path.write_text(text.replace(needle, "      service: missing-cwl-characterization-service\n", 1))
 PY
+  semantic_invalid_started_ms="$(date +%s%3N)"
   write_in_place "$semantic_invalid"
-  sleep 2
-  read -r semantic_invalid_status semantic_invalid_generation < <(observe_health)
-  record semantic_invalid_observable true
+  if read -r semantic_invalid_status semantic_invalid_generation < <(
+    wait_for_observation_change "200" "recovery" 15
+  ); then
+    semantic_invalid_observable=true
+  else
+    semantic_invalid_status=200
+    semantic_invalid_generation=recovery
+    semantic_invalid_observable=false
+  fi
+  semantic_invalid_finished_ms="$(date +%s%3N)"
+  record semantic_invalid_observation_window_ms "$((semantic_invalid_finished_ms - semantic_invalid_started_ms))"
 else
   semantic_invalid_status=not-observable
   semantic_invalid_generation=not-observable
-  record semantic_invalid_observable false
+  semantic_invalid_observable=false
+  record semantic_invalid_observation_window_ms unavailable
 fi
+record semantic_invalid_observable "$semantic_invalid_observable"
 record semantic_invalid_status "$semantic_invalid_status"
 record semantic_invalid_generation "$semantic_invalid_generation"
 activate_generation_with_fallback "$recovery_candidate" "recovery" "post_invalid_recovery_requires_recreate"
