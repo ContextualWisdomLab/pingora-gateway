@@ -57,10 +57,31 @@ jobs:
       - name: Characterize exact Traefik file-provider reload semantics
         shell: bash
         env:
-          PG_ERD_TRAEFIK_SOURCE_IDENTITY: ${{ runner.temp }}/pg-erd-traefik-source-identity.txt
           PG_ERD_TRAEFIK_RELOAD_EVIDENCE: ${{ runner.temp }}/pg-erd-traefik-reload.txt
           PG_ERD_TRAEFIK_LOG: ${{ runner.temp }}/pg-erd-traefik-log.txt
         run: bash tests/load/characterize_pg_erd_traefik_reload.sh "$GITHUB_WORKSPACE/consumer/pg-erd-cloud"
+      - name: Cross-bind characterization receipt and artifact set
+        if: ${{ always() }}
+        shell: bash
+        env:
+          PG_ERD_TRAEFIK_SOURCE_IDENTITY: ${{ runner.temp }}/pg-erd-traefik-source-identity.txt
+          PG_ERD_TRAEFIK_RELOAD_EVIDENCE: ${{ runner.temp }}/pg-erd-traefik-reload.txt
+          PG_ERD_TRAEFIK_LOG: ${{ runner.temp }}/pg-erd-traefik-log.txt
+          PG_ERD_TRAEFIK_PROBE_LOG: ${{ runner.temp }}/pg-erd-traefik-concurrent-probes.txt
+        run: |
+          set -euo pipefail
+          test -f "$PG_ERD_TRAEFIK_SOURCE_IDENTITY"
+          test -f "$PG_ERD_TRAEFIK_RELOAD_EVIDENCE"
+          test -f "$PG_ERD_TRAEFIK_LOG"
+          test -f "$PG_ERD_TRAEFIK_PROBE_LOG"
+          grep -Fx -- "gateway_source_sha=$EXPECTED_SHA" "$PG_ERD_TRAEFIK_SOURCE_IDENTITY" >/dev/null
+          grep -Fx -- "consumer_source_sha=$PG_ERD_SOURCE_SHA" "$PG_ERD_TRAEFIK_SOURCE_IDENTITY" >/dev/null
+          recorded_source_identity_sha256="$(sha256sum "$PG_ERD_TRAEFIK_SOURCE_IDENTITY" | awk '{print $1}')"
+          printf 'gateway_source_sha=%s\nconsumer_source_sha=%s\nsource_identity_sha256=%s\n' \
+            "$EXPECTED_SHA" \
+            "$PG_ERD_SOURCE_SHA" \
+            "$recorded_source_identity_sha256" \
+            >>"$PG_ERD_TRAEFIK_RELOAD_EVIDENCE"
       - name: Upload Traefik reload characterization evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
