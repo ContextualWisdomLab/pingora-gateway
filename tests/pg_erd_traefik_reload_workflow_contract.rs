@@ -62,8 +62,10 @@ fn harness_delegates_ephemeral_host_port_allocation_to_docker() {
     for required in [
         "127.0.0.1::8080",
         "127.0.0.1::5432",
+        "--project-directory \"$consumer_dir\"",
         "compose port traefik 8080",
         "host_port_allocation docker-managed-ephemeral",
+        "refresh_edge_url",
     ] {
         assert!(
             HARNESS.contains(required),
@@ -148,7 +150,7 @@ fn recreate_fallback_preserves_the_container_logs_that_caused_it() {
     );
 
     let recreate = HARNESS
-        .find("docker compose -f \"$compose_file\" up -d --no-deps --force-recreate traefik")
+        .find("compose up -d --no-deps --force-recreate traefik")
         .expect("missing controlled Traefik recreation");
     let prefix = &HARNESS[..recreate];
     let capture = prefix
