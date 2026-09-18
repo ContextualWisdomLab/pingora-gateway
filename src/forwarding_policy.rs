@@ -190,7 +190,10 @@ fn is_valid_ip_literal(literal: &str) -> bool {
 /// Validates the forward-compatible bracket-literal form from RFC 3986 without interpreting it.
 fn is_valid_ipv_future(literal: &str) -> bool {
     let bytes = literal.as_bytes();
-    if bytes.first().is_none_or(|byte| !matches!(*byte, b'v' | b'V')) {
+    if bytes
+        .first()
+        .is_none_or(|byte| !matches!(*byte, b'v' | b'V'))
+    {
         return false;
     }
 
@@ -252,8 +255,11 @@ fn is_sub_delim(byte: u8) -> bool {
     )
 }
 
-/// Parses an explicit Host port and rejects zero because it is not valid external authority.
+/// Parses an explicit RFC 3986 Host port and rejects zero as unsupported external authority.
 fn parse_port(port: &str) -> pingora::Result<u16> {
+    if port.is_empty() || !port.as_bytes().iter().all(u8::is_ascii_digit) {
+        return Err(invalid_authority());
+    }
     let parsed = port.parse::<u16>().map_err(|_| invalid_authority())?;
     if parsed == 0 {
         return Err(invalid_authority());
@@ -423,6 +429,7 @@ mod tests {
             "",
             "app.example:",
             "app.example:0",
+            "app.example:65536",
             "2001:db8::1",
             "[::1",
             "[::1]junk",

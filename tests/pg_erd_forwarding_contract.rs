@@ -18,7 +18,10 @@ fn pg_erd_forwarding_rebuilds_transport_identity_instead_of_trusting_request_hea
         ("X-Forwarded-Port", "80"),
         ("X-Forwarded-Proto", "http"),
         ("X-Forwarded-Server", "attacker-proxy"),
-        ("X-Forwarded-Client-Cert", "By=spiffe://attacker.example;Hash=spoofed"),
+        (
+            "X-Forwarded-Client-Cert",
+            "By=spiffe://attacker.example;Hash=spoofed",
+        ),
         ("X-Forwarded-Prefix", "/attacker-prefix"),
         ("X-Forwarded-PathBase", "/attacker-path-base"),
         ("X-Real-IP", "203.0.113.7"),
@@ -70,6 +73,80 @@ fn pg_erd_forwarding_rebuilds_transport_identity_instead_of_trusting_request_hea
 }
 
 #[test]
+fn https_host_without_explicit_port_uses_external_default_port() {
+    let client = PingoraSocketAddr::from(SocketAddr::from((Ipv4Addr::LOCALHOST, 49152)));
+    let mut request =
+        RequestHeader::build("GET", b"/api", None).expect("fixture request must be valid");
+    request
+        .insert_header("Host", "secure.example")
+        .expect("fixture Host must be valid");
+
+    let context = ForwardingContext::from_downstream_transport(
+        Some(&client),
+        &request,
+        &request,
+        DownstreamScheme::Https,
+    )
+    .expect("HTTPS Host without an explicit port must derive forwarding metadata");
+
+    assert_eq!(
+        context,
+        ForwardingContext::new(
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+            "secure.example".to_string(),
+            443,
+            DownstreamScheme::Https,
+        )
+    );
+}
+
+#[test]
+fn transport_derivation_covers_fallback_and_missing_authority_boundaries() {
+    let client = PingoraSocketAddr::from(SocketAddr::from((Ipv4Addr::LOCALHOST, 49152)));
+    let upstream_without_host =
+        RequestHeader::build("GET", b"/api", None).expect("fixture request must be valid");
+    let mut downstream = upstream_without_host.clone();
+    downstream
+        .insert_header("Host", "fallback.example:8080")
+        .expect("fixture Host must be valid");
+
+    let fallback = ForwardingContext::from_downstream_transport(
+        Some(&client),
+        &upstream_without_host,
+        &downstream,
+        DownstreamScheme::Http,
+    )
+    .expect("downstream Host must remain the fallback external authority");
+    assert_eq!(
+        fallback,
+        ForwardingContext::new(
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+            "fallback.example:8080".to_string(),
+            8080,
+            DownstreamScheme::Http,
+        )
+    );
+
+    let missing_host = ForwardingContext::from_downstream_transport(
+        Some(&client),
+        &upstream_without_host,
+        &upstream_without_host,
+        DownstreamScheme::Http,
+    )
+    .expect_err("missing Host authority must fail closed at the public boundary");
+    assert_eq!(missing_host.etype, ErrorType::HTTPStatus(400));
+
+    let missing_client = ForwardingContext::from_downstream_transport(
+        None,
+        &downstream,
+        &downstream,
+        DownstreamScheme::Http,
+    )
+    .expect_err("non-IP downstream authority must fail closed before Host promotion");
+    assert_eq!(missing_client.etype, ErrorType::HTTPStatus(500));
+}
+
+#[test]
 fn malformed_host_authority_fails_closed_through_transport_derivation() {
     let client = PingoraSocketAddr::from(SocketAddr::from((Ipv4Addr::LOCALHOST, 49152)));
     let mut request =
@@ -90,6 +167,26 @@ fn malformed_host_authority_fails_closed_through_transport_derivation() {
 }
 
 #[test]
+fn oversized_numeric_host_port_fails_closed_before_forwarding() {
+    let client = PingoraSocketAddr::from(SocketAddr::from((Ipv4Addr::LOCALHOST, 49152)));
+    let mut request =
+        RequestHeader::build("GET", b"/api", None).expect("fixture request must be valid");
+    request
+        .insert_header("Host", "app.example:65536")
+        .expect("out-of-range port is still valid generic HTTP field data");
+
+    let error = ForwardingContext::from_downstream_transport(
+        Some(&client),
+        &request,
+        &request,
+        DownstreamScheme::Http,
+    )
+    .expect_err("numeric Host ports above u16 must fail closed before forwarding");
+
+    assert_eq!(error.etype, ErrorType::HTTPStatus(400));
+}
+
+#[test]
 fn non_host_uri_syntax_is_rejected_before_becoming_forwarded_authority() {
     let client = PingoraSocketAddr::from(SocketAddr::from((Ipv4Addr::LOCALHOST, 49152)));
 
@@ -97,6 +194,7 @@ fn non_host_uri_syntax_is_rejected_before_becoming_forwarded_authority() {
         "user@app.example",
         "app.example/path",
         "app.example?query",
+        "app.example:+80",
         "app%2.example",
         "%zz.example",
         "[not-an-ip]",

@@ -19,10 +19,7 @@ use thiserror::Error;
 use crate::forwarding_policy::{DownstreamScheme, ForwardingContext};
 use crate::migration_delivery::MigrationDeliveryPlan;
 use crate::observability::{record_backpressure_rejection, record_request};
-use crate::process_health::{
-    classify_process_health_request, payload_too_large_error, respond_healthy,
-    respond_method_not_allowed, ProcessHealthAction,
-};
+use crate::process_health::{respond_healthy, LIVENESS_PATH, READINESS_PATH};
 use crate::runtime_isolation::{
     BodyLimitExceeded, RequestAdmission, RequestAdmissionBudget, RequestBodyBudget,
     RuntimeIsolationLimits,
@@ -179,7 +176,10 @@ fn append_migration_request_via(
     upstream_request: &mut RequestHeader,
     downstream_version: Version,
 ) -> pingora::Result<()> {
-    upstream_request.append_header("Via", migration_gateway_via_value(downstream_version)?)?;
+    let via = migration_gateway_via_value(downstream_version)?;
+    upstream_request
+        .append_header("Via", via)
+        .expect("validated static migration Via field must be valid");
     Ok(())
 }
 
@@ -229,22 +229,12 @@ impl ProxyHttp for MigrationGatewayProxy {
     where
         Self::CTX: Send + Sync,
     {
-        let body_done = session.is_body_done();
-        match classify_process_health_request(session.req_header(), body_done) {
-            ProcessHealthAction::Probe => {
+        match session.req_header().uri.path() {
+            LIVENESS_PATH | READINESS_PATH => {
                 respond_healthy(session).await?;
                 Ok(true)
             }
-            ProcessHealthAction::RejectMethod => {
-                self.admit_request(ctx)?;
-                respond_method_not_allowed(session).await?;
-                Ok(true)
-            }
-            ProcessHealthAction::RejectPayload => {
-                self.admit_request(ctx)?;
-                Err(payload_too_large_error())
-            }
-            ProcessHealthAction::NotHealth => {
+            _ => {
                 self.admit_request(ctx)?;
                 Self::reject_oversize_declared_body(session, ctx)?;
                 Ok(false)
@@ -351,9 +341,9 @@ mod tests {
     use pingora::ErrorSource;
 
     use super::{
-        append_migration_request_via, body_rejection_to_pingora, proxy_error_status,
-        unmatched_route_to_pingora, MigrationGatewayProxy, MigrationGatewayProxyError,
-        MigrationRequestContext,
+        append_migration_request_via, body_rejection_to_pingora, migration_gateway_via_value,
+        proxy_error_status, unmatched_route_to_pingora, MigrationGatewayProxy,
+        MigrationGatewayProxyError, MigrationRequestContext,
     };
     use crate::edge_contract::{UpstreamConfig, UpstreamTimeouts};
     use crate::edge_routing::{RouteMatch, RouteRule};
@@ -428,6 +418,37 @@ mod tests {
             .map(|value| value.to_str().expect("Via value must be text"))
             .collect::<Vec<_>>();
         assert_eq!(values, vec!["1.0 previous-hop", "2 cwl-pingora-gateway"]);
+    }
+
+    #[test]
+    fn migration_via_mapping_covers_http10_http11_http3_and_rejects_http09() {
+        assert_eq!(
+            migration_gateway_via_value(Version::HTTP_10)
+                .expect("HTTP/1.0 Via token must be supported"),
+            "1.0 cwl-pingora-gateway"
+        );
+        assert_eq!(
+            migration_gateway_via_value(Version::HTTP_11)
+                .expect("HTTP/1.1 Via token must be supported"),
+            "1.1 cwl-pingora-gateway"
+        );
+        assert_eq!(
+            migration_gateway_via_value(Version::HTTP_3)
+                .expect("HTTP/3 Via token must be supported"),
+            "3 cwl-pingora-gateway"
+        );
+        let error = migration_gateway_via_value(Version::HTTP_09)
+            .expect_err("HTTP/0.9 has no supported Via token in the migration gateway");
+        assert_eq!(error.etype, ErrorType::InvalidHTTPHeader);
+    }
+
+    #[test]
+    fn migration_via_adapter_propagates_unsupported_protocol() {
+        let mut request =
+            RequestHeader::build("GET", b"/", None).expect("fixture request must be valid");
+        let error = append_migration_request_via(&mut request, Version::HTTP_09)
+            .expect_err("unsupported downstream protocol must fail before appending migration Via");
+        assert_eq!(error.etype, ErrorType::InvalidHTTPHeader);
     }
 
     #[test]

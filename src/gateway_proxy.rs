@@ -14,15 +14,15 @@ use thiserror::Error;
 use crate::edge_contract::{GatewayConfig, GatewayConfigError};
 use crate::observability::{record_backpressure_rejection, record_request};
 use crate::pingora_delivery::{build_peer_from_validated, PeerBuildError};
-use crate::process_health::{
-    classify_process_health_request, payload_too_large_error, respond_healthy,
-    respond_method_not_allowed, ProcessHealthAction,
-};
-pub use crate::process_health::{LIVENESS_PATH, READINESS_PATH};
 use crate::runtime_isolation::{
     BodyLimitExceeded, RequestAdmission, RequestAdmissionBudget, RequestBodyBudget,
     RuntimeIsolationLimits,
 };
+
+/// Stable process-local liveness endpoint.
+pub const LIVENESS_PATH: &str = "/livez";
+/// Stable readiness endpoint reached through the production Pingora serving path.
+pub const READINESS_PATH: &str = "/readyz";
 
 const MAX_SUPPORTED_MAX_FORWARDS: u32 = 255;
 
@@ -98,6 +98,24 @@ impl GatewayProxy {
         self.upstream_peer.clone()
     }
 
+    /// Answers process-local health probes without contacting the configured upstream.
+    ///
+    /// Health responses intentionally bypass application admission so operators can distinguish a
+    /// live but saturated gateway from an unavailable process.
+    async fn respond_healthy(session: &mut Session) -> pingora::Result<()> {
+        let mut response = ResponseHeader::build(200, None)
+            .expect("literal HTTP 200 response header must be valid");
+        response
+            .insert_header("Content-Length", "0")
+            .expect("literal Content-Length response header must be valid");
+        response
+            .insert_header("Cache-Control", "no-store")
+            .expect("literal Cache-Control response header must be valid");
+        session
+            .write_response_header(Box::new(response), true)
+            .await
+    }
+
     /// Terminates an exhausted TRACE/OPTIONS forwarding budget at this gateway.
     ///
     /// Generic v1 does not implement local TRACE echo or resource-specific OPTIONS semantics. A
@@ -112,7 +130,9 @@ impl GatewayProxy {
         response
             .insert_header("Cache-Control", "no-store")
             .expect("literal Cache-Control response header must be valid");
-        session.write_response_header(Box::new(response), true).await
+        session
+            .write_response_header(Box::new(response), true)
+            .await
     }
 
     /// Acquires the shared in-flight lease before application request processing begins.
@@ -132,17 +152,21 @@ impl GatewayProxy {
         ))
     }
 
-    /// Applies application admission before classifying TRACE/OPTIONS intermediary control.
+    /// Applies admission and declared-body limits before classifying intermediary control.
     ///
     /// A zero or malformed `Max-Forwards` request can terminate locally, but it is still
-    /// application traffic. Keeping classification behind the shared lease prevents local 4xx/5xx
-    /// paths from bypassing the process-wide in-flight budget.
+    /// application traffic. The shared lease is acquired first, then an oversized declared body
+    /// fails with 413 before malformed intermediary control can return 400. TRACE content is then
+    /// rejected before upstream selection so this HTTP-to-HTTP gateway never emits it on its client
+    /// hop. This keeps all local outcomes inside the same runtime-isolation contract.
     fn admit_and_classify_max_forwards(
         &self,
         request: &RequestHeader,
         ctx: &mut RequestContext,
     ) -> pingora::Result<MaxForwardsAction> {
         self.admit_request(ctx)?;
+        Self::reject_oversize_declared_body(request, ctx)?;
+        reject_declared_trace_content(request)?;
         max_forwards_action(request)
     }
 
@@ -151,11 +175,10 @@ impl GatewayProxy {
     /// Chunked or otherwise undeclared bodies remain bounded independently by `RequestBodyBudget`
     /// as body progress arrives.
     fn reject_oversize_declared_body(
-        session: &Session,
+        request: &RequestHeader,
         ctx: &RequestContext,
     ) -> pingora::Result<()> {
-        let declared = session
-            .req_header()
+        let declared = request
             .headers
             .get("content-length")
             .and_then(|value| value.to_str().ok())
@@ -179,6 +202,35 @@ fn body_rejection_to_pingora(rejection: BodyLimitExceeded) -> Box<Error> {
         ErrorType::HTTPStatus(413),
         "request body exceeds configured max_request_body_bytes",
     )
+}
+
+/// Builds the stable fail-closed error used when TRACE carries request content.
+fn invalid_trace_content() -> Box<Error> {
+    Error::explain(
+        ErrorType::HTTPStatus(400),
+        "TRACE request content is not permitted by RFC 9110",
+    )
+}
+
+/// Rejects declared TRACE content before this gateway selects or contacts an upstream peer.
+///
+/// The generic body-size boundary runs first so an already-declared oversize request retains the
+/// existing 413 precedence. A zero declared length is permitted; undeclared content is caught by
+/// the streaming body filter before any content chunk is forwarded.
+fn reject_declared_trace_content(request: &RequestHeader) -> pingora::Result<()> {
+    if request.method.as_str() != "TRACE" {
+        return Ok(());
+    }
+
+    let declared = request
+        .headers
+        .get("content-length")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|raw| raw.parse::<u64>().ok());
+    if declared.is_some_and(|length| length > 0) {
+        return Err(invalid_trace_content());
+    }
+    Ok(())
 }
 
 /// Builds the stable client-visible error for an invalid TRACE/OPTIONS hop budget.
@@ -220,9 +272,7 @@ fn max_forwards_action(request: &RequestHeader) -> pingora::Result<MaxForwardsAc
             .saturating_add(u32::from(*digit - b'0'))
     });
     Ok(MaxForwardsAction::Forward(
-        received
-            .saturating_sub(1)
-            .min(MAX_SUPPORTED_MAX_FORWARDS),
+        received.saturating_sub(1).min(MAX_SUPPORTED_MAX_FORWARDS),
     ))
 }
 
@@ -234,7 +284,9 @@ fn apply_max_forwards_before_forward(request: &mut RequestHeader) -> pingora::Re
     match max_forwards_action(request)? {
         MaxForwardsAction::Ignore => Ok(()),
         MaxForwardsAction::Forward(value) => {
-            request.insert_header("Max-Forwards", value.to_string())?;
+            request
+                .insert_header("Max-Forwards", value.to_string())
+                .expect("bounded decimal Max-Forwards must be a valid HTTP field value");
             Ok(())
         }
         MaxForwardsAction::FinalRecipient => Err(Error::explain(
@@ -286,14 +338,22 @@ fn sanitize_forwarding_headers(
     for header in &x_forwarded_headers {
         upstream_request.remove_header(header);
     }
-    upstream_request.insert_header("Forwarded", "proto=http")?;
-    upstream_request.append_header("Via", gateway_via_value(downstream_version)?)?;
+    upstream_request
+        .insert_header("Forwarded", "proto=http")
+        .expect("literal gateway Forwarded field must be valid");
+    let via = gateway_via_value(downstream_version)?;
+    upstream_request
+        .append_header("Via", via)
+        .expect("validated static gateway Via field must be valid");
     Ok(())
 }
 
 /// Appends this intermediary to a forwarded upstream response without rewriting the received chain.
 fn append_response_via(upstream_response: &mut ResponseHeader) -> pingora::Result<()> {
-    upstream_response.append_header("Via", gateway_via_value(upstream_response.version)?)?;
+    let via = gateway_via_value(upstream_response.version)?;
+    upstream_response
+        .append_header("Via", via)
+        .expect("validated static gateway Via field must be valid");
     Ok(())
 }
 
@@ -313,25 +373,14 @@ impl ProxyHttp for GatewayProxy {
     where
         Self::CTX: Send + Sync,
     {
-        let body_done = session.is_body_done();
-        match classify_process_health_request(session.req_header(), body_done) {
-            ProcessHealthAction::Probe => {
-                respond_healthy(session).await?;
+        match session.req_header().uri.path() {
+            LIVENESS_PATH | READINESS_PATH => {
+                Self::respond_healthy(session).await?;
                 Ok(true)
             }
-            ProcessHealthAction::RejectMethod => {
-                self.admit_request(ctx)?;
-                respond_method_not_allowed(session).await?;
-                Ok(true)
-            }
-            ProcessHealthAction::RejectPayload => {
-                self.admit_request(ctx)?;
-                Err(payload_too_large_error())
-            }
-            ProcessHealthAction::NotHealth => {
+            _ => {
                 let max_forwards =
                     self.admit_and_classify_max_forwards(session.req_header(), ctx)?;
-                Self::reject_oversize_declared_body(session, ctx)?;
                 if max_forwards == MaxForwardsAction::FinalRecipient {
                     Self::respond_max_forwards_final_recipient(session).await?;
                     return Ok(true);
@@ -343,7 +392,7 @@ impl ProxyHttp for GatewayProxy {
 
     async fn request_body_filter(
         &self,
-        _session: &mut Session,
+        session: &mut Session,
         body: &mut Option<Bytes>,
         _end_of_stream: bool,
         ctx: &mut Self::CTX,
@@ -354,7 +403,11 @@ impl ProxyHttp for GatewayProxy {
         let chunk_bytes = body.as_ref().map_or(0_u64, |chunk| chunk.len() as u64);
         ctx.request_body
             .observe_chunk(chunk_bytes)
-            .map_err(body_rejection_to_pingora)
+            .map_err(body_rejection_to_pingora)?;
+        if session.req_header().method.as_str() == "TRACE" && chunk_bytes > 0 {
+            return Err(invalid_trace_content());
+        }
+        Ok(())
     }
 
     async fn upstream_peer(
@@ -402,8 +455,8 @@ impl ProxyHttp for GatewayProxy {
 mod tests {
     use super::{
         append_response_via, apply_max_forwards_before_forward, body_rejection_to_pingora,
-        max_forwards_action, sanitize_forwarding_headers, MaxForwardsAction, RequestContext,
-        MAX_SUPPORTED_MAX_FORWARDS,
+        gateway_via_value, max_forwards_action, sanitize_forwarding_headers, MaxForwardsAction,
+        RequestContext, MAX_SUPPORTED_MAX_FORWARDS,
     };
     use crate::runtime_isolation::{
         BodyLimitExceeded, RequestAdmissionBudget, RuntimeIsolationLimits,
@@ -507,6 +560,43 @@ mod tests {
     }
 
     #[test]
+    fn trace_without_max_forwards_remains_forwarding_eligible() {
+        let request =
+            RequestHeader::build("TRACE", b"/", None).expect("fixture request must be valid");
+
+        assert_eq!(
+            max_forwards_action(&request).expect("missing Max-Forwards does not exhaust a budget"),
+            MaxForwardsAction::Ignore
+        );
+    }
+
+    #[test]
+    fn exhausted_max_forwards_cannot_reach_upstream_rewrite() {
+        let mut request =
+            RequestHeader::build("OPTIONS", b"/", None).expect("fixture request must be valid");
+        request
+            .insert_header("Max-Forwards", "0")
+            .expect("fixture Max-Forwards must be valid");
+
+        let error = apply_max_forwards_before_forward(&mut request)
+            .expect_err("final-recipient traffic must not be rewritten for another hop");
+        assert_eq!(error.etype, ErrorType::HTTPStatus(501));
+    }
+
+    #[test]
+    fn malformed_max_forwards_cannot_reach_upstream_rewrite() {
+        let mut request =
+            RequestHeader::build("TRACE", b"/", None).expect("fixture request must be valid");
+        request
+            .insert_header("Max-Forwards", "1x")
+            .expect("fixture header bytes must be valid");
+
+        let error = apply_max_forwards_before_forward(&mut request)
+            .expect_err("malformed Max-Forwards must fail before upstream rewrite");
+        assert_eq!(error.etype, ErrorType::HTTPStatus(400));
+    }
+
+    #[test]
     fn huge_valid_max_forwards_is_capped_to_gateway_supported_value() {
         let mut request =
             RequestHeader::build("TRACE", b"/", None).expect("fixture request must be valid");
@@ -574,8 +664,41 @@ mod tests {
     }
 
     #[test]
+    fn via_mapping_covers_http2_http3_and_rejects_http09() {
+        assert_eq!(
+            gateway_via_value(Version::HTTP_2).expect("HTTP/2 Via token must be supported"),
+            "2 cwl-pingora-gateway"
+        );
+        assert_eq!(
+            gateway_via_value(Version::HTTP_3).expect("HTTP/3 Via token must be supported"),
+            "3 cwl-pingora-gateway"
+        );
+
+        let error = gateway_via_value(Version::HTTP_09)
+            .expect_err("HTTP/0.9 has no supported Via token in this gateway");
+        assert_eq!(error.etype, ErrorType::InvalidHTTPHeader);
+    }
+
+    #[test]
+    fn via_adapters_propagate_unsupported_protocols() {
+        let mut request =
+            RequestHeader::build("GET", b"/", None).expect("fixture request must be valid");
+        let request_error = sanitize_forwarding_headers(&mut request, Version::HTTP_09)
+            .expect_err("unsupported downstream protocol must fail before appending Via");
+        assert_eq!(request_error.etype, ErrorType::InvalidHTTPHeader);
+
+        let mut response =
+            ResponseHeader::build(200, None).expect("fixture response must be valid");
+        response.set_version(Version::HTTP_09);
+        let response_error = append_response_via(&mut response)
+            .expect_err("unsupported upstream protocol must fail before appending Via");
+        assert_eq!(response_error.etype, ErrorType::InvalidHTTPHeader);
+    }
+
+    #[test]
     fn response_via_preserves_received_chain_and_appends_gateway() {
-        let mut response = ResponseHeader::build(200, None).expect("fixture response must be valid");
+        let mut response =
+            ResponseHeader::build(200, None).expect("fixture response must be valid");
         response.set_version(Version::HTTP_11);
         response
             .insert_header("Via", "1.0 origin-proxy")
