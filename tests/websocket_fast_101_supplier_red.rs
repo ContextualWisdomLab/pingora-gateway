@@ -308,9 +308,13 @@ fn read_exact_before(
         match stream.read(&mut buffer[offset..]) {
             Ok(0) => panic!("{context} closed before the frame completed"),
             Ok(read) => offset += read,
+            Err(error) if error.kind() == ErrorKind::Interrupted => continue,
             Err(error)
                 if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) =>
             {
+                if Instant::now() < deadline {
+                    continue;
+                }
                 panic!("{context} exceeded the absolute frame deadline: {error}")
             }
             Err(error) => panic!("{context} should remain readable: {error}"),
