@@ -2,6 +2,8 @@
 
 #![cfg(unix)]
 
+mod support;
+
 use std::fs;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
@@ -11,6 +13,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use pingora::tls::ssl::{SslAcceptor, SslFiletype, SslMethod};
+use support::StartupLock;
 use tempfile::{tempdir, NamedTempFile};
 
 struct GatewayProcess(Child);
@@ -122,19 +125,17 @@ fn tls_acceptor(certificates: &LocalCertificates) -> SslAcceptor {
     builder.build()
 }
 
-fn reserve_distinct_loopback_addresses() -> (SocketAddr, SocketAddr) {
+fn reserve_distinct_loopback_addresses() -> (TcpListener, TcpListener, SocketAddr, SocketAddr) {
     let traffic = TcpListener::bind("127.0.0.1:0").expect("traffic port should be available");
     let metrics = TcpListener::bind("127.0.0.1:0").expect("metrics port should be available");
-    let addresses = (
-        traffic
-            .local_addr()
-            .expect("traffic reservation has an address"),
-        metrics
-            .local_addr()
-            .expect("metrics reservation has an address"),
-    );
-    assert_ne!(addresses.0, addresses.1);
-    addresses
+    let traffic_address = traffic
+        .local_addr()
+        .expect("traffic reservation has an address");
+    let metrics_address = metrics
+        .local_addr()
+        .expect("metrics reservation has an address");
+    assert_ne!(traffic_address, metrics_address);
+    (traffic, metrics, traffic_address, metrics_address)
 }
 
 fn write_gateway_config(
@@ -202,17 +203,19 @@ fn spawn_gateway(config: &NamedTempFile) -> GatewayProcess {
         .stderr(Stdio::inherit())
         .spawn()
         .expect("compiled gateway binary should start");
-    let listener = extract_listener(config);
+    let listener = extract_socket(config, "listener: ");
+    let metrics_listener = extract_socket(config, "metrics_listener: ");
     wait_until_listening(listener, &mut child);
+    wait_until_listening(metrics_listener, &mut child);
     GatewayProcess(child)
 }
 
-fn extract_listener(config: &NamedTempFile) -> SocketAddr {
+fn extract_socket(config: &NamedTempFile, prefix: &str) -> SocketAddr {
     let source = fs::read_to_string(config.path()).expect("gateway config should be readable");
     source
         .lines()
-        .find_map(|line| line.strip_prefix("listener: "))
-        .expect("listener must be present")
+        .find_map(|line| line.strip_prefix(prefix))
+        .expect("requested listener must be present")
         .parse()
         .expect("listener must be a socket address")
 }
@@ -241,7 +244,8 @@ fn compiled_gateway_trusts_an_explicit_local_ca_and_rejects_hostname_mismatch() 
             .expect("TLS fixture response should be writable");
     });
 
-    let (valid_gateway, valid_metrics) = reserve_distinct_loopback_addresses();
+    let (valid_traffic_reservation, valid_metrics_reservation, valid_gateway, valid_metrics) =
+        reserve_distinct_loopback_addresses();
     let valid_config = write_gateway_config(
         valid_gateway,
         valid_metrics,
@@ -249,7 +253,11 @@ fn compiled_gateway_trusts_an_explicit_local_ca_and_rejects_hostname_mismatch() 
         "upstream.test",
         &certificates.ca_cert,
     );
+    let valid_startup_lock = StartupLock::acquire();
+    drop(valid_traffic_reservation);
+    drop(valid_metrics_reservation);
     let _valid_process = spawn_gateway(&valid_config);
+    drop(valid_startup_lock);
     let valid_response = raw_get(valid_gateway);
     assert!(
         valid_response.starts_with("HTTP/1.1 200"),
@@ -271,7 +279,12 @@ fn compiled_gateway_trusts_an_explicit_local_ca_and_rejects_hostname_mismatch() 
         );
     });
 
-    let (mismatch_gateway, mismatch_metrics) = reserve_distinct_loopback_addresses();
+    let (
+        mismatch_traffic_reservation,
+        mismatch_metrics_reservation,
+        mismatch_gateway,
+        mismatch_metrics,
+    ) = reserve_distinct_loopback_addresses();
     let mismatch_config = write_gateway_config(
         mismatch_gateway,
         mismatch_metrics,
@@ -279,7 +292,11 @@ fn compiled_gateway_trusts_an_explicit_local_ca_and_rejects_hostname_mismatch() 
         "wrong.internal.example",
         &certificates.ca_cert,
     );
+    let mismatch_startup_lock = StartupLock::acquire();
+    drop(mismatch_traffic_reservation);
+    drop(mismatch_metrics_reservation);
     let _mismatch_process = spawn_gateway(&mismatch_config);
+    drop(mismatch_startup_lock);
     let mismatch_response = raw_get(mismatch_gateway);
     assert!(
         mismatch_response.starts_with("HTTP/1.1 502"),

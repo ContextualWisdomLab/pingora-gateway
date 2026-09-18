@@ -11,13 +11,13 @@ Network authority, upstream identity, availability, operator configuration integ
 | Request-controlled SSRF | Upstream socket is startup config only; v1 has one admitted upstream | Config write compromise remains privileged |
 | TLS MITM/upstream impersonation | Explicit SNI plus certificate/hostname verification | Downstream TLS is out of scope |
 | Forwarded-header spoofing | Strip `Forwarded`, `X-Forwarded-*`, `X-Real-IP`; emit only `proto=http` | No trusted-proxy/client-IP feature yet |
-| Request-body exhaustion | Explicit body limit; Content-Length rejected pre-upstream; streaming bytes counted | Header-specific configurable limit and broader concurrency budgets pending |
+| Request/body resource exhaustion | Explicit body limit; Content-Length rejected pre-upstream; streaming bytes counted; `max_in_flight_requests` bounds process-wide admitted proxy work | Smaller configurable header budget plus explicit connection/queue admission budgets remain pending |
 | Slow/dead upstream | Explicit connect/total-connect/read/write/idle budgets | Retry policy and consumer-specific streaming semantics require characterization |
 | Hop-by-hop/request smuggling ambiguity | Pingora standard policy strips hop-by-hop/connection-nominated headers; pinned line includes 0.8-era smuggling fixes | Exact dependency audit and current advisory revalidation still required |
-| Credential leakage in telemetry | Policy forbids sensitive headers/bodies | Operational logging/metrics implementation still absent |
-| Container privilege/persistence | Numeric non-root user; no intended writes; read-only-root-compatible layout | Hosted OCI test not yet GREEN |
-| Supply-chain substitution | Exact Pingora Git revision | No committed lock, SBOM, provenance, signing, immutable digest |
-| Unsafe rollout | Draft PR, health paths, documented rollback | Graceful-drain/rolling rollback test and published artifact pending |
+| Credential leakage in telemetry | CWL access logs are coarse and payload-free; Prometheus labels are low-cardinality and do not contain request credentials | Broad `RUST_LOG=trace` can still enable dependency diagnostics containing raw request headers until #31 payload-safe logging is integrated |
+| Container privilege/persistence | Numeric non-root user; no intended writes; read-only-root-compatible layout; OCI runtime contract exists | Protected-head release artifact evidence is still pending |
+| Supply-chain substitution | Exact Pingora Git revision; committed `Cargo.lock`; locked CI/build paths reject resolver drift | Current advisory gate, SBOM, provenance, signing and immutable artifact digest remain release requirements |
+| Unsafe rollout | Health/readiness contracts and graceful-drain/shutdown tests exist | Published artifact, representative canary/shadow evidence and observed rollback remain pending |
 
 ## Abuse cases explicitly out of scope
 

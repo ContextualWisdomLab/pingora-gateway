@@ -2,11 +2,11 @@
 
 ## Runtime
 
-Rust edition 2021, minimum Rust `1.97.1`. The Pingora dependency is pinned to an exact upstream Git revision. The production composition root is `src/bin/cwl-pingora-gateway.rs`; it parses `--config`, validates the contract, constructs `GatewayProxy`, adds a TCP listener to `http_proxy_service`, and delegates lifecycle handling to `Server::run_forever()`.
+Rust edition 2021, minimum Rust `1.98.1`. The Pingora dependency is pinned to an exact upstream Git revision. The production composition root is `src/bin/cwl-pingora-gateway.rs`; it parses `--config`, validates the contract, constructs `GatewayProxy`, adds a TCP listener to `http_proxy_service`, and enters Pingora lifecycle handling with `server.run(RunArgs::default())`. The binary deliberately returns `ExitCode::SUCCESS` after `run()` rather than invoking `Server::run_forever()`, preserving the same drain path without the latter's final `process::exit(0)`.
 
 ## Contract
 
-Configuration version 1 is YAML with `deny_unknown_fields`. Required top-level fields are `version`, `listener`, `max_request_body_bytes`, and `upstreams`. Exactly one upstream is accepted. Each upstream has `name`, `address`, `tls`, optional `sni`, and explicit positive timeout budgets.
+Configuration version 1 is YAML with `deny_unknown_fields`. Required top-level fields are `version`, `listener`, `metrics_listener`, `max_request_body_bytes`, `max_in_flight_requests`, `upstream_keepalive_pool_size`, and `upstreams`. Exactly one upstream is accepted. Each upstream has `name`, `address`, `tls`, optional `sni`, and explicit positive timeout budgets.
 
 TLS upstreams require SNI. The Pingora `HttpPeer` enables certificate verification and hostname verification. Cleartext upstreams must not carry an SNI value. No request may choose an upstream dynamically.
 
