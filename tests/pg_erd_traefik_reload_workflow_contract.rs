@@ -54,6 +54,25 @@ fn harness_uses_the_exact_consumer_traefik_shape_without_product_policy_copying(
 }
 
 #[test]
+fn harness_delegates_ephemeral_host_port_allocation_to_docker() {
+    assert!(
+        !HARNESS.contains("sock.bind((\"127.0.0.1\", 0))"),
+        "bind-then-close host-port discovery leaves a TOCTOU window before Compose publishes the port"
+    );
+    for required in [
+        "127.0.0.1::8080",
+        "127.0.0.1::5432",
+        "compose port traefik 8080",
+        "host_port_allocation docker-managed-ephemeral",
+    ] {
+        assert!(
+            HARNESS.contains(required),
+            "Docker must atomically own ephemeral host-port publication: {required}"
+        );
+    }
+}
+
+#[test]
 fn harness_distinguishes_observations_from_controlled_recreate_fallbacks() {
     for required in [
         "in_place_reload_detected",
