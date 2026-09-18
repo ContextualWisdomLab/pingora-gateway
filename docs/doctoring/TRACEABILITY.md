@@ -1,19 +1,20 @@
 # Primary-Source and APA-7 Traceability
 
-This document maps material edge-runtime, protocol, toolchain, container, and supplier claims to primary standards or first-party upstream evidence. Version, advisory, protected-head, and release claims are revalidated before promotion. Mutable contributor PRs are evidence candidates, not release authority.
+This document maps material edge-runtime, protocol, toolchain, container, and supplier claims to primary standards or first-party upstream evidence. Version, advisory, protected-head, and release claims are revalidated before promotion. Mutable contributor PRs are evidence candidates, not release authority. Supplier and OCI release observations below were last revalidated on 2026-09-18 KST.
 
 ## Current supplier and implementation traceability
 
 | Claim | Primary evidence | Acceptance consequence |
 | --- | --- | --- |
-| Pingora 0.9.0 is the current published supplier release observed on 2026-09-10 KST | Cloudflare Pingora GitHub Release `0.9.0`, published 2026-09-09T23:34:48Z; protected release-source commit `702f69015e53f7244d6ad2e743de571d859a70a4` | Release-name existence is not blanket migration credit. The exact consumer dependency identity and unchanged gateway behavior must still be proven. |
-| Pingora 0.9.0 contains the graceful-shutdown lost-wakeup repair | Pingora 0.9.0 release notes: proxy shutdown notifications are sharded and the graceful-shutdown lost-wakeup race is closed | Historical #844/#969 becomes provenance for correctness; gateway #70 moves to exact registry pin/lock transition and unchanged downstream GREEN. |
+| Pingora 0.9.0 remains the current published supplier release observed on 2026-09-18 KST | Cloudflare Pingora GitHub Release `0.9.0`, published 2026-09-09T23:34:48Z; released source/tag lineage at `702f69015e53f7244d6ad2e743de571d859a70a4`; GitHub Release metadata reports `immutable=false` and zero attached assets | Release-name existence is not blanket migration credit. Exact consumer registry source/checksum plus Cargo-generated lock evidence and unchanged gateway behavior are still required. |
+| Pingora 0.9.0 contains the graceful-shutdown lost-wakeup repair | Pingora 0.9.0 release notes: proxy shutdown notifications are sharded and the graceful-shutdown lost-wakeup race is closed; downstream #70 already consumes exact crates.io `=0.9.0` | Historical #844/#969 is provenance for supplier correctness. Current #70 RED is instead stale-foundation readiness ancestry and must be repaired by ordinary foundation→#44/#47→#70 inheritance, followed by unchanged shutdown/recovery acceptance; do not copy the readiness helper or request another supplier shutdown patch. |
 | Released 0.9.0 does not expose CWL's required configurable H1 request-header byte/count admission | Released `pingora-core` HTTP/1 source at `702f690...`; downstream #72 executable real-socket RED | Callback-only rejection is not equivalent to parser admission. A later release-qualified supplier capability is required. |
-| Current upstream parser-admission candidate repairs the seven CWL findings at mutable-candidate scope and is exact-head GREEN | `cloudflare/pingora#1000@6a90c79b61fbbc70b518709de6802165668cba2c`, four-file current range; Semgrep `34434779521`; build `34434779481`; exact-current CWL COMMENT review `5162454757` | Candidate CI/source advances owner-path confidence but cannot be pinned or treated as maintainer-integrated/released authority. Maintainer integration, a later release-qualified identity, then unchanged #72 GREEN remain required. |
+| Current upstream parser-admission candidate repairs the seven CWL findings at mutable-candidate scope and is exact-head GREEN | `cloudflare/pingora#1000@6a90c79b61fbbc70b518709de6802165668cba2c`, still open/unmerged on 2026-09-18; four-file current range; Semgrep `34434779521`; build `34434779481`; exact-current CWL COMMENT review `5162454757` | Candidate CI/source advances owner-path confidence but cannot be pinned or treated as maintainer-integrated/released authority. Maintainer integration, a later release-qualified identity, then unchanged #72 GREEN remain required. |
 | Released 0.9.0 still lacks a supported monotonic whole-request-header deadline | Released H1 request-read path at `702f690...`; open upstream #447; downstream #71 fresh/reused real-socket RED | Per-read inactivity timeout does not satisfy a whole-header lifetime contract. |
-| Pingora 0.9.0 still carries `derivative 2.2.0` in the relevant graph | Released/tagged workspace source at `702f690...`; open upstream #889; RustSec RUSTSEC-2024-0388 | #54 remains intentionally RED until a later release-qualified supplier identity removes the package and the consumer lock is regenerated. |
-| Released 0.9.0 does not close H2→H1 Cookie coalescing | Released proxy sanitizer at `702f690...`; downstream #53 real TLS/H2→H1 wire RED; open contributor #901 | Multiple H2 Cookie fields must be reconstructed as one H1 Cookie field using the protocol-defined delimiter before release credit. |
-| Zero-length application writes must not own the H1 chunk terminator | Pingora issue/PR lineage #935/#936; contributor #936 remains open | `finish()` must remain the sole chunk-terminator owner; async and cancel-safe write paths require regression evidence before release credit. |
+| Pingora 0.9.0 and current protected supplier source still have no release-qualified removal of `derivative 2.2.0` | Released/tagged workspace source at `702f690...`; protected `cloudflare/pingora/main@4487f7b2ab50f159e4a2cf4f6a6b813f61bb6e19`; open upstream #889; RustSec RUSTSEC-2024-0388; downstream foundation #1 current Security Scan independently fails only the introduced `derivative 2.2.0` finding | #54 remains intentionally RED and foundation promotion remains fail-closed until a maintainer-integrated, later release-qualified supplier identity removes the package, preserves #62 semantics, and the consumer lock/security evidence is regenerated. |
+| Released 0.9.0 does not close H2→H1 Cookie coalescing | Released proxy sanitizer at `702f690...`; downstream #53 real TLS/H2→H1 wire RED; open/unmerged contributor #901 | Multiple H2 Cookie fields must be reconstructed as one H1 Cookie field using the protocol-defined delimiter before release credit. |
+| Zero-length application writes must not own the H1 chunk terminator | Pingora issue/PR lineage #935/#936; contributor #936 remains open/unmerged | `finish()` must remain the sole chunk-terminator owner; async and cancel-safe write paths require regression evidence before release credit. |
+| A Traefik file-provider `watch=true` flag on a single bind-mounted file is not, by itself, evidence that live mutation is a supported consumer contract | Traefik Labs, current File Provider documentation: file watching uses filesystem notifications; mounted/bound file links can break on rename/replacement and the documented mitigation is a bound parent directory with `directory`; protected pg-erd consumer source plus #109/#110 characterization | Do not create generic shared Pingora hot reload from configuration presence alone. First prove source-bound in-place/rename behavior and owner intent on protected consumer evidence; without positive evidence, use versioned startup configuration plus controlled restart/redeployment, readiness, drain, and rollback. |
 
 ## Protocol and security standards
 
@@ -36,12 +37,12 @@ This document maps material edge-runtime, protocol, toolchain, container, and su
 
 | Claim | Primary evidence | Acceptance consequence |
 | --- | --- | --- |
-| Rust 1.98.1 repairs the Rust 1.98.0 vtable-generation miscompilation | Rust Release Team, *Announcing Rust 1.98.1*, 2026-09-03 | Release-producing gateway paths select/verify 1.98.1; #56 remains a separately governed prerequisite until normally integrated. |
+| Rust 1.98.1 repairs the Rust 1.98.0 vtable-generation miscompilation | Rust Release Team, *Announcing Rust 1.98.1*, 2026-09-03 | Release-producing gateway paths select/verify 1.98.1; #56 current exact has terminal implementation/execution GREEN but remains separately governed until independently approved and normally integrated. |
 | `derivative` is unmaintained and RUSTSEC-2024-0388 has no patched versions | RustSec Advisory Database, RUSTSEC-2024-0388 | Commercial supplier-intake policy requires removal/replacement, not an audit ignore. |
 | Cargo lock/source/checksum evidence must be resolver-generated | Cargo Book: dependency resolution, lockfiles, registries and `--locked` behavior | A manifest-only Pingora transition or hand-authored `Cargo.lock` is invalid; registry source/checksum authority must come from Cargo resolution. |
-| OCI runtime-spec v1.3.0 is the latest runtime-spec release observed during the 2026-09-10 refresh | Open Container Initiative, `runtime-spec` releases | Rootless/read-only/capability/seccomp/AppArmor/SELinux and lifecycle claims are tested against actual runtime behavior; the spec version alone is not runtime hardening evidence. |
-| OCI image-spec v1.1.1 is the latest image-spec release observed during the 2026-09-10 refresh | Open Container Initiative, `image-spec` releases | Immutable image digest/config/layer semantics use the current image format authority. |
-| OCI distribution-spec v1.1.1 is the latest distribution-spec release observed during the 2026-09-10 refresh | Open Container Initiative, `distribution-spec` releases | Registry publication/retrieval claims require digest-bound artifacts; tag names alone are not immutable deployment identity. |
+| OCI runtime-spec v1.3.0 remains the latest runtime-spec release observed on 2026-09-18 | Open Container Initiative, `runtime-spec` release v1.3.0 | Rootless/read-only/capability/seccomp/AppArmor/SELinux and lifecycle claims are tested against actual runtime behavior; the spec version alone is not runtime hardening evidence. |
+| OCI image-spec v1.1.1 remains the latest image-spec release observed on 2026-09-18 | Open Container Initiative, `image-spec` release v1.1.1 | Immutable image digest/config/layer semantics use the current image format authority. |
+| OCI distribution-spec v1.1.1 remains the latest distribution-spec release observed on 2026-09-18 | Open Container Initiative, `distribution-spec` release v1.1.1 | Registry publication/retrieval claims require digest-bound artifacts; tag names alone are not immutable deployment identity. |
 
 ## Gateway evidence doctrine
 
@@ -52,7 +53,7 @@ The repository distinguishes four evidence classes:
 3. **release authority** — maintainer/protected integration plus immutable/versioned dependency or gateway artifact identity;
 4. **deployment evidence** — exact artifact exercised in parity, shadow/canary, rollback and cutover traffic.
 
-A later class is never inferred solely from an earlier one. In particular, contributor PR CI is not release authority, a GitHub Release label is not a consumer lock, a loopback p95 is not WAN/TLS production SLO evidence, and disappearance of Nginx/OpenResty strings is not migration completion.
+A later class is never inferred solely from an earlier one. In particular, contributor PR CI is not release authority, a GitHub Release label is not a consumer lock, a loopback p95 is not WAN/TLS production SLO evidence, a configured watcher is not proof of an operational live-reload contract, and disappearance of Nginx/OpenResty strings is not migration completion.
 
 ## References
 
@@ -88,7 +89,7 @@ Open Container Initiative. (2025, March 3). *OCI image format specification v1.1
 
 Open Container Initiative. (2025, November 4). *OCI runtime specification v1.3.0* [Software specification release]. GitHub. https://github.com/opencontainers/runtime-spec/releases/tag/v1.3.0
 
-Open Container Initiative. (n.d.). *OCI distribution specification v1.1.1* [Software specification release]. GitHub. https://github.com/opencontainers/distribution-spec/releases/tag/v1.1.1
+Open Container Initiative. (2025, January 29). *OCI distribution specification v1.1.1* [Software specification release]. GitHub. https://github.com/opencontainers/distribution-spec/releases/tag/v1.1.1
 
 Petersson, A., & Nilsson, M. (2014). *Forwarded HTTP extension* (RFC 7239). RFC Editor. https://www.rfc-editor.org/rfc/rfc7239
 
@@ -103,3 +104,5 @@ Salz, R., & Aviram, N. (2026). *New protocols using TLS must require TLS 1.3* (R
 Thomson, M., & Benfield, C. (2022). *HTTP/2* (RFC 9113). RFC Editor. https://www.rfc-editor.org/rfc/rfc9113
 
 The Cargo Project Developers. (n.d.). *Cargo Book*. https://doc.rust-lang.org/cargo/
+
+Traefik Labs. (n.d.). *File provider*. Traefik Documentation. https://doc.traefik.io/traefik/providers/file/
