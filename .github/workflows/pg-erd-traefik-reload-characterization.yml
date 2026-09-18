@@ -62,5 +62,5 @@ jobs:
             ${{ runner.temp }}/pg-erd-traefik-reload.txt
             ${{ runner.temp }}/pg-erd-traefik-log.txt
             ${{ runner.temp }}/pg-erd-traefik-concurrent-probes.txt
-          if-no-files-found: ignore
+          if-no-files-found: error
           retention-days: 7
