@@ -1,0 +1,96 @@
+name: PgErd Traefik reload characterization
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pg-erd-traefik-reload-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  EXPECTED_SHA: ${{ github.sha }}
+  PG_ERD_SOURCE_SHA: 8dc746920c12988f082e914879d95e13c9693535
+
+jobs:
+  characterize-traefik-reload:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Checkout exact gateway characterization source
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          ref: ${{ env.EXPECTED_SHA }}
+          persist-credentials: false
+      - name: Verify gateway checkout identity
+        shell: bash
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - name: Checkout exact pg-erd-cloud consumer source
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          repository: ContextualWisdomLab/pg-erd-cloud
+          ref: ${{ env.PG_ERD_SOURCE_SHA }}
+          path: consumer/pg-erd-cloud
+          persist-credentials: false
+      - name: Verify consumer checkout identity
+        shell: bash
+        run: test "$(git -C consumer/pg-erd-cloud rev-parse HEAD)" = "$PG_ERD_SOURCE_SHA"
+      - name: Persist exact characterization source identity
+        shell: bash
+        run: |
+          printf 'gateway_source_sha=%s\nconsumer_source_sha=%s\n' \
+            "$EXPECTED_SHA" \
+            "$PG_ERD_SOURCE_SHA" \
+            >"$RUNNER_TEMP/pg-erd-traefik-source-identity.txt"
+      - name: Verify characterization runtime prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v docker
+          docker compose version
+          command -v curl
+          command -v python3
+          command -v sha256sum
+      - name: Characterize exact Traefik file-provider reload semantics
+        shell: bash
+        env:
+          PG_ERD_TRAEFIK_RELOAD_EVIDENCE: ${{ runner.temp }}/pg-erd-traefik-reload.txt
+          PG_ERD_TRAEFIK_LOG: ${{ runner.temp }}/pg-erd-traefik-log.txt
+        run: bash tests/load/characterize_pg_erd_traefik_reload.sh "$GITHUB_WORKSPACE/consumer/pg-erd-cloud"
+      - name: Cross-bind characterization receipt and artifact set
+        if: ${{ always() }}
+        shell: bash
+        env:
+          PG_ERD_TRAEFIK_SOURCE_IDENTITY: ${{ runner.temp }}/pg-erd-traefik-source-identity.txt
+          PG_ERD_TRAEFIK_RELOAD_EVIDENCE: ${{ runner.temp }}/pg-erd-traefik-reload.txt
+          PG_ERD_TRAEFIK_LOG: ${{ runner.temp }}/pg-erd-traefik-log.txt
+          PG_ERD_TRAEFIK_PROBE_LOG: ${{ runner.temp }}/pg-erd-traefik-concurrent-probes.txt
+        run: |
+          set -euo pipefail
+          test -f "$PG_ERD_TRAEFIK_SOURCE_IDENTITY"
+          test -f "$PG_ERD_TRAEFIK_RELOAD_EVIDENCE"
+          test -f "$PG_ERD_TRAEFIK_LOG"
+          test -f "$PG_ERD_TRAEFIK_PROBE_LOG"
+          grep -Fx -- "gateway_source_sha=$EXPECTED_SHA" "$PG_ERD_TRAEFIK_SOURCE_IDENTITY" >/dev/null
+          grep -Fx -- "consumer_source_sha=$PG_ERD_SOURCE_SHA" "$PG_ERD_TRAEFIK_SOURCE_IDENTITY" >/dev/null
+          grep -Fx -- "consumer_source_sha=$PG_ERD_SOURCE_SHA" "$PG_ERD_TRAEFIK_RELOAD_EVIDENCE" >/dev/null
+          recorded_source_identity_sha256="$(sha256sum "$PG_ERD_TRAEFIK_SOURCE_IDENTITY" | awk '{print $1}')"
+          printf 'gateway_source_sha=%s\nsource_identity_sha256=%s\n' \
+            "$EXPECTED_SHA" \
+            "$recorded_source_identity_sha256" \
+            >>"$PG_ERD_TRAEFIK_RELOAD_EVIDENCE"
+      - name: Upload Traefik reload characterization evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: pg-erd-traefik-reload-${{ env.PG_ERD_SOURCE_SHA }}-${{ env.EXPECTED_SHA }}
+          path: |
+            ${{ runner.temp }}/pg-erd-traefik-source-identity.txt
+            ${{ runner.temp }}/pg-erd-traefik-reload.txt
+            ${{ runner.temp }}/pg-erd-traefik-log.txt
+            ${{ runner.temp }}/pg-erd-traefik-concurrent-probes.txt
+          if-no-files-found: error
+          retention-days: 7
