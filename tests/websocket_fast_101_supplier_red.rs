@@ -242,9 +242,16 @@ fn wait_for_ready(address: SocketAddr, child: &mut Child) {
     }
 }
 
-fn start_supplier_proxy(listener: SocketAddr, origin: SocketAddr) -> ChildProcess {
+fn start_supplier_proxy(
+    listener_reservation: TcpListener,
+    origin: SocketAddr,
+) -> (SocketAddr, ChildProcess) {
+    let listener = listener_reservation
+        .local_addr()
+        .expect("supplier proxy listener address must exist");
     let executable = env::current_exe().expect("integration-test executable path must exist");
-    let mut child = Command::new(executable)
+    let mut command = Command::new(executable);
+    command
         .args([
             "--ignored",
             "--exact",
@@ -256,11 +263,15 @@ fn start_supplier_proxy(listener: SocketAddr, origin: SocketAddr) -> ChildProces
         .env(CHILD_ORIGIN_ENV, origin.to_string())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("supplier-proxy child must start");
-    wait_for_ready(listener, &mut child);
-    ChildProcess(child)
+        .stderr(Stdio::null());
+
+    // Hold the reservation through child-command construction so unrelated local activity cannot
+    // claim the selected port. The unavoidable reservation-to-bind gap begins only at spawn.
+    drop(listener_reservation);
+    let child = command.spawn().expect("supplier-proxy child must start");
+    let mut child = ChildProcess(child);
+    wait_for_ready(listener, &mut child.0);
+    (listener, child)
 }
 
 fn masked_client_text_frame(payload: &[u8]) -> Vec<u8> {
@@ -389,13 +400,9 @@ fn released_pingora_keeps_fast_101_upgrade_tunnel_bidirectional() {
     let origin_address = origin.local_addr().expect("origin address must exist");
     let listener_reservation =
         TcpListener::bind("127.0.0.1:0").expect("supplier proxy listener must be reservable");
-    let listener = listener_reservation
-        .local_addr()
-        .expect("supplier proxy listener address must exist");
 
+    let (listener, _proxy) = start_supplier_proxy(listener_reservation, origin_address);
     let origin_thread = spawn_fast_101_echo_origin(origin);
-    drop(listener_reservation);
-    let _proxy = start_supplier_proxy(listener, origin_address);
 
     let mut client =
         TcpStream::connect(listener).expect("supplier proxy must accept client traffic");
