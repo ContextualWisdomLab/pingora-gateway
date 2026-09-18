@@ -4,6 +4,8 @@
 //! isolation, trusted forwarding metadata, and shared transport observability. It does not
 //! introduce product authorization, service discovery, or business logic.
 
+use std::time::{Duration, Instant};
+
 use async_trait::async_trait;
 use bytes::Bytes;
 use log::error;
@@ -22,7 +24,7 @@ use crate::pingora_delivery::reject_uncharacterized_http1_protocol_transition;
 use crate::process_health::{respond_healthy, LIVENESS_PATH, READINESS_PATH};
 use crate::runtime_isolation::{
     BodyLimitExceeded, RequestAdmission, RequestAdmissionBudget, RequestBodyBudget,
-    RuntimeIsolationLimits,
+    ResponseBodyLifetimeBudget, ResponseBodyLifetimeExceeded, RuntimeIsolationLimits,
 };
 
 /// Fail-closed callback errors for a characterized migration runtime.
@@ -40,6 +42,7 @@ pub enum MigrationGatewayProxyError {
 #[derive(Debug)]
 pub struct MigrationRequestContext {
     request_body: RequestBodyBudget,
+    response_body_lifetime: ResponseBodyLifetimeBudget,
     admission: Option<RequestAdmission>,
 }
 
@@ -47,6 +50,7 @@ impl MigrationRequestContext {
     fn new(limits: RuntimeIsolationLimits) -> Self {
         Self {
             request_body: RequestBodyBudget::new(limits),
+            response_body_lifetime: ResponseBodyLifetimeBudget::new(limits),
             admission: None,
         }
     }
@@ -161,6 +165,34 @@ fn body_rejection_to_pingora(rejection: BodyLimitExceeded) -> Box<Error> {
     )
 }
 
+fn response_body_lifetime_to_pingora(rejection: ResponseBodyLifetimeExceeded) -> Box<Error> {
+    let _ = (rejection.elapsed, rejection.limit);
+    Error::new_up(ErrorType::Custom("UpstreamResponseBodyLifetimeExceeded"))
+}
+
+fn start_response_body_lifetime(
+    is_informational: bool,
+    ctx: &mut MigrationRequestContext,
+    now: Instant,
+) {
+    if !is_informational {
+        ctx.response_body_lifetime.start(now);
+    }
+}
+
+fn enforce_response_body_lifetime(
+    body: &Option<Bytes>,
+    ctx: &MigrationRequestContext,
+    now: Instant,
+) -> pingora::Result<Option<Duration>> {
+    if body.as_ref().is_some_and(|chunk| !chunk.is_empty()) {
+        ctx.response_body_lifetime
+            .reject_if_expired(now)
+            .map_err(response_body_lifetime_to_pingora)?;
+    }
+    Ok(None)
+}
+
 fn unmatched_route_to_pingora(_error: MigrationGatewayProxyError) -> Box<Error> {
     Error::explain(
         ErrorType::HTTPStatus(404),
@@ -181,6 +213,13 @@ fn proxy_error_status(error: &Error) -> u16 {
         },
         ErrorSource::Internal | ErrorSource::Unset => 500,
     }
+}
+
+fn proxy_error_response_status(error: &Error, response_already_written: bool) -> u16 {
+    if response_already_written {
+        return 0;
+    }
+    proxy_error_status(error)
 }
 
 #[async_trait]
@@ -252,6 +291,23 @@ impl ProxyHttp for MigrationGatewayProxy {
         self.apply_upstream_request_policy(upstream_request, &forwarding)
     }
 
+    async fn upstream_response_filter(
+        &self,
+        _session: &mut Session,
+        upstream_response: &mut ResponseHeader,
+        ctx: &mut Self::CTX,
+    ) -> pingora::Result<()>
+    where
+        Self::CTX: Send + Sync,
+    {
+        start_response_body_lifetime(
+            upstream_response.status.is_informational(),
+            ctx,
+            Instant::now(),
+        );
+        Ok(())
+    }
+
     async fn response_filter(
         &self,
         _session: &mut Session,
@@ -264,13 +320,23 @@ impl ProxyHttp for MigrationGatewayProxy {
         self.apply_response_headers(upstream_response)
     }
 
+    fn upstream_response_body_filter(
+        &self,
+        _session: &mut Session,
+        body: &mut Option<Bytes>,
+        _end_of_stream: bool,
+        ctx: &mut Self::CTX,
+    ) -> pingora::Result<Option<Duration>> {
+        enforce_response_body_lifetime(body, ctx, Instant::now())
+    }
+
     async fn fail_to_proxy(
         &self,
         session: &mut Session,
         error_value: &Error,
         _ctx: &mut Self::CTX,
     ) -> FailToProxy {
-        let status = proxy_error_status(error_value);
+        let status = proxy_error_response_status(error_value, session.response_written().is_some());
         if status > 0 {
             let mut response = ServerSession::generate_error(status);
             if let Err(policy_error) = self.apply_response_headers(&mut response) {
@@ -305,20 +371,26 @@ impl ProxyHttp for MigrationGatewayProxy {
 #[cfg(test)]
 mod tests {
     use std::net::SocketAddr;
+    use std::time::{Duration, Instant};
 
+    use bytes::Bytes;
     use pingora::prelude::{Error, ErrorType};
     use pingora::ErrorSource;
 
     use super::{
-        body_rejection_to_pingora, proxy_error_status, unmatched_route_to_pingora,
-        MigrationGatewayProxy, MigrationGatewayProxyError, MigrationRequestContext,
+        body_rejection_to_pingora, enforce_response_body_lifetime, proxy_error_response_status,
+        proxy_error_status, response_body_lifetime_to_pingora, start_response_body_lifetime,
+        unmatched_route_to_pingora, MigrationGatewayProxy, MigrationGatewayProxyError,
+        MigrationRequestContext,
     };
     use crate::edge_contract::{UpstreamConfig, UpstreamTimeouts};
     use crate::edge_routing::{RouteMatch, RouteRule};
     use crate::http_policy::ResponseHeaderRule;
     use crate::migration_delivery::MigrationDeliveryPlan;
     use crate::migration_plan::EdgeMigrationPlan;
-    use crate::runtime_isolation::{BodyLimitExceeded, RuntimeIsolationLimits};
+    use crate::runtime_isolation::{
+        BodyLimitExceeded, ResponseBodyLifetimeExceeded, RuntimeIsolationLimits,
+    };
 
     fn admission_proxy() -> (MigrationGatewayProxy, RuntimeIsolationLimits) {
         let plan = EdgeMigrationPlan::try_new(
@@ -391,6 +463,54 @@ mod tests {
     }
 
     #[test]
+    fn informational_headers_do_not_start_or_reset_the_response_body_lifetime() {
+        let limits = RuntimeIsolationLimits::try_new_with_response_body_limit(8, 1, 300)
+            .expect("fixture limits are valid");
+        let mut ctx = MigrationRequestContext::new(limits);
+        let now = Instant::now();
+
+        start_response_body_lifetime(true, &mut ctx, now);
+        assert!(ctx
+            .response_body_lifetime
+            .reject_if_expired(now + Duration::from_secs(1))
+            .is_ok());
+
+        start_response_body_lifetime(false, &mut ctx, now);
+        start_response_body_lifetime(false, &mut ctx, now + Duration::from_millis(250));
+        assert!(ctx
+            .response_body_lifetime
+            .reject_if_expired(now + Duration::from_millis(299))
+            .is_ok());
+        assert!(ctx
+            .response_body_lifetime
+            .reject_if_expired(now + Duration::from_millis(300))
+            .is_err());
+    }
+
+    #[test]
+    fn response_lifetime_ignores_empty_callbacks_but_rejects_expired_body_progress() {
+        let limits = RuntimeIsolationLimits::try_new_with_response_body_limit(8, 1, 300)
+            .expect("fixture limits are valid");
+        let mut ctx = MigrationRequestContext::new(limits);
+        let started = Instant::now();
+        start_response_body_lifetime(false, &mut ctx, started);
+        let before_expiry = started + Duration::from_millis(299);
+        let expired = started + Duration::from_millis(300);
+
+        assert!(enforce_response_body_lifetime(&None, &ctx, expired).is_ok());
+        assert!(enforce_response_body_lifetime(&Some(Bytes::new()), &ctx, expired).is_ok());
+        assert!(enforce_response_body_lifetime(
+            &Some(Bytes::from_static(b"x")),
+            &ctx,
+            before_expiry
+        )
+        .is_ok());
+        assert!(
+            enforce_response_body_lifetime(&Some(Bytes::from_static(b"x")), &ctx, expired).is_err()
+        );
+    }
+
+    #[test]
     fn delivery_errors_map_to_fail_closed_http_errors() {
         let body_error = body_rejection_to_pingora(BodyLimitExceeded {
             observed: 2,
@@ -402,6 +522,18 @@ mod tests {
             request_path: "/missing".to_string(),
         });
         assert_eq!(route_error.etype, ErrorType::HTTPStatus(404));
+
+        let lifetime_error = response_body_lifetime_to_pingora(ResponseBodyLifetimeExceeded {
+            elapsed: Duration::from_millis(301),
+            limit: Duration::from_millis(300),
+        });
+        assert_eq!(
+            lifetime_error.etype,
+            ErrorType::Custom("UpstreamResponseBodyLifetimeExceeded")
+        );
+        assert_eq!(lifetime_error.esource, ErrorSource::Upstream);
+        assert_eq!(proxy_error_response_status(&lifetime_error, true), 0);
+        assert_eq!(proxy_error_response_status(&lifetime_error, false), 502);
     }
 
     #[test]
