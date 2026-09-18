@@ -17,7 +17,9 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use bytes::Bytes;
 use cwl_pingora_gateway::runtime_policy::build_server_conf;
-use pingora::prelude::{http_proxy_service, sleep, HttpPeer, ProxyHttp, ResponseHeader, Server, Session};
+use pingora::prelude::{
+    http_proxy_service, sleep, HttpPeer, ProxyHttp, ResponseHeader, Server, Session,
+};
 use pingora::server::RunArgs;
 use pingora::upstreams::peer::{HttpUpstreamRequestPolicy, ALPN};
 
@@ -28,7 +30,9 @@ const FAST_101_BODY_DELAY: Duration = Duration::from_millis(200);
 const POST_101_SETTLE: Duration = Duration::from_millis(300);
 const IO_DEADLINE: Duration = Duration::from_secs(5);
 const MAX_HEADER_BYTES: usize = 64 * 1024;
-const TUNNEL_PAYLOAD: &[u8] = b"cwl-fast-101";
+const WEBSOCKET_PAYLOAD: &[u8] = b"cwl-fast-101";
+const CLIENT_MASK: [u8; 4] = [0x12, 0x34, 0x56, 0x78];
+const RFC_SAMPLE_ACCEPT: &str = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=";
 
 #[derive(Clone)]
 struct SupplierUpgradeProxy {
@@ -111,7 +115,10 @@ fn read_header(stream: &mut TcpStream, context: &str) -> Vec<u8> {
 
     loop {
         let now = Instant::now();
-        assert!(now < deadline, "{context} exceeded the absolute header deadline");
+        assert!(
+            now < deadline,
+            "{context} exceeded the absolute header deadline"
+        );
         stream
             .set_read_timeout(Some(deadline.saturating_duration_since(now)))
             .expect("read timeout must be configurable");
@@ -200,6 +207,78 @@ fn start_supplier_proxy(listener: SocketAddr, origin: SocketAddr) -> ChildProces
     ChildProcess(child)
 }
 
+fn masked_client_text_frame(payload: &[u8]) -> Vec<u8> {
+    assert!(payload.len() < 126, "fixture uses only a short text frame");
+    let mut frame = Vec::with_capacity(2 + CLIENT_MASK.len() + payload.len());
+    frame.push(0x81);
+    frame.push(0x80 | payload.len() as u8);
+    frame.extend_from_slice(&CLIENT_MASK);
+    frame.extend(
+        payload
+            .iter()
+            .enumerate()
+            .map(|(index, byte)| byte ^ CLIENT_MASK[index % CLIENT_MASK.len()]),
+    );
+    frame
+}
+
+fn read_client_text_frame(stream: &mut TcpStream) -> Vec<u8> {
+    let mut prefix = [0_u8; 2];
+    stream
+        .read_exact(&mut prefix)
+        .expect("origin must receive a complete client WebSocket frame prefix");
+    assert_eq!(prefix[0], 0x81, "client fixture must send one FIN text frame");
+    assert_ne!(
+        prefix[1] & 0x80,
+        0,
+        "RFC 6455 client-to-server frames must be masked"
+    );
+    let payload_len = usize::from(prefix[1] & 0x7f);
+    assert!(payload_len < 126, "fixture does not admit extended lengths");
+
+    let mut mask = [0_u8; 4];
+    stream
+        .read_exact(&mut mask)
+        .expect("origin must receive the client WebSocket mask");
+    let mut payload = vec![0_u8; payload_len];
+    stream
+        .read_exact(&mut payload)
+        .expect("origin must receive the client WebSocket payload");
+    for (index, byte) in payload.iter_mut().enumerate() {
+        *byte ^= mask[index % mask.len()];
+    }
+    payload
+}
+
+fn server_text_frame(payload: &[u8]) -> Vec<u8> {
+    assert!(payload.len() < 126, "fixture uses only a short text frame");
+    let mut frame = Vec::with_capacity(2 + payload.len());
+    frame.push(0x81);
+    frame.push(payload.len() as u8);
+    frame.extend_from_slice(payload);
+    frame
+}
+
+fn read_server_text_frame(stream: &mut TcpStream) -> Vec<u8> {
+    let mut prefix = [0_u8; 2];
+    stream
+        .read_exact(&mut prefix)
+        .expect("client must receive a complete server WebSocket frame prefix");
+    assert_eq!(prefix[0], 0x81, "origin fixture must echo one FIN text frame");
+    assert_eq!(
+        prefix[1] & 0x80,
+        0,
+        "RFC 6455 server-to-client frames must not be masked"
+    );
+    let payload_len = usize::from(prefix[1] & 0x7f);
+    assert!(payload_len < 126, "fixture does not admit extended lengths");
+    let mut payload = vec![0_u8; payload_len];
+    stream
+        .read_exact(&mut payload)
+        .expect("client must receive the server WebSocket payload");
+    payload
+}
+
 fn spawn_fast_101_echo_origin(listener: TcpListener) -> thread::JoinHandle<()> {
     thread::spawn(move || {
         let (mut stream, _) = listener.accept().expect("origin must accept proxy connection");
@@ -216,23 +295,26 @@ fn spawn_fast_101_echo_origin(listener: TcpListener) -> thread::JoinHandle<()> {
 
         stream
             .write_all(
-                b"HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n",
+                b"HTTP/1.1 101 Switching Protocols\r\n\
+Connection: Upgrade\r\n\
+Upgrade: websocket\r\n\
+Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n\
+\r\n",
             )
             .expect("origin 101 response must be writable");
         stream.flush().expect("origin 101 response must flush");
 
-        let mut received = vec![0_u8; TUNNEL_PAYLOAD.len()];
         stream
             .set_read_timeout(Some(IO_DEADLINE))
             .expect("origin tunnel timeout must be configurable");
+        let payload = read_client_text_frame(&mut stream);
+        assert_eq!(payload, WEBSOCKET_PAYLOAD);
         stream
-            .read_exact(&mut received)
-            .expect("upgraded supplier tunnel must carry client bytes after 101");
-        assert_eq!(received, TUNNEL_PAYLOAD);
+            .write_all(&server_text_frame(&payload))
+            .expect("origin WebSocket echo frame must be writable through the upgraded tunnel");
         stream
-            .write_all(&received)
-            .expect("origin echo must be writable through the upgraded tunnel");
-        stream.flush().expect("origin echo must flush");
+            .flush()
+            .expect("origin WebSocket echo frame must flush");
     })
 }
 
@@ -240,8 +322,8 @@ fn spawn_fast_101_echo_origin(listener: TcpListener) -> thread::JoinHandle<()> {
 fn released_pingora_keeps_fast_101_upgrade_tunnel_bidirectional() {
     let origin = TcpListener::bind("127.0.0.1:0").expect("origin fixture must bind");
     let origin_address = origin.local_addr().expect("origin address must exist");
-    let listener_reservation = TcpListener::bind("127.0.0.1:0")
-        .expect("supplier proxy listener must be reservable");
+    let listener_reservation =
+        TcpListener::bind("127.0.0.1:0").expect("supplier proxy listener must be reservable");
     let listener = listener_reservation
         .local_addr()
         .expect("supplier proxy listener address must exist");
@@ -250,7 +332,8 @@ fn released_pingora_keeps_fast_101_upgrade_tunnel_bidirectional() {
     drop(listener_reservation);
     let _proxy = start_supplier_proxy(listener, origin_address);
 
-    let mut client = TcpStream::connect(listener).expect("supplier proxy must accept client traffic");
+    let mut client =
+        TcpStream::connect(listener).expect("supplier proxy must accept client traffic");
     client
         .set_write_timeout(Some(IO_DEADLINE))
         .expect("client write timeout must be configurable");
@@ -275,28 +358,33 @@ X-CWL-Delay-Request-Body: 200\r\n\
         "supplier proxy must first establish the HTTP/1 upgrade: {}",
         String::from_utf8_lossy(&response)
     );
+    let response_text = String::from_utf8_lossy(&response).to_ascii_lowercase();
+    assert!(
+        response_text.contains(&format!(
+            "sec-websocket-accept: {}\r\n",
+            RFC_SAMPLE_ACCEPT.to_ascii_lowercase()
+        )),
+        "origin must return the RFC 6455 accept value for the fixed fixture key: {response_text:?}"
+    );
 
     // Let the deliberately delayed end-of-request-body event arrive after the 101. Pingora 0.9.0
     // currently misclassifies that event as tunnel completion; a release-qualified supplier repair
     // must make this unchanged assertion GREEN.
     thread::sleep(POST_101_SETTLE);
     client
-        .write_all(TUNNEL_PAYLOAD)
+        .write_all(&masked_client_text_frame(WEBSOCKET_PAYLOAD))
         .expect("upgraded tunnel must remain writable after delayed request-body completion");
-    client.flush().expect("tunnel payload must flush");
+    client.flush().expect("WebSocket client frame must flush");
 
-    let mut echoed = vec![0_u8; TUNNEL_PAYLOAD.len()];
     client
         .set_read_timeout(Some(IO_DEADLINE))
         .expect("client tunnel timeout must be configurable");
-    client
-        .read_exact(&mut echoed)
-        .expect("upgraded tunnel must remain readable after delayed request-body completion");
-    assert_eq!(echoed, TUNNEL_PAYLOAD);
+    let echoed = read_server_text_frame(&mut client);
+    assert_eq!(echoed, WEBSOCKET_PAYLOAD);
 
     origin_thread
         .join()
-        .expect("fast-101 echo origin must complete without fixture failure");
+        .expect("fast-101 WebSocket origin must complete without fixture failure");
 }
 
 #[test]
