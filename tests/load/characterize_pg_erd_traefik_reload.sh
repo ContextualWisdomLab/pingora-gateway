@@ -26,33 +26,40 @@ grep -F -- "--providers.file.watch=true" "$compose_file" >/dev/null
 grep -F -- "./deploy/traefik/dynamic.yaml:/etc/traefik/dynamic.yaml:ro" "$compose_file" >/dev/null
 git diff --exit-code -- compose.prod.yaml deploy/traefik/dynamic.yaml
 
+runtime_compose_file="$(mktemp "$RUNNER_TEMP/pg-erd-compose-runtime.XXXXXX.yaml")"
+python3 - "$compose_file" "$runtime_compose_file" <<'PY'
+from pathlib import Path
+import sys
+
+source = Path(sys.argv[1]).read_text()
+replacements = {
+    '      - "127.0.0.1:${TRAEFIK_HTTP_PORT:-8080}:8080"': '      - "127.0.0.1::8080"',
+    '      - "127.0.0.1:${POSTGRES_PORT:-54321}:5432"': '      - "127.0.0.1::5432"',
+}
+for old, new in replacements.items():
+    if source.count(old) != 1:
+        raise SystemExit(f"consumer host-port mapping changed: {old}")
+    source = source.replace(old, new, 1)
+Path(sys.argv[2]).write_text(source)
+PY
+
 dynamic_mode="$(stat -c '%a' "$dynamic_file")"
 baseline="$(mktemp "$RUNNER_TEMP/pg-erd-dynamic-baseline.XXXXXX.yaml")"
 cp "$dynamic_file" "$baseline"
 probe_log="$RUNNER_TEMP/pg-erd-traefik-concurrent-probes.txt"
 probe_stop="$RUNNER_TEMP/pg-erd-traefik-probe.stop"
-rm -f "$probe_stop"
+edge_url_file="$RUNNER_TEMP/pg-erd-traefik-edge-url.txt"
+rm -f "$probe_stop" "$edge_url_file"
 : >"$probe_log"
 : >"$PG_ERD_TRAEFIK_RELOAD_EVIDENCE"
 : >"$PG_ERD_TRAEFIK_LOG"
 
 compose_project="cwl_pg_erd_reload_${GITHUB_RUN_ID:-manual}_${GITHUB_RUN_ATTEMPT:-1}"
 export COMPOSE_PROJECT_NAME="$compose_project"
-read -r edge_port postgres_port < <(python3 - <<'PY'
-import socket
-ports = []
-for _ in range(2):
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        ports.append(sock.getsockname()[1])
-print(*ports)
-PY
-)
 
 cp .env.example .env
-python3 - "$edge_port" "$postgres_port" <<'PY'
+python3 - <<'PY'
 from pathlib import Path
-import sys
 path = Path(".env")
 lines = []
 for line in path.read_text().splitlines():
@@ -60,10 +67,6 @@ for line in path.read_text().splitlines():
         continue
     if line.startswith("POSTGRES_PASSWORD="):
         line = "POSTGRES_PASSWORD=cwl-characterization-only-password"
-    elif line.startswith("POSTGRES_PORT="):
-        line = f"POSTGRES_PORT={sys.argv[2]}"
-    elif line.startswith("TRAEFIK_HTTP_PORT="):
-        line = f"TRAEFIK_HTTP_PORT={sys.argv[1]}"
     lines.append(line)
 path.write_text("\n".join(lines) + "\n")
 PY
@@ -71,8 +74,11 @@ mkdir -p secrets
 printf '%s\n' 'cwl-characterization-only-app-secret-00000000000000000000' >secrets/app_secret
 chmod 600 secrets/app_secret
 
-base_url="http://127.0.0.1:${edge_port}"
 probe_pid=""
+
+compose() {
+  docker compose --project-directory "$consumer_dir" -f "$runtime_compose_file" "$@"
+}
 
 record() {
   local key="$1"
@@ -80,13 +86,30 @@ record() {
   printf '%s=%s\n' "$key" "$value" >>"$PG_ERD_TRAEFIK_RELOAD_EVIDENCE"
 }
 
+refresh_edge_url() {
+  local binding edge_port temporary_url_file
+  binding="$(compose port traefik 8080 | tail -n 1)"
+  if [[ ! "$binding" =~ ^127\.0\.0\.1:([0-9]+)$ ]]; then
+    echo "unexpected Traefik published endpoint: $binding" >&2
+    return 1
+  fi
+  edge_port="${BASH_REMATCH[1]}"
+  if (( edge_port < 1 || edge_port > 65535 )); then
+    echo "invalid Traefik published port: $edge_port" >&2
+    return 1
+  fi
+  temporary_url_file="${edge_url_file}.tmp"
+  printf 'http://127.0.0.1:%s\n' "$edge_port" >"$temporary_url_file"
+  mv "$temporary_url_file" "$edge_url_file"
+}
+
 capture_traefik_log() {
   local phase="${1:-snapshot}"
   {
     printf '=== traefik-log-snapshot phase=%s timestamp_ms=%s ===\n' "$phase" "$(date +%s%3N)"
-    container_id="$(docker compose -f "$compose_file" ps -q traefik 2>/dev/null || true)"
+    container_id="$(compose ps -q traefik 2>/dev/null || true)"
     printf 'container_id=%s\n' "${container_id:-none}"
-    docker compose -f "$compose_file" logs --no-color traefik 2>&1 || true
+    compose logs --no-color traefik 2>&1 || true
   } >>"$PG_ERD_TRAEFIK_LOG"
 }
 
@@ -105,8 +128,8 @@ cleanup() {
   if (( status == 0 )); then
     record result characterization-complete
   fi
-  docker compose -f "$compose_file" down -v --remove-orphans >/dev/null 2>&1 || true
-  rm -f .env
+  compose down -v --remove-orphans >/dev/null 2>&1 || true
+  rm -f .env "$runtime_compose_file" "$edge_url_file" "${edge_url_file}.tmp"
   rm -rf secrets
   trap - EXIT
   exit "$status"
@@ -114,7 +137,12 @@ cleanup() {
 trap cleanup EXIT
 
 observe_health() {
-  local output code generation
+  local output code generation base_url
+  base_url="$(cat "$edge_url_file" 2>/dev/null || true)"
+  if [[ ! "$base_url" =~ ^http://127\.0\.0\.1:[0-9]+$ ]]; then
+    printf '000 none\n'
+    return 0
+  fi
   output="$(
     curl --silent --show-error --max-time 2 \
       --dump-header - \
@@ -226,7 +254,8 @@ write_in_place() {
 
 force_recreate_traefik() {
   capture_traefik_log pre-recreate
-  docker compose -f "$compose_file" up -d --no-deps --force-recreate traefik
+  compose up -d --no-deps --force-recreate traefik
+  refresh_edge_url
   capture_traefik_log post-recreate
 }
 
@@ -259,12 +288,15 @@ start_concurrent_probe() {
 
 record consumer_source_sha "$PG_ERD_SOURCE_SHA"
 record compose_sha256 "$(sha256sum "$compose_file" | awk '{print $1}')"
+record runtime_compose_sha256 "$(sha256sum "$runtime_compose_file" | awk '{print $1}')"
 record dynamic_config_sha256 "$(sha256sum "$baseline" | awk '{print $1}')"
 record traefik_image "$expected_traefik_image"
 record bind_mount_shape 'single-file-read-only'
 record provider_mode 'filename+watch'
+record host_port_allocation docker-managed-ephemeral
 
-docker compose -f "$compose_file" up -d --build
+compose up -d --build
+refresh_edge_url
 wait_for_status_200
 record baseline_ready true
 start_concurrent_probe
