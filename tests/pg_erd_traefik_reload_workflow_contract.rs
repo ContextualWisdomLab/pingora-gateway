@@ -81,6 +81,26 @@ fn harness_distinguishes_observations_from_controlled_recreate_fallbacks() {
 }
 
 #[test]
+fn recreate_fallback_preserves_the_container_logs_that_caused_it() {
+    assert!(
+        HARNESS.contains(">>\"$PG_ERD_TRAEFIK_LOG\""),
+        "Traefik evidence must append snapshots instead of overwriting earlier containers"
+    );
+
+    let recreate = HARNESS
+        .find("docker compose -f \"$compose_file\" up -d --no-deps --force-recreate traefik")
+        .expect("missing controlled Traefik recreation");
+    let prefix = &HARNESS[..recreate];
+    let capture = prefix
+        .rfind("capture_traefik_log pre-recreate")
+        .expect("recreation must preserve the outgoing container log before replacement");
+    assert!(
+        capture < recreate,
+        "outgoing Traefik logs must be captured before force-recreate destroys the container"
+    );
+}
+
+#[test]
 fn evidence_is_bounded_payload_free_and_uploaded_even_on_failure() {
     for required in [
         "PG_ERD_TRAEFIK_RELOAD_EVIDENCE",
