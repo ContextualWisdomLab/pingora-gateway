@@ -316,8 +316,7 @@ fn read_client_text_frame(stream: &mut TcpStream) -> Vec<u8> {
     let mut prefix = [0_u8; 2];
     read_exact_before(stream, &mut prefix, deadline, "origin client-frame prefix");
     assert_eq!(
-        prefix[0],
-        0x81,
+        prefix[0], 0x81,
         "client fixture must send one FIN text frame"
     );
     assert_ne!(
@@ -357,8 +356,7 @@ fn read_server_text_frame(stream: &mut TcpStream) -> Vec<u8> {
     let mut prefix = [0_u8; 2];
     read_exact_before(stream, &mut prefix, deadline, "client server-frame prefix");
     assert_eq!(
-        prefix[0],
-        0x81,
+        prefix[0], 0x81,
         "origin fixture must echo one FIN text frame"
     );
     assert_eq!(
