@@ -74,9 +74,7 @@ fn wait_until_http_ready(address: SocketAddr, path: &str, process: &mut Child) {
             panic!("gateway exited before accepting traffic: {status}");
         }
 
-        if try_http_get(address, path)
-            .is_ok_and(|response| response.starts_with("HTTP/1.1 200"))
-        {
+        if try_http_get(address, path).is_ok_and(|response| response.starts_with("HTTP/1.1 200")) {
             return;
         }
 
