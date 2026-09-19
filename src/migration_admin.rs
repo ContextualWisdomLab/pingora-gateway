@@ -185,6 +185,13 @@ impl PgErdMigrationConfig {
                 });
             }
             upstream.validate()?;
+            if socket_authorities_overlap(self.listener, upstream.address)
+                || socket_authorities_overlap(self.metrics_listener, upstream.address)
+            {
+                return Err(PgErdMigrationConfigError::UpstreamConfiguration(
+                    GatewayConfigError::UpstreamListenerCollision { upstream_name },
+                ));
+            }
             if !configured_names.insert(upstream_name.clone()) {
                 return Err(PgErdMigrationConfigError::DuplicateTransportAuthority {
                     upstream_name,

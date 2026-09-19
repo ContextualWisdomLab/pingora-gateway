@@ -27,6 +27,20 @@ impl Drop for GatewayProcess {
     }
 }
 
+struct LoopbackReservation(TcpListener);
+
+impl LoopbackReservation {
+    fn bind() -> Self {
+        Self(TcpListener::bind("127.0.0.1:0").expect("loopback port should be reservable"))
+    }
+
+    fn address(&self) -> SocketAddr {
+        self.0
+            .local_addr()
+            .expect("reservation should expose an address")
+    }
+}
+
 #[cfg(target_os = "linux")]
 #[repr(C)]
 struct LinuxSockAddrIn {
@@ -45,8 +59,7 @@ unsafe extern "C" {
 /// Holds an IPv4/TCP port bound without putting the socket into LISTEN state.
 ///
 /// On Linux this keeps another process from claiming the characterized endpoint while causing
-/// connection attempts to receive `ECONNREFUSED`, eliminating the free-port race from the earlier
-/// reserve-then-release fixture.
+/// connection attempts to receive `ECONNREFUSED`.
 #[cfg(target_os = "linux")]
 struct RefusedTcpReservation {
     _socket: OwnedFd,
@@ -100,13 +113,6 @@ impl RefusedTcpReservation {
     }
 }
 
-fn reserve_loopback() -> SocketAddr {
-    TcpListener::bind("127.0.0.1:0")
-        .expect("loopback port should be reservable")
-        .local_addr()
-        .expect("reservation should expose an address")
-}
-
 fn write_config(
     listener: SocketAddr,
     metrics_listener: SocketAddr,
@@ -122,7 +128,19 @@ fn write_config(
     file
 }
 
-fn wait_until_listening(address: SocketAddr, process: &mut Child) {
+fn try_http_get(address: SocketAddr, path: &str) -> std::io::Result<String> {
+    let mut stream = TcpStream::connect_timeout(&address, Duration::from_millis(100))?;
+    stream.set_read_timeout(Some(Duration::from_millis(250)))?;
+    write!(
+        stream,
+        "GET {path} HTTP/1.1\r\nHost: probe.invalid\r\nConnection: close\r\n\r\n"
+    )?;
+    let mut response = String::new();
+    stream.read_to_string(&mut response)?;
+    Ok(response)
+}
+
+fn wait_until_http_ready(address: SocketAddr, path: &str, process: &mut Child) {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         if let Some(status) = process
@@ -131,12 +149,14 @@ fn wait_until_listening(address: SocketAddr, process: &mut Child) {
         {
             panic!("gateway exited before accepting traffic: {status}");
         }
-        if TcpStream::connect_timeout(&address, Duration::from_millis(100)).is_ok() {
+
+        if try_http_get(address, path).is_ok_and(|response| response.starts_with("HTTP/1.1 200")) {
             return;
         }
+
         assert!(
             Instant::now() < deadline,
-            "gateway did not start within 10s"
+            "gateway did not expose {path} within 10s"
         );
         thread::sleep(Duration::from_millis(25));
     }
@@ -144,9 +164,17 @@ fn wait_until_listening(address: SocketAddr, process: &mut Child) {
 
 fn start_gateway(
     config: &NamedTempFile,
-    gateway_address: SocketAddr,
-    metrics_address: SocketAddr,
+    gateway_reservation: LoopbackReservation,
+    metrics_reservation: LoopbackReservation,
 ) -> GatewayProcess {
+    let gateway_address = gateway_reservation.address();
+    let metrics_address = metrics_reservation.address();
+
+    // The configured addresses stay exclusively reserved through configuration construction and
+    // command preparation. Release them only at the child-bind handoff.
+    drop(gateway_reservation);
+    drop(metrics_reservation);
+
     let mut child = Command::new(env!("CARGO_BIN_EXE_cwl-pingora-pg-erd-migration"))
         .args(["--config", config.path().to_str().expect("UTF-8 temp path")])
         .stdin(Stdio::null())
@@ -154,8 +182,8 @@ fn start_gateway(
         .stderr(Stdio::null())
         .spawn()
         .expect("compiled pg-erd migration binary should start");
-    wait_until_listening(gateway_address, &mut child);
-    wait_until_listening(metrics_address, &mut child);
+    wait_until_http_ready(gateway_address, "/readyz", &mut child);
+    wait_until_http_ready(metrics_address, "/metrics", &mut child);
     GatewayProcess(child)
 }
 
@@ -183,17 +211,40 @@ fn get(address: SocketAddr, path: &str) -> String {
 }
 
 fn read_request_headers(stream: &mut TcpStream) -> String {
+    const MAX_HEADER_BYTES: usize = 64 * 1024;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    stream
+        .set_read_timeout(Some(Duration::from_millis(250)))
+        .expect("origin read timeout should be configurable");
+
     let mut bytes = Vec::new();
     let mut buffer = [0_u8; 1024];
     loop {
-        let read = stream
-            .read(&mut buffer)
-            .expect("origin request should be readable");
+        assert!(
+            Instant::now() < deadline,
+            "origin request headers did not complete within 5s"
+        );
+        let read = match stream.read(&mut buffer) {
+            Ok(read) => read,
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
+            {
+                continue;
+            }
+            Err(error) => panic!("origin request should be readable: {error}"),
+        };
         assert!(
             read > 0,
             "gateway closed origin request before headers completed"
         );
         bytes.extend_from_slice(&buffer[..read]);
+        assert!(
+            bytes.len() <= MAX_HEADER_BYTES,
+            "origin request headers exceeded 64 KiB fixture bound"
+        );
         if bytes.windows(4).any(|window| window == b"\r\n\r\n") {
             return String::from_utf8_lossy(&bytes).into_owned();
         }
@@ -203,7 +254,8 @@ fn read_request_headers(stream: &mut TcpStream) -> String {
 #[cfg(target_os = "linux")]
 #[test]
 fn compiled_pg_erd_refused_backend_fails_bounded_and_preserves_independent_routing() {
-    let backend_address = reserve_loopback();
+    let backend_reservation = LoopbackReservation::bind();
+    let backend_address = backend_reservation.address();
 
     let frontend = TcpListener::bind("127.0.0.1:0").expect("frontend fixture should bind");
     let frontend_address = frontend
@@ -222,19 +274,21 @@ fn compiled_pg_erd_refused_backend_fails_bounded_and_preserves_independent_routi
             .expect("frontend recovery response should be writable");
     });
 
-    let gateway_address = reserve_loopback();
-    let metrics_address = reserve_loopback();
+    let gateway_reservation = LoopbackReservation::bind();
+    let gateway_address = gateway_reservation.address();
+    let metrics_reservation = LoopbackReservation::bind();
+    let metrics_address = metrics_reservation.address();
     let config = write_config(
         gateway_address,
         metrics_address,
         backend_address,
         frontend_address,
     );
-    let _process = start_gateway(&config, gateway_address, metrics_address);
 
-    // Bind the configured backend after the gateway child starts but never call listen(2). If an
-    // unrelated process stole the selected port, setup fails here instead of producing false-GREEN
-    // refusal evidence. While held, the kernel rejects TCP connects and no other listener can bind.
+    // Transfer the configured backend from a listening reservation to a bound, non-listening TCP
+    // socket before the gateway starts. If another process wins the tiny handoff window, setup fails
+    // here rather than producing false refusal evidence.
+    drop(backend_reservation);
     let _refused_backend = RefusedTcpReservation::bind(backend_address);
     let direct_refusal = TcpStream::connect_timeout(&backend_address, Duration::from_millis(100))
         .expect_err("bound non-listening backend must reject direct TCP connection attempts");
@@ -243,6 +297,8 @@ fn compiled_pg_erd_refused_backend_fails_bounded_and_preserves_independent_routi
         std::io::ErrorKind::ConnectionRefused,
         "fixture must prove the configured endpoint is deterministically refusing TCP connections"
     );
+
+    let _process = start_gateway(&config, gateway_reservation, metrics_reservation);
 
     let started = Instant::now();
     let failed = get(gateway_address, "/api/unavailable");
