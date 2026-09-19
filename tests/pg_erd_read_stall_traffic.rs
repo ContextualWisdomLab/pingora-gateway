@@ -147,17 +147,31 @@ fn get(address: SocketAddr, path: &str) -> String {
     )
 }
 
-/// Reads one bounded origin request through the header terminator; no body is needed by this fixture.
+/// Reads one origin request under both an absolute deadline and a byte ceiling.
 fn read_request_headers(stream: &mut TcpStream) -> String {
+    let deadline = Instant::now() + Duration::from_secs(5);
     stream
-        .set_read_timeout(Some(Duration::from_secs(5)))
+        .set_read_timeout(Some(Duration::from_millis(250)))
         .expect("origin header timeout should be configurable");
     let mut bytes = Vec::new();
     let mut buffer = [0_u8; 1024];
     loop {
-        let read = stream
-            .read(&mut buffer)
-            .expect("origin request headers should complete within five seconds");
+        assert!(
+            Instant::now() < deadline,
+            "origin request headers did not complete within five seconds"
+        );
+        let read = match stream.read(&mut buffer) {
+            Ok(read) => read,
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
+            {
+                continue;
+            }
+            Err(error) => panic!("origin request headers should be readable: {error}"),
+        };
         assert!(
             read > 0,
             "gateway closed origin request before headers completed"
