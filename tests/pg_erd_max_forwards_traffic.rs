@@ -117,16 +117,9 @@ fn raw_request(address: SocketAddr, request: &[u8]) -> String {
     try_raw_request(address, request).expect("gateway request should complete")
 }
 
-fn wait_until_http_ready(
-    address: SocketAddr,
-    path: &str,
-    process: &mut Child,
-    service: &str,
-) {
+fn wait_until_http_ready(address: SocketAddr, path: &str, process: &mut Child, service: &str) {
     let deadline = Instant::now() + Duration::from_secs(10);
-    let request = format!(
-        "GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
-    );
+    let request = format!("GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
     loop {
         if let Some(status) = process
             .try_wait()
@@ -197,7 +190,9 @@ fn compiled_pg_erd_listener_applies_max_forwards_after_admission_and_before_orig
     let backend = TcpListener::bind("127.0.0.1:0").expect("backend fixture should bind");
     let backend_address = backend.local_addr().expect("backend address should exist");
     let frontend = TcpListener::bind("127.0.0.1:0").expect("frontend fixture should bind");
-    let frontend_address = frontend.local_addr().expect("frontend address should exist");
+    let frontend_address = frontend
+        .local_addr()
+        .expect("frontend address should exist");
     let traffic_reservation = reserve_loopback();
     let gateway_address = traffic_reservation
         .local_addr()
@@ -214,23 +209,19 @@ fn compiled_pg_erd_listener_applies_max_forwards_after_admission_and_before_orig
     );
 
     let backend_thread = thread::spawn(move || {
-        let (mut decremented, _) = backend.accept().expect("positive OPTIONS should reach backend");
+        let (mut decremented, _) = backend
+            .accept()
+            .expect("positive OPTIONS should reach backend");
         let request = read_request_headers(&mut decremented);
         assert!(
             request.starts_with("OPTIONS /api/max-forwards HTTP/1.1\r\n"),
             "a locally rejected request reached the backend before the positive control: {request:?}"
         );
         assert!(
-            request
-                .to_ascii_lowercase()
-                .contains("max-forwards: 1\r\n"),
+            request.to_ascii_lowercase().contains("max-forwards: 1\r\n"),
             "gateway must decrement Max-Forwards before forwarding: {request:?}"
         );
-        assert!(
-            !request
-                .to_ascii_lowercase()
-                .contains("max-forwards: 2\r\n")
-        );
+        assert!(!request.to_ascii_lowercase().contains("max-forwards: 2\r\n"));
         reply_ok(&mut decremented);
 
         let (mut ordinary, _) = backend.accept().expect("ordinary GET should reach backend");
@@ -240,17 +231,25 @@ fn compiled_pg_erd_listener_applies_max_forwards_after_admission_and_before_orig
             "a locally rejected TRACE/OPTIONS request reached the backend: {request:?}"
         );
         assert!(
-            request
-                .to_ascii_lowercase()
-                .contains("max-forwards: 0\r\n"),
+            request.to_ascii_lowercase().contains("max-forwards: 0\r\n"),
             "ordinary methods must retain Max-Forwards as non-control metadata: {request:?}"
         );
         reply_ok(&mut ordinary);
     });
 
     let mut process = spawn_gateway(&config, traffic_reservation, metrics_reservation);
-    wait_until_http_ready(gateway_address, "/readyz", &mut process.0, "traffic listener");
-    wait_until_http_ready(metrics_address, "/metrics", &mut process.0, "metrics listener");
+    wait_until_http_ready(
+        gateway_address,
+        "/readyz",
+        &mut process.0,
+        "traffic listener",
+    );
+    wait_until_http_ready(
+        metrics_address,
+        "/metrics",
+        &mut process.0,
+        "metrics listener",
+    );
 
     let zero = raw_request(
         gateway_address,
