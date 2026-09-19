@@ -1,0 +1,96 @@
+name: WebSocket fast-101 Supplier Characterization
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/websocket-fast-101-supplier-characterization.yml
+      - Cargo.toml
+      - Cargo.lock
+      - tests/websocket_fast_101_supplier_red.rs
+      - docs/doctoring/WEBSOCKET_FAST_101_SUPPLIER_RED.md
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: websocket-fast-101-supplier-characterization-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+
+jobs:
+  released-supplier-red:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          ref: ${{ env.EXPECTED_SHA }}
+          persist-credentials: false
+      - name: Verify checkout identity
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - name: Install native dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends pkg-config libssl-dev openssl
+      - name: Install Rust 1.98.0
+        run: |
+          rustup toolchain install 1.98.0 --profile minimal
+          rustup default 1.98.0
+          test "$(rustc --version)" = "rustc 1.98.0 (88d9e12ae 2026-08-18)"
+      - name: Prove ordinary test graph excludes supplier RED
+        run: |
+          cargo test --all-targets --locked --no-run
+          metadata="$(cargo metadata --locked --no-deps --format-version 1)"
+          python3 - "$metadata" <<'PY'
+          import json
+          import sys
+
+          metadata = json.loads(sys.argv[1])
+          package = next(package for package in metadata["packages"] if package["name"] == "cwl-pingora-gateway")
+          target = next(target for target in package["targets"] if target["name"] == "websocket_fast_101_supplier_red")
+          required = target.get("required-features", [])
+          if required != ["supplier-red"]:
+              raise SystemExit(f"supplier RED target is not isolated: required-features={required!r}")
+          PY
+      - name: Compile supplier characterization target
+        run: cargo test --locked --features supplier-red --test websocket_fast_101_supplier_red --no-run
+      - name: Reproduce fast-101 supplier RED
+        shell: bash
+        run: |
+          set -o pipefail
+          set +e
+          cargo test --locked --features supplier-red --test websocket_fast_101_supplier_red -- \
+            --exact released_pingora_keeps_fast_101_upgrade_tunnel_bidirectional --nocapture \
+            2>&1 | tee websocket-fast-101-supplier-red.log
+          status=${PIPESTATUS[0]}
+          set -e
+
+          if [ "$status" -eq 0 ]; then
+            echo "::error::The released-supplier acceptance unexpectedly passed; this RED receipt is no longer valid."
+            exit 1
+          fi
+
+          grep -Fq "test result: FAILED" websocket-fast-101-supplier-red.log
+          if ! grep -Fq "upgraded tunnel must remain writable after delayed request-body completion" websocket-fast-101-supplier-red.log \
+            && ! grep -Fq "client server-frame prefix closed before the frame completed" websocket-fast-101-supplier-red.log \
+            && ! grep -Fq "client server-frame prefix exceeded the absolute frame deadline" websocket-fast-101-supplier-red.log; then
+            echo "::error::The supplier test failed outside the characterized post-101 tunnel-teardown boundary."
+            exit 1
+          fi
+
+          {
+            printf 'source_sha=%s\n' "$EXPECTED_SHA"
+            printf 'supplier=pingora-0.9.0\n'
+            printf 'result=expected_fast_101_tunnel_teardown_reproduced\n'
+          } > websocket-fast-101-supplier-red.receipt
+      - name: Upload exact characterization evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: websocket-fast-101-supplier-red-${{ env.EXPECTED_SHA }}
+          path: |
+            websocket-fast-101-supplier-red.log
+            websocket-fast-101-supplier-red.receipt
+          if-no-files-found: error
+          retention-days: 7
