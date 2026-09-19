@@ -7,6 +7,7 @@ on:
       - Cargo.toml
       - Cargo.lock
       - tests/websocket_fast_101_supplier_red.rs
+      - docs/doctoring/WEBSOCKET_FAST_101_SUPPLIER_RED.md
   workflow_dispatch:
 
 permissions:
