@@ -39,6 +39,18 @@ A second review found that the WebSocket frame readers bounded each blocking soc
 
 Ordinary repair `d3ad47b860d35efc3a4803d327a4c01d1791a6cc` adds one absolute deadline per client or server WebSocket frame. Every partial read receives only the remaining duration, and the outer renewable socket timeout assignments are removed. Follow-up `f01e9b14df1e861f18b84615b7d4fe9c4785fd4c` preserves the retry semantics that `read_exact()` provided for interrupted system calls and treats timeout/would-block as terminal only once the absolute deadline has actually elapsed. The five-second budget, RFC 6455 masking and payload oracles, fast-101 ordering control, supplier dependency, and production fail-closed Upgrade policy are unchanged. This is evidence-boundedness repair only; it is not a gateway timeout policy.
 
+## Ordinary-CI isolation repair
+
+Exact `26dea63a60a1961edfe4cb7f2f0a0da096aa5b7c` completed after runner acquisition. Supply Chain `35409928080`, PgErd bounded-origin capacity `35409928052`, CI `oci-runtime 105807343621`, and CI `load-contract 105807343835` were successful. CI `test 105807343713` passed exact checkout, Rust 1.98.0 installation, and `cargo fmt --all -- --check`, then failed at the ordinary `Compile and test` step; all later lint/rustdoc/coverage/lock steps were skipped.
+
+At that exact, `websocket_fast_101_supplier_red.rs` was an auto-discovered integration test with no required feature. Ordinary CI intentionally executes `cargo test --all-targets --locked --no-fail-fast`, so the known affected-supplier acceptance was part of the ordinary product test graph. That mixes two incompatible meanings: ordinary CI should stay GREEN when repository code is healthy, while a dedicated supplier characterization should become GREEN only when it proves the released dependency still reproduces the narrowly fingerprinted RED.
+
+Ordinary repair `5bcdaed9359d3f207fbeedaa29e4f2e7f1b0c5ee` adds an empty-default `supplier-red` feature and requires it for the `websocket_fast_101_supplier_red` target. `76c9cfc6af55ab80dfa1514dd8e24278cbec4ea7` adds a dedicated exact-SHA characterization workflow. `79d9bd512a0f6f6165a8dac9bf5c3f87751080a1` binds this doctoring file to that workflow's path admission.
+
+The dedicated workflow first compiles the ordinary all-target graph with the default feature set and inspects Cargo metadata to prove that the supplier target is gated by exactly `supplier-red`. It then compiles the target explicitly under that feature and executes only `released_pingora_keeps_fast_101_upgrade_tunnel_bidirectional`. A nonzero test result is credited only when the log contains the ordinary Rust test failure marker and one of the bounded post-101 tunnel-teardown fingerprints. Compile/setup/runtime or unrelated assertion failures do not count as supplier RED. If a release-qualified supplier repair makes the unchanged acceptance pass, the characterization workflow fails because the RED receipt is no longer valid.
+
+This separation does not skip a product regression, use `continue-on-error`, or weaken the WebSocket assertion. It prevents an intentionally failing supplier oracle from poisoning ordinary CI while making the supplier defect independently executable and fail-closed.
+
 ## Primary evidence
 
 - Cloudflare Pingora issue #946, WebSocket upgrade race.
