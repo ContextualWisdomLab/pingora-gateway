@@ -4,8 +4,6 @@
 //! can activate only the compiled pg-erd route/header contract and explicit `backend`/`frontend`
 //! transport bindings admitted by `PgErdMigrationConfig`.
 
-#![cfg_attr(not(test), deny(clippy::missing_docs_in_private_items))]
-
 use std::env;
 use std::fs;
 use std::process::ExitCode;

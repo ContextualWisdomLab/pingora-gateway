@@ -16,7 +16,6 @@ use crate::edge_contract::{GatewayConfig, GatewayConfigError};
 /// Parsed command-line authority required before gateway startup.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GatewayCommand {
-    /// Exact operator-selected configuration path; no implicit default or search path is allowed.
     config_path: PathBuf,
 }
 

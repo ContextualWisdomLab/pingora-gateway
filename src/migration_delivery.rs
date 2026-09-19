@@ -55,9 +55,7 @@ pub enum MigrationDeliveryError {
 /// Characterized migration plan with complete, immutable Pingora upstream transport bindings.
 #[derive(Debug, Clone)]
 pub struct MigrationDeliveryPlan {
-    /// Transport-neutral route and response-policy authority validated before peer materialization.
     plan: EdgeMigrationPlan,
-    /// Immutable one-to-one map from characterized upstream identity to prevalidated Pingora peer.
     peers: HashMap<String, HttpPeer>,
 }
 

@@ -19,14 +19,12 @@ pub enum RouteMatch {
 }
 
 impl RouteMatch {
-    /// Returns the configured path used for pre-activation contract validation.
     fn path(&self) -> &str {
         match self {
             Self::Exact(path) | Self::PathPrefix(path) => path,
         }
     }
 
-    /// Evaluates only the characterized exact/prefix path semantics; no hidden fallback is added.
     fn matches(&self, request_path: &str) -> bool {
         match self {
             Self::Exact(path) => request_path == path,
@@ -86,7 +84,6 @@ pub enum RoutePolicyError {
 /// Validated, deterministic edge-routing table.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RouteTable {
-    /// Routes sorted by validated descending priority so request evaluation is deterministic.
     routes: Vec<RouteRule>,
 }
 

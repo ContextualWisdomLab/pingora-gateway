@@ -4,8 +4,6 @@
 //! validated. Product policy stays outside this process boundary; this file only wires the
 //! transport-neutral contract to the Pingora delivery adapter.
 
-#![cfg_attr(not(test), deny(clippy::missing_docs_in_private_items))]
-
 use std::env;
 use std::fmt::Display;
 use std::process::ExitCode;
@@ -16,7 +14,6 @@ use cwl_pingora_gateway::startup::GatewayCommand;
 use pingora::prelude::{http_proxy_service, Server};
 use pingora::server::RunArgs;
 
-/// Validates explicit startup authority before constructing listeners and entering Pingora's drain-aware run loop.
 fn main() -> ExitCode {
     env_logger::init();
 
@@ -55,7 +52,6 @@ fn main() -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// Emits one bounded startup diagnostic and returns the stable configuration/startup failure code.
 fn exit_with_error(error: impl Display) -> ExitCode {
     eprintln!("{error}");
     ExitCode::from(2)

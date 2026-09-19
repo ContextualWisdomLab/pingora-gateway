@@ -52,7 +52,6 @@ pub enum HeaderPolicyError {
 /// Validated response-header policy independent from Pingora transport types.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResponseHeaderPolicy {
-    /// Immutable validated mutations retained in declaration order for deterministic emission.
     headers: Vec<ResponseHeaderRule>,
 }
 
@@ -126,7 +125,6 @@ impl ResponseHeaderPolicy {
     }
 }
 
-/// Restricts migration-owned field names to the conservative characterized token subset.
 fn is_supported_header_name(value: &str) -> bool {
     !value.is_empty()
         && value
@@ -134,7 +132,6 @@ fn is_supported_header_name(value: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
 }
 
-/// Rejects boundary whitespace and invalid control octets before a value reaches Pingora.
 fn is_supported_header_value(value: &str) -> bool {
     let bytes = value.as_bytes();
     let has_boundary_whitespace = bytes

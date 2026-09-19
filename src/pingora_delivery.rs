@@ -83,7 +83,6 @@ pub(crate) fn build_peer_from_validated(
     Ok(peer)
 }
 
-/// Reads and parses one explicit PEM trust bundle before its certificates gain TLS authority.
 fn load_trust_bundle(path: &Path) -> Result<Box<[X509]>, PeerBuildError> {
     let source = fs::read(path).map_err(|error| PeerBuildError::ReadTrustBundle {
         path: path.to_path_buf(),
@@ -97,7 +96,6 @@ fn load_trust_bundle(path: &Path) -> Result<Box<[X509]>, PeerBuildError> {
     require_certificates(path, certificates)
 }
 
-/// Rejects syntactically parsed bundles that contain no certificate trust material.
 fn require_certificates(
     path: &Path,
     certificates: Vec<X509>,

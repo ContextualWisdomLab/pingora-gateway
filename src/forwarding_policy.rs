@@ -40,13 +40,9 @@ impl DownstreamScheme {
 /// Trusted transport metadata used to reconstruct legacy forwarding fields.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ForwardingContext {
-    /// Accepted downstream client IP; request-controlled forwarding fields never populate it.
     client_ip: IpAddr,
-    /// Validated original Host authority preserved only for characterized forwarding compatibility.
     original_host: String,
-    /// External authority port derived from validated Host/scheme, never the process bind port.
     downstream_port: u16,
-    /// Clear-text or TLS scheme observed at the accepted downstream transport boundary.
     scheme: DownstreamScheme,
 }
 
@@ -259,8 +255,11 @@ fn is_sub_delim(byte: u8) -> bool {
     )
 }
 
-/// Parses an explicit Host port and rejects zero because it is not valid external authority.
+/// Parses an explicit RFC 3986 Host port and rejects zero as unsupported external authority.
 fn parse_port(port: &str) -> pingora::Result<u16> {
+    if port.is_empty() || !port.as_bytes().iter().all(u8::is_ascii_digit) {
+        return Err(invalid_authority());
+    }
     let parsed = port.parse::<u16>().map_err(|_| invalid_authority())?;
     if parsed == 0 {
         return Err(invalid_authority());
@@ -430,6 +429,7 @@ mod tests {
             "",
             "app.example:",
             "app.example:0",
+            "app.example:65536",
             "2001:db8::1",
             "[::1",
             "[::1]junk",

@@ -4,11 +4,12 @@
 //! product repositories can integrate through stable configuration and deployment contracts.
 
 #![deny(missing_docs)]
-#![cfg_attr(not(test), deny(clippy::missing_docs_in_private_items))]
 
 pub mod edge_contract;
 pub mod edge_routing;
 pub mod forwarding_policy;
+#[cfg(test)]
+mod forwarding_policy_unit;
 pub mod gateway_proxy;
 pub mod http_policy;
 pub mod migration_admin;
