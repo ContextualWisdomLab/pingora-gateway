@@ -34,7 +34,7 @@ Foundation #1 current exact is `38db1949354f5721dc0ecfeea395bcf958a64ace`, the n
 
 Current-exact SAST `35426685280` is terminal **SUCCESS**. Current-exact Security Scan `35426685265` is terminal **FAILURE** for a deterministic supplier-admission finding: protected base `main@f8b4c99...` produced zero OSV findings, while `38db194...` produced exactly one, `Cargo.lock: derivative@2.2.0 / RUSTSEC-2024-0388`. The hard gate failed at the PR-introduced OSV reporter; Scorecard, dependency-review and Trivy filesystem jobs succeeded. OSV SARIF upload succeeded and debug artifact `10586184717` was produced. This is a valid Security RED, not a scanner/bootstrap failure and not a compiler regression.
 
-CodeQL `35426685246` remains queued/incomplete. Draft-triggered CI `35426685241` and Supply `35426685243` are skipped and are not GREEN. No protected-foundation promotion credit exists until the exact candidate is deliberately admitted to full execution and all required current-head gates settle.
+CodeQL `35426685246` remains nonterminal, but the state is classified. Language detection succeeded; the Python, JavaScript/TypeScript, and Actions compatibility shards failed only at the central pending-verdict handoff after reading the dispatch verdict. Coordinator job `105921625299` remains queued without an assigned runner or executed steps, so no current-head CodeQL SARIF verdict has executed yet. Those compatibility-shard failures are handoff receipts, not gateway vulnerability findings. Draft-triggered CI `35426685241` and Supply `35426685243` are skipped and are not GREEN.
 
 Upstream #889 remains the supplier owner for `derivative`. The accepted transition is maintainer-integrated removal from the relevant production graph while preserving the characterized `PeerOptions` and `Backend` semantics, followed by a release-qualified supplier identity. Advisory ignores, SARIF/scanner suppression, deleted lock evidence, downstream forks, or mutable contributor pins are not accepted.
 
@@ -46,20 +46,22 @@ Upstream #889 remains the supplier owner for `derivative`. The accepted transiti
 
 The compiler implementation/execution gate is therefore inherited by the foundation. The remaining promotion failure is the supplier Security root and incomplete current-foundation evidence, not compiler governance.
 
-## Shared intermediary / Runtime Isolation stack — #15 / #16 / #119 / #18 / #102 / #104 / #106
+## Shared intermediary / Runtime Isolation stack — #15 / #16 / #119 / #18 / #19 / #102 / #104 / #106
 
 #15 normally integrated as `840b03873d8e25ebd960438183884ea609b173ff`, preserving generic forwarding-header sanitization, RFC 9110 `Via`, TRACE/OPTIONS `Max-Forwards`, bounded intermediary-local outcomes, and pg-erd forwarding compatibility without moving product auth/business authority into the gateway.
 
 #16 then normally integrated its runtime-isolation acceptance as `bf38bc571dbb7c75e651bcaccdc66904c8c92dab`. Verified successor #119 repaired the refused-origin fixture itself — listener reservation through bind handoff, real HTTP `/readyz`/`/metrics` readiness, owned refusal precondition, bounded header receipt — and normally integrated as `40e10607601bf9722d642d4a4bb18f02806c20cc`. Historical #17 closed only after successor inheritance.
 
-The current direct children of that integrated parent are all ordinary/non-force reconciled with behind=0 but must reacquire exact evidence independently:
+#18 exact `8c0d32332388fc0e398ee3f7b47c6810e72f24d8` then completed current-head CI `35448764275` and Supply Chain `35448764235` SUCCESS and normally integrated the connected upstream read-stall acceptance as `c78a296a87972845f8f9724e2cf2072d95a7df34`. Its controlled loopback load receipt recorded 400/400 requests, zero failed-request rate, and p95 `1.2343667 ms` against the `<20 ms` threshold. That integration is now ancestry, not a pending prerequisite.
 
-- #18 `8c0d32332388fc0e398ee3f7b47c6810e72f24d8`: connected upstream read-stall traffic. CI `35448764275` and Supply `35448764235` are queued.
-- #102 `7341223f4d49c450829a5ad4169df9f27f67e9ab`: privileged process-health bypass is source-bound to body-free completed GET/HEAD probes using `Session::is_body_done()`. CI `35449169967` and Supply `35449169962` are queued. The requested real HTTP/2 `HEADERS(no END_STREAM) → DATA` listener acceptance remains #75 authority and is not duplicated here.
-- #104 `7d576d2ceb7d4b7f6159d0795aa638ac37cf2ac3`: private-production rustdoc enforcement only; executable Rust semantics are unchanged. CI `35449295421` and Supply `35449295385` are queued.
-- #106 `dbecf6e43372e52d8af46e734fb74df83d63399d`: shared Max-Forwards authority and pg-erd traffic acceptance. CI `35449030706` and Supply `35449030601` are queued.
+The live children of integrated #18 are now:
 
-Historical receipts from pre-#119 heads do not transfer. Queued checks are incomplete evidence and are not a reason for freshness-only commits or blind reruns.
+- #19 `3194f49a4218986ff5d43d0c4c2d275958859efd`: pg-erd OCI least-privilege/runtime evidence. It is Ready/mergeable, behind 0 with merge-base exactly #18, and its effective range remains four paths. CI `35467756899` and Supply Chain `35467756872` are queued; no historical GREEN transfers.
+- #102 `b9447d58ce90e58c76a2af4acd2ef99c4648b9b9`: privileged process-health bypass remains source-bound to body-free completed GET/HEAD probes using `Session::is_body_done()`. The earlier invalid private `HeaderValue` import was repaired through the public header API before ordinary/non-force adoption of #18. CI `35468136887` is queued and Supply Chain `35468136918` is pending. The requested real HTTP/2 `HEADERS(no END_STREAM) → DATA` listener acceptance remains #75 authority and is not duplicated here.
+- #104 `9e5d897e0b7b643dc9e93986c2349edc6106f255`: private-production rustdoc enforcement only; executable Rust semantics remain unchanged after ordinary/non-force adoption of #18. CI `35468276852` and Supply Chain `35468276846` are queued.
+- #106 `5f87459ea78c6e9f5dfe98ec38ffa70550f14626`: shared Max-Forwards authority and pg-erd traffic acceptance, ahead 27 / behind 0 on integrated #18. Fresh reconciliation review found the first seven-path tree had dropped three valid owner-contract deltas; ordinary append-only repairs restored `API_CONFIG_CONTRACT.md`, `CHANGELOG.md`, and `TEST_STRATEGY.md`, returning the intended ten-path scope without changing Max-Forwards behavior. CI `35468678908` and Supply Chain `35468678900` are queued.
+
+Queued/pending checks are incomplete evidence and are not a reason for freshness-only commits or blind reruns. Parent or sibling GREEN does not transfer across these current exact heads.
 
 ## Pg-erd response lifetime and bounded-origin capacity — #39 / #42
 
