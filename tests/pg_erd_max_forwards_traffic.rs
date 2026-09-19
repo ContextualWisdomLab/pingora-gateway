@@ -11,12 +11,74 @@ use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use cwl_pingora_gateway::runtime_policy::V1_TERMINATION_BUDGET_SECONDS;
 use tempfile::NamedTempFile;
 
 struct GatewayProcess(Child);
 
+impl GatewayProcess {
+    #[cfg(unix)]
+    fn assert_graceful_shutdown(&mut self) {
+        let pid = self.0.id().to_string();
+        let signal = Command::new("kill")
+            .args(["-TERM", pid.as_str()])
+            .status()
+            .expect("SIGTERM command should execute");
+        assert!(signal.success(), "SIGTERM should reach gateway child");
+
+        let deadline = Instant::now() + Duration::from_secs(V1_TERMINATION_BUDGET_SECONDS);
+        loop {
+            match self
+                .0
+                .try_wait()
+                .expect("gateway process state should remain readable")
+            {
+                Some(status) => {
+                    assert!(
+                        status.success(),
+                        "gateway must exit successfully after graceful SIGTERM: {status}"
+                    );
+                    return;
+                }
+                None => {
+                    assert!(
+                        Instant::now() < deadline,
+                        "gateway did not complete graceful shutdown before the external termination budget"
+                    );
+                    thread::sleep(Duration::from_millis(25));
+                }
+            }
+        }
+    }
+}
+
 impl Drop for GatewayProcess {
     fn drop(&mut self) {
+        if matches!(self.0.try_wait(), Ok(Some(_))) {
+            return;
+        }
+
+        #[cfg(unix)]
+        {
+            let pid = self.0.id().to_string();
+            if Command::new("kill")
+                .args(["-TERM", pid.as_str()])
+                .status()
+                .is_ok()
+            {
+                let deadline = Instant::now() + Duration::from_secs(V1_TERMINATION_BUDGET_SECONDS);
+                loop {
+                    match self.0.try_wait() {
+                        Ok(Some(_)) => return,
+                        Ok(None) if Instant::now() < deadline => {
+                            thread::sleep(Duration::from_millis(25));
+                        }
+                        Ok(None) | Err(_) => break,
+                    }
+                }
+            }
+        }
+
         let _ = self.0.kill();
         let _ = self.0.wait();
     }
@@ -262,8 +324,10 @@ fn compiled_pg_erd_listener_applies_max_forwards_after_admission_and_before_orig
     );
     assert!(ordinary.starts_with("HTTP/1.1 200"));
 
-    drop(process);
     backend_thread
         .join()
         .expect("bounded backend fixture should complete");
+
+    #[cfg(unix)]
+    process.assert_graceful_shutdown();
 }
