@@ -59,9 +59,7 @@ pub(crate) fn max_forwards_action(request: &RequestHeader) -> pingora::Result<Ma
             .saturating_add(u32::from(*digit - b'0'))
     });
     Ok(MaxForwardsAction::Forward(
-        received
-            .saturating_sub(1)
-            .min(MAX_SUPPORTED_MAX_FORWARDS),
+        received.saturating_sub(1).min(MAX_SUPPORTED_MAX_FORWARDS),
     ))
 }
 
