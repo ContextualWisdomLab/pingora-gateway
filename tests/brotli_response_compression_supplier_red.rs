@@ -47,14 +47,10 @@ fn pingora_brotli_response(body: &[u8]) -> Vec<u8> {
         b"br"
     );
     assert!(
-        response
-            .headers
-            .get_all("vary")
-            .iter()
-            .any(|value| value
-                .as_bytes()
-                .split(|byte| *byte == b',')
-                .any(|token| token.trim_ascii().eq_ignore_ascii_case(b"accept-encoding"))),
+        response.headers.get_all("vary").iter().any(|value| value
+            .as_bytes()
+            .split(|byte| *byte == b',')
+            .any(|token| token.trim_ascii().eq_ignore_ascii_case(b"accept-encoding"))),
         "compressed responses must vary on Accept-Encoding"
     );
 
