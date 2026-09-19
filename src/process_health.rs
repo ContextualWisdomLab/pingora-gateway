@@ -117,7 +117,6 @@ pub(crate) fn payload_too_large_error() -> Box<Error> {
 
 #[cfg(test)]
 mod tests {
-    use pingora::http::HeaderValue;
     use pingora::prelude::RequestHeader;
 
     use super::{classify_process_health_request, ProcessHealthAction};
@@ -227,11 +226,9 @@ mod tests {
         );
 
         let mut non_text = request("HEAD", b"/readyz");
-        non_text.headers.insert(
-            "content-length",
-            HeaderValue::from_bytes(b"\xff")
-                .expect("non-text header value should be representable"),
-        );
+        non_text
+            .insert_header("content-length", &[0xff][..])
+            .expect("non-text header value should be representable");
         assert_eq!(
             classify_process_health_request(&non_text, true),
             ProcessHealthAction::RejectPayload
