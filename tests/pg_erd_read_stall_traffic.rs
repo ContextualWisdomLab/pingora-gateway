@@ -59,8 +59,20 @@ fn write_config(
     file
 }
 
-/// Waits for one listener without allowing an early child exit to look like startup success.
-fn wait_until_listening(address: SocketAddr, process: &mut Child) {
+fn try_http_get(address: SocketAddr, path: &str) -> std::io::Result<String> {
+    let mut stream = TcpStream::connect_timeout(&address, Duration::from_millis(100))?;
+    stream.set_read_timeout(Some(Duration::from_millis(250)))?;
+    write!(
+        stream,
+        "GET {path} HTTP/1.1\r\nHost: probe.invalid\r\nConnection: close\r\n\r\n"
+    )?;
+    let mut response = String::new();
+    stream.read_to_string(&mut response)?;
+    Ok(response)
+}
+
+/// Requires an HTTP-level readiness response instead of crediting a bare accepted TCP socket.
+fn wait_until_http_ready(address: SocketAddr, path: &str, process: &mut Child) {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         if let Some(status) = process
@@ -69,23 +81,35 @@ fn wait_until_listening(address: SocketAddr, process: &mut Child) {
         {
             panic!("gateway exited before accepting traffic: {status}");
         }
-        if TcpStream::connect_timeout(&address, Duration::from_millis(100)).is_ok() {
+        if try_http_get(address, path).is_ok_and(|response| response.starts_with("HTTP/1.1 200")) {
             return;
         }
         assert!(
             Instant::now() < deadline,
-            "gateway did not start within 10s"
+            "gateway did not expose {path} within 10s"
         );
         thread::sleep(Duration::from_millis(25));
     }
 }
 
-/// Starts the compiled migration binary and requires both traffic and metrics listeners to bind.
+/// Starts the compiled migration binary while preserving listener ownership through config setup.
 fn start_gateway(
     config: &NamedTempFile,
-    gateway_address: SocketAddr,
-    metrics_address: SocketAddr,
+    gateway_reservation: TcpListener,
+    metrics_reservation: TcpListener,
 ) -> GatewayProcess {
+    let gateway_address = gateway_reservation
+        .local_addr()
+        .expect("traffic reservation should expose an address");
+    let metrics_address = metrics_reservation
+        .local_addr()
+        .expect("metrics reservation should expose an address");
+
+    // Keep both configured authorities reserved until the child-bind handoff. Releasing them here
+    // narrows ephemeral reuse to the unavoidable spawn boundary without adding another owner.
+    drop(gateway_reservation);
+    drop(metrics_reservation);
+
     let mut child = Command::new(env!("CARGO_BIN_EXE_cwl-pingora-pg-erd-migration"))
         .args(["--config", config.path().to_str().expect("UTF-8 temp path")])
         .stdin(Stdio::null())
@@ -93,8 +117,8 @@ fn start_gateway(
         .stderr(Stdio::null())
         .spawn()
         .expect("compiled pg-erd migration binary should start");
-    wait_until_listening(gateway_address, &mut child);
-    wait_until_listening(metrics_address, &mut child);
+    wait_until_http_ready(gateway_address, "/readyz", &mut child);
+    wait_until_http_ready(metrics_address, "/metrics", &mut child);
     GatewayProcess(child)
 }
 
@@ -123,17 +147,31 @@ fn get(address: SocketAddr, path: &str) -> String {
     )
 }
 
-/// Reads one bounded origin request through the header terminator; no body is needed by this fixture.
+/// Reads one origin request under both an absolute deadline and a byte ceiling.
 fn read_request_headers(stream: &mut TcpStream) -> String {
+    let deadline = Instant::now() + Duration::from_secs(5);
     stream
-        .set_read_timeout(Some(Duration::from_secs(5)))
+        .set_read_timeout(Some(Duration::from_millis(250)))
         .expect("origin header timeout should be configurable");
     let mut bytes = Vec::new();
     let mut buffer = [0_u8; 1024];
     loop {
-        let read = stream
-            .read(&mut buffer)
-            .expect("origin request headers should complete within five seconds");
+        assert!(
+            Instant::now() < deadline,
+            "origin request headers did not complete within five seconds"
+        );
+        let read = match stream.read(&mut buffer) {
+            Ok(read) => read,
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
+            {
+                continue;
+            }
+            Err(error) => panic!("origin request headers should be readable: {error}"),
+        };
         assert!(
             read > 0,
             "gateway closed origin request before headers completed"
@@ -204,12 +242,7 @@ fn compiled_pg_erd_silent_backend_hits_read_timeout_and_preserves_independent_ro
         backend_address,
         frontend_address,
     );
-
-    // Keep both selected authorities owned through config construction, then release them only at
-    // the child-bind handoff. This narrows ephemeral-port reuse to the unavoidable spawn boundary.
-    drop(gateway_reservation);
-    drop(metrics_reservation);
-    let _process = start_gateway(&config, gateway_address, metrics_address);
+    let _process = start_gateway(&config, gateway_reservation, metrics_reservation);
 
     let started = Instant::now();
     let failed = get(gateway_address, "/api/read-stall");

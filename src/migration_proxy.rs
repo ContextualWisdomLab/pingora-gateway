@@ -7,6 +7,7 @@
 use async_trait::async_trait;
 use bytes::Bytes;
 use log::error;
+use pingora::http::Version;
 use pingora::prelude::{
     Error, ErrorType, HttpPeer, ProxyHttp, RequestHeader, ResponseHeader, Session,
 };
@@ -152,6 +153,36 @@ fn pg_erd_forwarding_context(
     )
 }
 
+/// Maps the protocol actually received from the downstream client to this gateway's Via hop.
+///
+/// Pingora may normalize the upstream request version, so intermediary trace must come from the
+/// downstream session rather than the mutable upstream request. The pseudonym is deliberately
+/// non-authoritative and must never be consumed as identity, authentication, or authorization.
+fn migration_gateway_via_value(version: Version) -> pingora::Result<&'static str> {
+    match version {
+        Version::HTTP_10 => Ok("1.0 cwl-pingora-gateway"),
+        Version::HTTP_11 => Ok("1.1 cwl-pingora-gateway"),
+        Version::HTTP_2 => Ok("2 cwl-pingora-gateway"),
+        Version::HTTP_3 => Ok("3 cwl-pingora-gateway"),
+        _ => Err(Error::explain(
+            ErrorType::InvalidHTTPHeader,
+            "unsupported HTTP version for RFC 9110 Via",
+        )),
+    }
+}
+
+/// Preserves the received Via chain and appends this HTTP-to-HTTP gateway hop before forwarding.
+fn append_migration_request_via(
+    upstream_request: &mut RequestHeader,
+    downstream_version: Version,
+) -> pingora::Result<()> {
+    let via = migration_gateway_via_value(downstream_version)?;
+    upstream_request
+        .append_header("Via", via)
+        .expect("validated static migration Via field must be valid");
+    Ok(())
+}
+
 fn body_rejection_to_pingora(rejection: BodyLimitExceeded) -> Box<Error> {
     let _ = (rejection.observed, rejection.limit);
     Error::explain(
@@ -247,7 +278,8 @@ impl ProxyHttp for MigrationGatewayProxy {
         Self::CTX: Send + Sync,
     {
         let forwarding = pg_erd_forwarding_context(session, upstream_request)?;
-        self.apply_upstream_request_policy(upstream_request, &forwarding)
+        self.apply_upstream_request_policy(upstream_request, &forwarding)?;
+        append_migration_request_via(upstream_request, session.req_header().version)
     }
 
     async fn response_filter(
@@ -304,12 +336,14 @@ impl ProxyHttp for MigrationGatewayProxy {
 mod tests {
     use std::net::SocketAddr;
 
-    use pingora::prelude::{Error, ErrorType};
+    use pingora::http::Version;
+    use pingora::prelude::{Error, ErrorType, RequestHeader};
     use pingora::ErrorSource;
 
     use super::{
-        body_rejection_to_pingora, proxy_error_status, unmatched_route_to_pingora,
-        MigrationGatewayProxy, MigrationGatewayProxyError, MigrationRequestContext,
+        append_migration_request_via, body_rejection_to_pingora, migration_gateway_via_value,
+        proxy_error_status, unmatched_route_to_pingora, MigrationGatewayProxy,
+        MigrationGatewayProxyError, MigrationRequestContext,
     };
     use crate::edge_contract::{UpstreamConfig, UpstreamTimeouts};
     use crate::edge_routing::{RouteMatch, RouteRule};
@@ -364,6 +398,57 @@ mod tests {
         let ctx = MigrationRequestContext::new(limits);
         assert_eq!(ctx.request_body.observed(), 0);
         assert!(ctx.admission.is_none());
+    }
+
+    #[test]
+    fn migration_request_via_preserves_received_chain_and_uses_downstream_protocol() {
+        let mut request =
+            RequestHeader::build("GET", b"/", None).expect("fixture request must be valid");
+        request
+            .append_header("Via", "1.0 previous-hop")
+            .expect("fixture Via must be valid");
+
+        append_migration_request_via(&mut request, Version::HTTP_2)
+            .expect("supported downstream protocol must append Via");
+
+        let values = request
+            .headers
+            .get_all("via")
+            .iter()
+            .map(|value| value.to_str().expect("Via value must be text"))
+            .collect::<Vec<_>>();
+        assert_eq!(values, vec!["1.0 previous-hop", "2 cwl-pingora-gateway"]);
+    }
+
+    #[test]
+    fn migration_via_mapping_covers_http10_http11_http3_and_rejects_http09() {
+        assert_eq!(
+            migration_gateway_via_value(Version::HTTP_10)
+                .expect("HTTP/1.0 Via token must be supported"),
+            "1.0 cwl-pingora-gateway"
+        );
+        assert_eq!(
+            migration_gateway_via_value(Version::HTTP_11)
+                .expect("HTTP/1.1 Via token must be supported"),
+            "1.1 cwl-pingora-gateway"
+        );
+        assert_eq!(
+            migration_gateway_via_value(Version::HTTP_3)
+                .expect("HTTP/3 Via token must be supported"),
+            "3 cwl-pingora-gateway"
+        );
+        let error = migration_gateway_via_value(Version::HTTP_09)
+            .expect_err("HTTP/0.9 has no supported Via token in the migration gateway");
+        assert_eq!(error.etype, ErrorType::InvalidHTTPHeader);
+    }
+
+    #[test]
+    fn migration_via_adapter_propagates_unsupported_protocol() {
+        let mut request =
+            RequestHeader::build("GET", b"/", None).expect("fixture request must be valid");
+        let error = append_migration_request_via(&mut request, Version::HTTP_09)
+            .expect_err("unsupported downstream protocol must fail before appending migration Via");
+        assert_eq!(error.etype, ErrorType::InvalidHTTPHeader);
     }
 
     #[test]
