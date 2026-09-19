@@ -82,7 +82,10 @@ fn wait_until_ready(address: SocketAddr, process: &mut Child) {
         if probe_readyz(address) {
             return;
         }
-        assert!(Instant::now() < deadline, "gateway did not become ready within 10s");
+        assert!(
+            Instant::now() < deadline,
+            "gateway did not become ready within 10s"
+        );
         thread::sleep(Duration::from_millis(25));
     }
 }
@@ -166,10 +169,8 @@ fn assert_probe_boundary(binary: &str, config: &NamedTempFile, listener: SocketA
 
         let unsupported_method = raw_request(
             listener,
-            format!(
-                "DELETE {path} HTTP/1.1\r\nHost: gateway.test\r\nConnection: close\r\n\r\n"
-            )
-            .as_bytes(),
+            format!("DELETE {path} HTTP/1.1\r\nHost: gateway.test\r\nConnection: close\r\n\r\n")
+                .as_bytes(),
         );
         assert!(
             unsupported_method.starts_with("HTTP/1.1 405"),
@@ -210,8 +211,7 @@ fn assert_invalid_health_shapes_obey_saturation(
             }
         }
         assert!(
-            String::from_utf8_lossy(&request)
-                .starts_with(&format!("GET {held_path} HTTP/1.1\r\n")),
+            String::from_utf8_lossy(&request).starts_with(&format!("GET {held_path} HTTP/1.1\r\n")),
             "unexpected held application request: {:?}",
             String::from_utf8_lossy(&request)
         );
@@ -230,10 +230,8 @@ fn assert_invalid_health_shapes_obey_saturation(
     let held = thread::spawn(move || {
         raw_request(
             listener,
-            format!(
-                "GET {held_path} HTTP/1.1\r\nHost: gateway.test\r\nConnection: close\r\n\r\n"
-            )
-            .as_bytes(),
+            format!("GET {held_path} HTTP/1.1\r\nHost: gateway.test\r\nConnection: close\r\n\r\n")
+                .as_bytes(),
         )
     });
     request_seen_rx
@@ -261,10 +259,8 @@ fn assert_invalid_health_shapes_obey_saturation(
     for method in ["GET", "HEAD"] {
         let valid_probe = raw_request(
             listener,
-            format!(
-                "{method} /readyz HTTP/1.1\r\nHost: gateway.test\r\nConnection: close\r\n\r\n"
-            )
-            .as_bytes(),
+            format!("{method} /readyz HTTP/1.1\r\nHost: gateway.test\r\nConnection: close\r\n\r\n")
+                .as_bytes(),
         );
         assert!(
             valid_probe.starts_with("HTTP/1.1 200"),
@@ -275,9 +271,13 @@ fn assert_invalid_health_shapes_obey_saturation(
     release_response_tx
         .send(())
         .expect("held application response should be released");
-    let held_response = held.join().expect("held downstream request should complete");
+    let held_response = held
+        .join()
+        .expect("held downstream request should complete");
     assert!(held_response.starts_with("HTTP/1.1 200"));
-    fixture.join().expect("held-capacity fixture should complete");
+    fixture
+        .join()
+        .expect("held-capacity fixture should complete");
 }
 
 #[test]
@@ -289,11 +289,7 @@ fn generic_listener_limits_process_health_bypass_to_payload_free_retrieval() {
 
     drop(traffic_reservation);
     drop(metrics_reservation);
-    assert_probe_boundary(
-        env!("CARGO_BIN_EXE_cwl-pingora-gateway"),
-        &config,
-        traffic,
-    );
+    assert_probe_boundary(env!("CARGO_BIN_EXE_cwl-pingora-gateway"), &config, traffic);
     drop(upstream_reservation);
 }
 

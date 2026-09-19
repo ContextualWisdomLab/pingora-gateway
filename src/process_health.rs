@@ -92,7 +92,9 @@ async fn respond_empty(
             .insert_header("Allow", "GET, HEAD")
             .expect("literal Allow response header must be valid");
     }
-    session.write_response_header(Box::new(response), true).await
+    session
+        .write_response_header(Box::new(response), true)
+        .await
 }
 
 /// Writes the payload-free local health response without contacting a consumer upstream.
@@ -227,7 +229,8 @@ mod tests {
         let mut non_text = request("HEAD", b"/readyz");
         non_text.headers.insert(
             "content-length",
-            HeaderValue::from_bytes(b"\xff").expect("non-text header value should be representable"),
+            HeaderValue::from_bytes(b"\xff")
+                .expect("non-text header value should be representable"),
         );
         assert_eq!(
             classify_process_health_request(&non_text, true),
