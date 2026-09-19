@@ -26,12 +26,19 @@ pub const PG_ERD_MIGRATION_CONFIG_VERSION: u32 = 1;
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct PgErdMigrationConfig {
+    /// Schema version that pins the accepted operator-facing configuration contract.
     version: u32,
+    /// Traffic socket authority granted only after the complete configuration validates.
     listener: SocketAddr,
+    /// Dedicated metrics socket kept disjoint from traffic and upstream authorities.
     metrics_listener: SocketAddr,
+    /// Maximum declared or streamed request-body bytes admitted by Runtime Isolation.
     max_request_body_bytes: u64,
+    /// Process-wide concurrent application-request budget for this migration runtime.
     max_in_flight_requests: usize,
+    /// Explicit Pingora upstream keepalive capacity; zero is rejected rather than defaulted.
     upstream_keepalive_pool_size: usize,
+    /// Concrete operator transport bindings for exactly the compiled upstream identities.
     upstreams: Vec<UpstreamConfig>,
 }
 
