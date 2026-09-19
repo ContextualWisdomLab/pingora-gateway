@@ -76,7 +76,9 @@ pub(crate) fn apply_max_forwards_before_forward(
     match max_forwards_action(request)? {
         MaxForwardsAction::Ignore => Ok(()),
         MaxForwardsAction::Forward(value) => {
-            request.insert_header("Max-Forwards", value.to_string())?;
+            request
+                .insert_header("Max-Forwards", value.to_string())
+                .expect("bounded decimal Max-Forwards must be a valid HTTP field value");
             Ok(())
         }
         MaxForwardsAction::FinalRecipient => Err(Error::explain(
@@ -150,7 +152,14 @@ mod tests {
     }
 
     #[test]
-    fn malformed_and_duplicate_values_fail_closed() {
+    fn empty_malformed_and_duplicate_values_fail_closed() {
+        let mut empty = request("TRACE");
+        empty.insert_header("Max-Forwards", "").unwrap();
+        assert_eq!(
+            max_forwards_action(&empty).unwrap_err().etype,
+            ErrorType::HTTPStatus(400)
+        );
+
         let mut malformed = request("TRACE");
         malformed.insert_header("Max-Forwards", "1x").unwrap();
         assert_eq!(
