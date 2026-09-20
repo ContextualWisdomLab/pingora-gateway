@@ -7,7 +7,7 @@
 
 #![cfg(unix)]
 
-use std::io::{Read, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
@@ -32,20 +32,20 @@ impl Drop for GatewayProcess {
     }
 }
 
-/// Reserves two distinct loopback authorities while both sockets remain simultaneously bound.
-fn reserve_distinct_loopback_addresses() -> (SocketAddr, SocketAddr) {
+/// Holds traffic and metrics authorities simultaneously until the child-bind handoff.
+fn reserve_distinct_loopback_listeners() -> (TcpListener, TcpListener) {
     let traffic = TcpListener::bind("127.0.0.1:0").expect("traffic port should be reservable");
     let metrics = TcpListener::bind("127.0.0.1:0").expect("metrics port should be reservable");
-    let addresses = (
+    assert_ne!(
         traffic
             .local_addr()
             .expect("traffic reservation should expose an address"),
         metrics
             .local_addr()
             .expect("metrics reservation should expose an address"),
+        "traffic and metrics reservations must remain distinct"
     );
-    assert_ne!(addresses.0, addresses.1);
-    addresses
+    (traffic, metrics)
 }
 
 /// Writes generic-v1 config whose origin read budget stays longer than the shutdown grace window.
@@ -79,22 +79,65 @@ fn write_pg_erd_config(
     file
 }
 
-/// Waits for the public traffic listener without allowing an early process exit to masquerade as readiness.
-fn wait_until_listening(address: SocketAddr, process: &mut Child) {
+/// Waits for a complete process-local readiness response instead of treating bare TCP accept as ready.
+fn wait_until_ready(address: SocketAddr, process: &mut Child) {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         if let Some(status) = process
             .try_wait()
             .expect("gateway process state should be readable")
         {
-            panic!("gateway exited before accepting traffic: {status}");
+            panic!("gateway exited before becoming ready: {status}");
         }
-        if TcpStream::connect_timeout(&address, Duration::from_millis(100)).is_ok() {
-            return;
+
+        if let Ok(mut stream) = TcpStream::connect_timeout(&address, Duration::from_millis(100)) {
+            stream
+                .set_read_timeout(Some(Duration::from_millis(250)))
+                .expect("readiness read timeout should be configurable");
+            stream
+                .set_write_timeout(Some(Duration::from_millis(250)))
+                .expect("readiness write timeout should be configurable");
+
+            if stream
+                .write_all(
+                    b"GET /readyz HTTP/1.1\r\nHost: gateway.test\r\nConnection: close\r\n\r\n",
+                )
+                .is_ok()
+            {
+                let mut response = Vec::new();
+                let mut buffer = [0_u8; 1024];
+                loop {
+                    match stream.read(&mut buffer) {
+                        Ok(0) => break,
+                        Ok(read) => {
+                            response.extend_from_slice(&buffer[..read]);
+                            if response.len() > MAX_FIXTURE_EVIDENCE_BYTES {
+                                break;
+                            }
+                            if response.windows(4).any(|window| window == b"\r\n\r\n") {
+                                if response.starts_with(b"HTTP/1.1 200 ") {
+                                    return;
+                                }
+                                break;
+                            }
+                        }
+                        Err(error)
+                            if matches!(
+                                error.kind(),
+                                ErrorKind::WouldBlock | ErrorKind::TimedOut
+                            ) =>
+                        {
+                            break;
+                        }
+                        Err(_) => break,
+                    }
+                }
+            }
         }
+
         assert!(
             Instant::now() < deadline,
-            "gateway did not start within 10s"
+            "gateway did not become ready within 10s"
         );
         thread::sleep(Duration::from_millis(25));
     }
@@ -196,7 +239,7 @@ fn require_prompt_eof(stream: &mut TcpStream, context: &str) {
         Err(error)
             if matches!(
                 error.kind(),
-                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ErrorKind::WouldBlock | ErrorKind::TimedOut
             ) =>
         {
             panic!("{context} survived until the one-second shutdown evidence bound")
@@ -217,7 +260,7 @@ fn require_still_parked(stream: &mut TcpStream, context: &str) {
         Err(error)
             if matches!(
                 error.kind(),
-                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ErrorKind::WouldBlock | ErrorKind::TimedOut
             ) => {}
         Err(error) => panic!("{context}: unexpected pre-SIGTERM error: {error}"),
     }
@@ -244,11 +287,15 @@ fn wait_for_exit(process: &mut Child, deadline: Instant) -> std::process::ExitSt
 fn prove_waiter_created_after_cleanup_observes_shutdown(
     binary: &str,
     config: &NamedTempFile,
-    gateway_address: SocketAddr,
+    gateway_reservation: TcpListener,
+    metrics_reservation: TcpListener,
     origin_listener: TcpListener,
     expected_origin_prefix: &'static [u8],
     held_request: &'static [u8],
 ) {
+    let gateway_address = gateway_reservation
+        .local_addr()
+        .expect("traffic reservation should expose an address");
     let (request_seen_tx, request_seen_rx) = mpsc::channel();
     let (release_response_tx, release_response_rx) = mpsc::channel();
     let origin = thread::spawn(move || {
@@ -276,6 +323,10 @@ fn prove_waiter_created_after_cleanup_observes_shutdown(
             .expect("held origin response should be writable");
     });
 
+    // Release the exact reserved sockets only at the child-bind handoff. Keeping them alive through
+    // config construction and origin setup prevents unrelated fixtures from reclaiming either port.
+    drop(gateway_reservation);
+    drop(metrics_reservation);
     let child = Command::new(binary)
         .args(["--config", config.path().to_str().expect("UTF-8 temp path")])
         .env("RUST_LOG", "info")
@@ -285,7 +336,7 @@ fn prove_waiter_created_after_cleanup_observes_shutdown(
         .spawn()
         .expect("compiled gateway binary should start");
     let mut process = GatewayProcess(child);
-    wait_until_listening(gateway_address, &mut process.0);
+    wait_until_ready(gateway_address, &mut process.0);
 
     let mut subject = TcpStream::connect(gateway_address)
         .expect("gateway should accept the held subject request");
@@ -370,13 +421,20 @@ fn generic_post_notification_keepalive_observes_shutdown() {
     let origin_address = origin_listener
         .local_addr()
         .expect("generic origin should expose its address");
-    let (gateway_address, metrics_address) = reserve_distinct_loopback_addresses();
+    let (gateway_reservation, metrics_reservation) = reserve_distinct_loopback_listeners();
+    let gateway_address = gateway_reservation
+        .local_addr()
+        .expect("traffic reservation should expose an address");
+    let metrics_address = metrics_reservation
+        .local_addr()
+        .expect("metrics reservation should expose an address");
     let config = write_generic_config(gateway_address, metrics_address, origin_address);
 
     prove_waiter_created_after_cleanup_observes_shutdown(
         env!("CARGO_BIN_EXE_cwl-pingora-gateway"),
         &config,
-        gateway_address,
+        gateway_reservation,
+        metrics_reservation,
         origin_listener,
         b"GET /held HTTP/1.1\r\n",
         b"GET /held HTTP/1.1\r\nHost: gateway.test\r\nConnection: keep-alive\r\n\r\n",
@@ -396,7 +454,13 @@ fn pg_erd_post_notification_keepalive_observes_shutdown() {
     let frontend_address = frontend_listener
         .local_addr()
         .expect("pg-erd frontend should expose its address");
-    let (gateway_address, metrics_address) = reserve_distinct_loopback_addresses();
+    let (gateway_reservation, metrics_reservation) = reserve_distinct_loopback_listeners();
+    let gateway_address = gateway_reservation
+        .local_addr()
+        .expect("traffic reservation should expose an address");
+    let metrics_address = metrics_reservation
+        .local_addr()
+        .expect("metrics reservation should expose an address");
     let config = write_pg_erd_config(
         gateway_address,
         metrics_address,
@@ -407,7 +471,8 @@ fn pg_erd_post_notification_keepalive_observes_shutdown() {
     prove_waiter_created_after_cleanup_observes_shutdown(
         env!("CARGO_BIN_EXE_cwl-pingora-pg-erd-migration"),
         &config,
-        gateway_address,
+        gateway_reservation,
+        metrics_reservation,
         backend_listener,
         b"GET /api/held HTTP/1.1\r\n",
         b"GET /api/held HTTP/1.1\r\nHost: app.example:8080\r\nConnection: keep-alive\r\n\r\n",
