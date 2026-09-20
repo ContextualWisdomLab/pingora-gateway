@@ -236,12 +236,7 @@ fn require_prompt_eof(stream: &mut TcpStream, context: &str) {
     match stream.read(&mut probe) {
         Ok(0) => {}
         Ok(read) => panic!("{context} received {read} unexpected byte(s) instead of EOF"),
-        Err(error)
-            if matches!(
-                error.kind(),
-                ErrorKind::WouldBlock | ErrorKind::TimedOut
-            ) =>
-        {
+        Err(error) if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {
             panic!("{context} survived until the one-second shutdown evidence bound")
         }
         Err(error) => panic!("{context} returned an unexpected shutdown error: {error}"),
@@ -257,11 +252,7 @@ fn require_still_parked(stream: &mut TcpStream, context: &str) {
     match stream.read(&mut probe) {
         Ok(0) => panic!("{context}: connection closed before SIGTERM"),
         Ok(read) => panic!("{context}: received {read} response byte(s) before SIGTERM"),
-        Err(error)
-            if matches!(
-                error.kind(),
-                ErrorKind::WouldBlock | ErrorKind::TimedOut
-            ) => {}
+        Err(error) if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {}
         Err(error) => panic!("{context}: unexpected pre-SIGTERM error: {error}"),
     }
 }
