@@ -160,7 +160,8 @@ impl MigrationGatewayProxy {
         response
             .insert_header("Cache-Control", "no-store")
             .expect("literal Cache-Control response header must be valid");
-        self.apply_response_headers(&mut response)?;
+        self.apply_response_headers(&mut response)
+            .expect("validated response-header policy must remain transport-safe");
         session
             .write_response_header(Box::new(response), true)
             .await
