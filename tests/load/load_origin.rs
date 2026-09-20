@@ -12,6 +12,7 @@ const MAX_WORKERS: usize = 256;
 const DEFAULT_RESPONSE_DELAY_MS: u64 = 0;
 const MAX_RESPONSE_DELAY_MS: u64 = 60_000;
 const MAX_REQUEST_HEADER_BYTES: usize = 64 * 1024;
+const ORIGIN_IO_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Controls whether the synthetic origin exposes connection reuse or forces
 /// each request to pay connection churn in the measured gateway round trip.
@@ -263,7 +264,7 @@ fn build_response(payload: &[u8], connection_mode: ConnectionMode) -> Vec<u8> {
 }
 
 /// Serves complete HTTP/1 request headers only, bounding buffered header bytes
-/// and honoring the selected reuse mode required by the load scenario.
+/// and worker occupancy while honoring the selected reuse mode.
 fn serve_connection(
     mut stream: TcpStream,
     response: &[u8],
@@ -271,6 +272,8 @@ fn serve_connection(
     connection_mode: ConnectionMode,
 ) -> io::Result<()> {
     stream.set_nodelay(true)?;
+    stream.set_read_timeout(Some(ORIGIN_IO_TIMEOUT))?;
+    stream.set_write_timeout(Some(ORIGIN_IO_TIMEOUT))?;
     let mut buffered = Vec::with_capacity(4096);
     let mut chunk = [0_u8; 4096];
 
