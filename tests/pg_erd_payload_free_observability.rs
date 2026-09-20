@@ -12,6 +12,8 @@ use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
+#[cfg(unix)]
+use cwl_pingora_gateway::runtime_policy::V1_TERMINATION_BUDGET_SECONDS;
 use tempfile::NamedTempFile;
 
 const MAX_ORIGIN_REQUEST_HEADER_BYTES: usize = 64 * 1024;
@@ -52,16 +54,56 @@ impl GatewayProcess {
     }
 
     fn capture_stderr(mut self) -> String {
-        let mut child = self
-            .child
-            .take()
-            .expect("gateway child should still be owned");
-        child
-            .kill()
-            .expect("gateway should be terminable after traffic");
-        child
-            .wait()
-            .expect("gateway should terminate after traffic capture");
+        #[cfg(unix)]
+        {
+            let child = self
+                .child
+                .as_mut()
+                .expect("gateway child should still be owned");
+            let signal_status = Command::new("kill")
+                .args(["-TERM", &child.id().to_string()])
+                .status()
+                .expect("system kill command should send SIGTERM");
+            assert!(signal_status.success(), "SIGTERM delivery should succeed");
+
+            let deadline = Instant::now() + Duration::from_secs(V1_TERMINATION_BUDGET_SECONDS);
+            loop {
+                match child
+                    .try_wait()
+                    .expect("gateway process state should remain readable")
+                {
+                    Some(status) => {
+                        assert!(
+                            status.success(),
+                            "SIGTERM graceful shutdown should exit successfully: {status}"
+                        );
+                        break;
+                    }
+                    None if Instant::now() < deadline => {
+                        thread::sleep(Duration::from_millis(25));
+                    }
+                    None => panic!(
+                        "gateway did not exit inside the {V1_TERMINATION_BUDGET_SECONDS}s termination budget"
+                    ),
+                }
+            }
+            let _ = self.child.take();
+        }
+
+        #[cfg(not(unix))]
+        {
+            let mut child = self
+                .child
+                .take()
+                .expect("gateway child should still be owned");
+            child
+                .kill()
+                .expect("gateway should be terminable after traffic");
+            child
+                .wait()
+                .expect("gateway should terminate after traffic capture");
+        }
+
         fs::read_to_string(self.stderr.path()).expect("gateway log output should be UTF-8")
     }
 }
