@@ -7,7 +7,7 @@
 
 #![cfg(unix)]
 
-use std::io::{Read, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
@@ -28,19 +28,20 @@ impl Drop for GatewayProcess {
     }
 }
 
-fn reserve_distinct_loopback_addresses() -> (SocketAddr, SocketAddr) {
+/// Holds traffic and metrics authorities simultaneously until the child-bind handoff.
+fn reserve_distinct_loopback_listeners() -> (TcpListener, TcpListener) {
     let traffic = TcpListener::bind("127.0.0.1:0").expect("traffic port should be available");
     let metrics = TcpListener::bind("127.0.0.1:0").expect("metrics port should be available");
-    let addresses = (
+    assert_ne!(
         traffic
             .local_addr()
             .expect("traffic reservation has an address"),
         metrics
             .local_addr()
             .expect("metrics reservation has an address"),
+        "traffic and metrics reservations must remain distinct"
     );
-    assert_ne!(addresses.0, addresses.1);
-    addresses
+    (traffic, metrics)
 }
 
 fn write_gateway_config(
@@ -57,21 +58,65 @@ fn write_gateway_config(
     file
 }
 
-fn wait_until_listening(address: SocketAddr, process: &mut Child) {
+/// Waits for a complete process-local readiness response instead of treating bare TCP accept as ready.
+fn wait_until_ready(address: SocketAddr, process: &mut Child) {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         if let Some(status) = process
             .try_wait()
             .expect("gateway process state should be readable")
         {
-            panic!("gateway exited before accepting traffic: {status}");
+            panic!("gateway exited before becoming ready: {status}");
         }
-        if TcpStream::connect_timeout(&address, Duration::from_millis(100)).is_ok() {
-            return;
+
+        if let Ok(mut stream) = TcpStream::connect_timeout(&address, Duration::from_millis(100)) {
+            stream
+                .set_read_timeout(Some(Duration::from_millis(250)))
+                .expect("readiness read timeout should be configurable");
+            stream
+                .set_write_timeout(Some(Duration::from_millis(250)))
+                .expect("readiness write timeout should be configurable");
+
+            if stream
+                .write_all(
+                    b"GET /readyz HTTP/1.1\r\nHost: gateway.test\r\nConnection: close\r\n\r\n",
+                )
+                .is_ok()
+            {
+                let mut response = Vec::new();
+                let mut buffer = [0_u8; 1024];
+                loop {
+                    match stream.read(&mut buffer) {
+                        Ok(0) => break,
+                        Ok(read) => {
+                            response.extend_from_slice(&buffer[..read]);
+                            if response.len() > MAX_FIXTURE_EVIDENCE_BYTES {
+                                break;
+                            }
+                            if response.windows(4).any(|window| window == b"\r\n\r\n") {
+                                if response.starts_with(b"HTTP/1.1 200 ") {
+                                    return;
+                                }
+                                break;
+                            }
+                        }
+                        Err(error)
+                            if matches!(
+                                error.kind(),
+                                ErrorKind::WouldBlock | ErrorKind::TimedOut
+                            ) =>
+                        {
+                            break;
+                        }
+                        Err(_) => break,
+                    }
+                }
+            }
         }
+
         assert!(
             Instant::now() < deadline,
-            "gateway did not start within 10s"
+            "gateway did not become ready within 10s"
         );
         thread::sleep(Duration::from_millis(25));
     }
@@ -139,7 +184,13 @@ fn sigterm_drains_an_in_flight_request_before_process_exit() {
     let upstream_address = upstream_listener
         .local_addr()
         .expect("fixture upstream should expose its address");
-    let (gateway_address, metrics_address) = reserve_distinct_loopback_addresses();
+    let (gateway_reservation, metrics_reservation) = reserve_distinct_loopback_listeners();
+    let gateway_address = gateway_reservation
+        .local_addr()
+        .expect("traffic reservation should expose an address");
+    let metrics_address = metrics_reservation
+        .local_addr()
+        .expect("metrics reservation should expose an address");
     let config = write_gateway_config(gateway_address, metrics_address, upstream_address);
 
     let (request_seen_tx, request_seen_rx) = mpsc::channel();
@@ -175,6 +226,10 @@ fn sigterm_drains_an_in_flight_request_before_process_exit() {
             .expect("held upstream response should be writable");
     });
 
+    // Release the exact reserved sockets only at the child-bind handoff. Keeping them alive through
+    // config construction and origin setup prevents another fixture from reclaiming either port.
+    drop(gateway_reservation);
+    drop(metrics_reservation);
     let child = Command::new(env!("CARGO_BIN_EXE_cwl-pingora-gateway"))
         .args(["--config", config.path().to_str().expect("UTF-8 temp path")])
         .env("RUST_LOG", "info")
@@ -184,7 +239,7 @@ fn sigterm_drains_an_in_flight_request_before_process_exit() {
         .spawn()
         .expect("compiled gateway binary should start");
     let mut process = GatewayProcess(child);
-    wait_until_listening(gateway_address, &mut process.0);
+    wait_until_ready(gateway_address, &mut process.0);
 
     let downstream = thread::spawn(move || {
         let mut stream =
