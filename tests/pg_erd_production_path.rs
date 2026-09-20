@@ -24,11 +24,22 @@ impl Drop for GatewayProcess {
     }
 }
 
-fn reserve_loopback() -> SocketAddr {
-    TcpListener::bind("127.0.0.1:0")
-        .expect("loopback port should be reservable")
+/// Keeps both process-owned listener authorities reserved together so the OS
+/// cannot recycle the first ephemeral port while the second is selected.
+fn reserve_gateway_addresses() -> (TcpListener, TcpListener, SocketAddr, SocketAddr) {
+    let gateway = TcpListener::bind("127.0.0.1:0").expect("gateway port should be reservable");
+    let metrics = TcpListener::bind("127.0.0.1:0").expect("metrics port should be reservable");
+    let gateway_address = gateway
         .local_addr()
-        .expect("reservation should expose an address")
+        .expect("gateway reservation should expose an address");
+    let metrics_address = metrics
+        .local_addr()
+        .expect("metrics reservation should expose an address");
+    assert_ne!(
+        gateway_address, metrics_address,
+        "traffic and metrics reservations must remain distinct"
+    );
+    (gateway, metrics, gateway_address, metrics_address)
 }
 
 fn write_config(
@@ -226,9 +237,8 @@ fn compiled_pg_erd_listener_preserves_health_route_header_and_forwarding_boundar
     let frontend_address = frontend
         .local_addr()
         .expect("frontend address should exist");
-    let gateway_address = reserve_loopback();
-    let metrics_address = reserve_loopback();
-    assert_ne!(gateway_address, metrics_address);
+    let (gateway_reservation, metrics_reservation, gateway_address, metrics_address) =
+        reserve_gateway_addresses();
 
     // Forwarded port follows the original Host authority, not the process bind socket. This is
     // required for container/Service/NAT deployments where external and listener ports differ.
@@ -256,6 +266,8 @@ fn compiled_pg_erd_listener_preserves_health_route_header_and_forwarding_boundar
         frontend_address,
         8,
     );
+    drop(gateway_reservation);
+    drop(metrics_reservation);
 
     let mut process = spawn_gateway(&config);
     wait_until_listening(gateway_address, &mut process.0);
@@ -316,8 +328,8 @@ fn compiled_pg_erd_listener_rejects_saturation_before_origin_and_recovers() {
     let frontend_address = frontend
         .local_addr()
         .expect("frontend address should exist");
-    let gateway_address = reserve_loopback();
-    let metrics_address = reserve_loopback();
+    let (gateway_reservation, metrics_reservation, gateway_address, metrics_address) =
+        reserve_gateway_addresses();
     let config = write_config(
         gateway_address,
         metrics_address,
@@ -325,6 +337,8 @@ fn compiled_pg_erd_listener_rejects_saturation_before_origin_and_recovers() {
         frontend_address,
         1,
     );
+    drop(gateway_reservation);
+    drop(metrics_reservation);
 
     let (first_arrived_tx, first_arrived_rx) = mpsc::channel();
     let (release_first_tx, release_first_rx) = mpsc::channel();
