@@ -22,7 +22,9 @@ pub enum RuntimeIsolationConfigError {
 /// Immutable request-isolation limits shared by gateway delivery adapters.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RuntimeIsolationLimits {
+    /// Maximum bytes one downstream request body may consume before failing closed.
     max_request_body_bytes: u64,
+    /// Maximum application requests that may hold admission leases concurrently.
     max_in_flight_requests: usize,
 }
 
@@ -44,6 +46,7 @@ impl RuntimeIsolationLimits {
         })
     }
 
+    /// Reconstitutes limits already proven non-zero by the owning configuration boundary.
     pub(crate) fn from_validated(
         max_request_body_bytes: u64,
         max_in_flight_requests: usize,
@@ -65,19 +68,26 @@ impl RuntimeIsolationLimits {
     }
 }
 
+/// Internal body-budget violation carrying bounded diagnostic counts, not client-visible payload.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct BodyLimitExceeded {
+    /// Bytes declared or observed when the request crossed the configured boundary.
     pub(crate) observed: u64,
+    /// Immutable per-request byte limit that was exceeded.
     pub(crate) limit: u64,
 }
 
+/// Shared lock-free application-request admission counter for one gateway process.
 #[derive(Debug, Clone)]
 pub(crate) struct RequestAdmissionBudget {
+    /// Atomic count shared by every cloned adapter instance in the process.
     in_flight: Arc<AtomicUsize>,
+    /// Maximum concurrent leases admitted before the gateway fails locally with backpressure.
     limit: usize,
 }
 
 impl RequestAdmissionBudget {
+    /// Creates an empty shared counter using the already validated process-wide request limit.
     pub(crate) fn new(limits: RuntimeIsolationLimits) -> Self {
         Self {
             in_flight: Arc::new(AtomicUsize::new(0)),
@@ -85,6 +95,7 @@ impl RequestAdmissionBudget {
         }
     }
 
+    /// Atomically acquires one request lease without ever oversubscribing the configured limit.
     pub(crate) fn acquire(&self) -> Option<RequestAdmission> {
         self.in_flight
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
@@ -97,8 +108,10 @@ impl RequestAdmissionBudget {
     }
 }
 
+/// RAII admission lease whose drop releases exactly one process-wide in-flight slot.
 #[derive(Debug)]
 pub(crate) struct RequestAdmission {
+    /// Shared counter decremented when request processing leaves the admitted lifetime.
     in_flight: Arc<AtomicUsize>,
 }
 
@@ -108,13 +121,17 @@ impl Drop for RequestAdmission {
     }
 }
 
+/// Per-request byte accumulator that bounds both declared and streaming request bodies.
 #[derive(Debug)]
 pub(crate) struct RequestBodyBudget {
+    /// Saturating count of body bytes observed through Pingora request-body callbacks.
     observed: u64,
+    /// Immutable maximum request-body bytes inherited from validated runtime limits.
     limit: u64,
 }
 
 impl RequestBodyBudget {
+    /// Starts a request with zero observed bytes and the validated process configuration limit.
     pub(crate) fn new(limits: RuntimeIsolationLimits) -> Self {
         Self {
             observed: 0,
@@ -122,6 +139,7 @@ impl RequestBodyBudget {
         }
     }
 
+    /// Rejects a known Content-Length before additional body bytes are streamed upstream.
     pub(crate) fn reject_declared_length(&self, declared: u64) -> Result<(), BodyLimitExceeded> {
         if declared > self.limit {
             return Err(BodyLimitExceeded {
@@ -132,6 +150,7 @@ impl RequestBodyBudget {
         Ok(())
     }
 
+    /// Accounts one streamed body chunk with saturating arithmetic and fails after the limit.
     pub(crate) fn observe_chunk(&mut self, chunk_bytes: u64) -> Result<(), BodyLimitExceeded> {
         self.observed = self.observed.saturating_add(chunk_bytes);
         if self.observed > self.limit {
@@ -143,6 +162,7 @@ impl RequestBodyBudget {
         Ok(())
     }
 
+    /// Returns the bounded byte count used only for low-cardinality request telemetry.
     pub(crate) fn observed(&self) -> u64 {
         self.observed
     }

@@ -47,8 +47,11 @@ pub enum MigrationPlanError {
 /// Validated transport-neutral contract for one legacy-edge migration candidate.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EdgeMigrationPlan {
+    /// Normalized stable upstream identities that bound all route destination authority.
     upstreams: HashSet<String>,
+    /// Deterministic validated route table that may select only the admitted upstream set.
     routes: RouteTable,
+    /// Validated edge-owned response mutations kept separate from application response semantics.
     response_headers: ResponseHeaderPolicy,
 }
 
