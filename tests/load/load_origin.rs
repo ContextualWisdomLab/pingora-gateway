@@ -313,9 +313,12 @@ fn find_header_end(buffer: &[u8]) -> Option<usize> {
 mod tests {
     use super::{
         build_response, find_header_end, parse_port_value, parse_response_delay_ms_value,
-        parse_workers_value, ConnectionMode, DEFAULT_PORT, DEFAULT_RESPONSE_DELAY_MS,
-        DEFAULT_WORKERS, MAX_RESPONSE_DELAY_MS, MAX_WORKERS,
+        parse_workers_value, serve_connection, ConnectionMode, DEFAULT_PORT,
+        DEFAULT_RESPONSE_DELAY_MS, DEFAULT_WORKERS, MAX_RESPONSE_DELAY_MS, MAX_WORKERS,
     };
+    use std::net::{TcpListener, TcpStream};
+    use std::thread;
+    use std::time::{Duration, Instant};
 
     /// Proves malformed startup controls are rejected by the parsers that run
     /// before `main` binds the listener, without mutating process-global env vars.
@@ -385,5 +388,43 @@ mod tests {
             Some(30)
         );
         assert_eq!(find_header_end(b"GET / HTTP/1.1\r\nHost: test\r\n"), None);
+    }
+
+    /// A bounded worker pool is not enough if one incomplete peer can retain a
+    /// worker forever. Every accepted socket must have finite read/write I/O.
+    #[test]
+    fn accepted_socket_io_is_time_bounded() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let address = listener.local_addr().unwrap();
+        let client = TcpStream::connect(address).unwrap();
+        let (server, _) = listener.accept().unwrap();
+        let inspector = server.try_clone().unwrap();
+        let worker = thread::spawn(move || {
+            serve_connection(
+                server,
+                b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n",
+                Duration::ZERO,
+                ConnectionMode::KeepAlive,
+            )
+        });
+
+        let deadline = Instant::now() + Duration::from_millis(100);
+        let observed = loop {
+            let read_timeout = inspector.read_timeout().unwrap();
+            let write_timeout = inspector.write_timeout().unwrap();
+            if read_timeout.is_some() && write_timeout.is_some() {
+                break (read_timeout, write_timeout);
+            }
+            if Instant::now() >= deadline {
+                break (read_timeout, write_timeout);
+            }
+            thread::sleep(Duration::from_millis(1));
+        };
+
+        drop(client);
+        worker.join().unwrap().unwrap();
+
+        assert!(observed.0.is_some(), "accepted sockets need a finite read timeout");
+        assert!(observed.1.is_some(), "accepted sockets need a finite write timeout");
     }
 }
