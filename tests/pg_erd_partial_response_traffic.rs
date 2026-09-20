@@ -13,6 +13,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use cwl_pingora_gateway::runtime_policy::V1_TERMINATION_BUDGET_SECONDS;
 use tempfile::NamedTempFile;
 
 const MAX_RESPONSE_HEADER_BYTES: usize = 64 * 1024;
@@ -142,6 +143,37 @@ fn start_gateway(
     wait_until_http_ok(gateway_address, "/readyz", &mut child);
     wait_until_http_ok(metrics_address, "/metrics", &mut child);
     GatewayProcess(child)
+}
+
+/// Ends a successful compiled-process fixture through the production SIGTERM drain path.
+#[cfg(unix)]
+fn terminate_gateway_gracefully(process: &mut GatewayProcess) {
+    let signal_status = Command::new("kill")
+        .args(["-TERM", &process.0.id().to_string()])
+        .status()
+        .expect("system kill command should send SIGTERM");
+    assert!(signal_status.success(), "SIGTERM delivery should succeed");
+
+    let deadline = Instant::now() + Duration::from_secs(V1_TERMINATION_BUDGET_SECONDS);
+    loop {
+        match process
+            .0
+            .try_wait()
+            .expect("gateway process state should remain readable")
+        {
+            Some(status) => {
+                assert!(
+                    status.success(),
+                    "SIGTERM graceful shutdown should exit successfully: {status}"
+                );
+                return;
+            }
+            None if Instant::now() < deadline => thread::sleep(Duration::from_millis(25)),
+            None => panic!(
+                "gateway did not exit inside the {V1_TERMINATION_BUDGET_SECONDS}s termination budget"
+            ),
+        }
+    }
 }
 
 /// Sends one connection-closing HTTP/1.1 request and captures the complete downstream response.
@@ -310,6 +342,7 @@ fn status_parser_rejects_prefix_and_protocol_lookalikes() {
 }
 
 /// Proves a post-commit origin truncation preserves framing, terminates downstream and keeps recovery usable.
+#[cfg(unix)]
 #[test]
 fn compiled_pg_erd_truncated_response_stays_committed_and_preserves_independent_routing() {
     let (release_backend_tx, release_backend_rx) = mpsc::channel();
@@ -367,7 +400,7 @@ fn compiled_pg_erd_truncated_response_stays_committed_and_preserves_independent_
     // config construction prevents another fixture from reclaiming either selected authority early.
     drop(gateway_reservation);
     drop(metrics_reservation);
-    let _process = start_gateway(&config, gateway_address, metrics_address);
+    let mut process = start_gateway(&config, gateway_address, metrics_address);
 
     let (partial, termination) = raw_request_until_terminal_after_body_prefix(
         gateway_address,
@@ -435,4 +468,5 @@ fn compiled_pg_erd_truncated_response_stays_committed_and_preserves_independent_
     backend_origin
         .join()
         .expect("partial backend fixture should complete");
+    terminate_gateway_gracefully(&mut process);
 }
