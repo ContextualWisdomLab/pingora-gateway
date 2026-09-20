@@ -32,7 +32,6 @@ validate_bounded_fixture() {
   local first_fd
   local second_fd
 
-  # Close any probe descriptors and reap the temporary origin on every return path.
   cleanup_validation() {
     if [ -n "${first_fd:-}" ]; then
       exec {first_fd}>&- || true
@@ -114,7 +113,6 @@ UPSTREAM_RESPONSE_DELAY_MS=1 \
 frontend_pid=$!
 
 gateway_pid=""
-# Preserve the first failing status while reaping every process started by the lane.
 cleanup() {
   status=$?
   if [ -n "$gateway_pid" ]; then
@@ -139,11 +137,12 @@ wait_for_origin http://127.0.0.1:18281/ready "$backend_pid"
 wait_for_origin http://127.0.0.1:18283/ready "$frontend_pid"
 
 cat >/tmp/pg-erd-capacity.yaml <<'EOF'
-version: 1
+version: 2
 listener: 127.0.0.1:18280
 metrics_listener: 127.0.0.1:18282
 max_request_body_bytes: 1048576
 max_in_flight_requests: 128
+max_upstream_response_body_ms: 5000
 upstream_keepalive_pool_size: 32
 upstreams:
   - name: backend
