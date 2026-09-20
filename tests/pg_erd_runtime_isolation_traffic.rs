@@ -22,11 +22,18 @@ impl Drop for GatewayProcess {
     }
 }
 
-fn reserve_loopback() -> SocketAddr {
-    TcpListener::bind("127.0.0.1:0")
-        .expect("loopback port should be reservable")
-        .local_addr()
-        .expect("reservation should expose an address")
+struct LoopbackReservation(TcpListener);
+
+impl LoopbackReservation {
+    fn bind() -> Self {
+        Self(TcpListener::bind("127.0.0.1:0").expect("loopback port should be reservable"))
+    }
+
+    fn address(&self) -> SocketAddr {
+        self.0
+            .local_addr()
+            .expect("reservation should expose an address")
+    }
 }
 
 fn write_config(
@@ -45,7 +52,19 @@ fn write_config(
     file
 }
 
-fn wait_until_listening(address: SocketAddr, process: &mut Child) {
+fn try_http_get(address: SocketAddr, path: &str) -> std::io::Result<String> {
+    let mut stream = TcpStream::connect_timeout(&address, Duration::from_millis(100))?;
+    stream.set_read_timeout(Some(Duration::from_millis(250)))?;
+    write!(
+        stream,
+        "GET {path} HTTP/1.1\r\nHost: probe.invalid\r\nConnection: close\r\n\r\n"
+    )?;
+    let mut response = String::new();
+    stream.read_to_string(&mut response)?;
+    Ok(response)
+}
+
+fn wait_until_http_ready(address: SocketAddr, path: &str, process: &mut Child) {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         if let Some(status) = process
@@ -54,12 +73,14 @@ fn wait_until_listening(address: SocketAddr, process: &mut Child) {
         {
             panic!("gateway exited before accepting traffic: {status}");
         }
-        if TcpStream::connect_timeout(&address, Duration::from_millis(100)).is_ok() {
+
+        if try_http_get(address, path).is_ok_and(|response| response.starts_with("HTTP/1.1 200")) {
             return;
         }
+
         assert!(
             Instant::now() < deadline,
-            "gateway did not start within 10s"
+            "gateway did not expose {path} within 10s"
         );
         thread::sleep(Duration::from_millis(25));
     }
@@ -67,9 +88,17 @@ fn wait_until_listening(address: SocketAddr, process: &mut Child) {
 
 fn start_gateway(
     config: &NamedTempFile,
-    gateway_address: SocketAddr,
-    metrics_address: SocketAddr,
+    gateway_reservation: LoopbackReservation,
+    metrics_reservation: LoopbackReservation,
 ) -> GatewayProcess {
+    let gateway_address = gateway_reservation.address();
+    let metrics_address = metrics_reservation.address();
+
+    // Keep both ports reserved through config construction and command preparation. Release them
+    // only immediately before spawn so unrelated local activity cannot steal the advertised sockets.
+    drop(gateway_reservation);
+    drop(metrics_reservation);
+
     let mut child = Command::new(env!("CARGO_BIN_EXE_cwl-pingora-pg-erd-migration"))
         .args(["--config", config.path().to_str().expect("UTF-8 temp path")])
         .stdin(Stdio::null())
@@ -77,8 +106,8 @@ fn start_gateway(
         .stderr(Stdio::null())
         .spawn()
         .expect("compiled pg-erd migration binary should start");
-    wait_until_listening(gateway_address, &mut child);
-    wait_until_listening(metrics_address, &mut child);
+    wait_until_http_ready(gateway_address, "/readyz", &mut child);
+    wait_until_http_ready(metrics_address, "/metrics", &mut child);
     GatewayProcess(child)
 }
 
@@ -131,8 +160,10 @@ fn compiled_pg_erd_rejects_streamed_body_overflow_and_keeps_readiness_available(
     let frontend_address = frontend
         .local_addr()
         .expect("frontend address should exist");
-    let gateway_address = reserve_loopback();
-    let metrics_address = reserve_loopback();
+    let gateway_reservation = LoopbackReservation::bind();
+    let gateway_address = gateway_reservation.address();
+    let metrics_reservation = LoopbackReservation::bind();
+    let metrics_address = metrics_reservation.address();
     let config = write_config(
         gateway_address,
         metrics_address,
@@ -140,7 +171,7 @@ fn compiled_pg_erd_rejects_streamed_body_overflow_and_keeps_readiness_available(
         frontend_address,
         8,
     );
-    let _process = start_gateway(&config, gateway_address, metrics_address);
+    let _process = start_gateway(&config, gateway_reservation, metrics_reservation);
 
     let oversized = raw_request(
         gateway_address,
@@ -169,8 +200,10 @@ fn compiled_pg_erd_in_flight_saturation_rejects_recovers_and_preserves_control_p
     let frontend_address = frontend
         .local_addr()
         .expect("frontend address should exist");
-    let gateway_address = reserve_loopback();
-    let metrics_address = reserve_loopback();
+    let gateway_reservation = LoopbackReservation::bind();
+    let gateway_address = gateway_reservation.address();
+    let metrics_reservation = LoopbackReservation::bind();
+    let metrics_address = metrics_reservation.address();
     let config = write_config(
         gateway_address,
         metrics_address,
@@ -208,7 +241,7 @@ fn compiled_pg_erd_in_flight_saturation_rejects_recovers_and_preserves_control_p
             .expect("recovery response should be writable");
     });
 
-    let _process = start_gateway(&config, gateway_address, metrics_address);
+    let _process = start_gateway(&config, gateway_reservation, metrics_reservation);
     let held = thread::spawn(move || get(gateway_address, "/api/held"));
     request_seen_rx
         .recv_timeout(Duration::from_secs(5))

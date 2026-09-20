@@ -8,6 +8,8 @@
 pub mod edge_contract;
 pub mod edge_routing;
 pub mod forwarding_policy;
+#[cfg(test)]
+mod forwarding_policy_unit;
 pub mod gateway_proxy;
 pub mod http_policy;
 pub mod migration_admin;
