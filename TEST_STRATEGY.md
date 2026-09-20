@@ -36,6 +36,12 @@ On Linux, `tests/pg_erd_upstream_reset_traffic.rs` covers abortive reset after r
 
 `tests/pg_erd_payload_free_observability.rs` sends unique URI/query, Host, Authorization, Cookie, and product-context sentinels through the compiled migration process. The backend must receive them so the test is non-vacuous, while shared gateway stderr and low-cardinality metrics must not expose those sentinels. `tests/pingora_diagnostic_log_safety.rs` separately covers broad Pingora-family diagnostics under `RUST_LOG=trace`, requiring a new redaction marker attributable to the characterized request and forbidding request-derived secrets in process stderr.
 
+## Downstream HTTP/1 header admission and lifetime gaps
+
+There is deliberately no GREEN claim for an operator-controlled downstream HTTP/1 request-header parser budget or monotonic whole-header lifetime on the pinned Pingora surface. #43 / `cloudflare/pingora#993` own the parser-phase byte/count admission path; #45 / `cloudflare/pingora#447` own the distinct whole-header lifetime path. A post-parser `request_filter()` rejection cannot satisfy #43, and a per-read inactivity timeout cannot satisfy #45.
+
+The future #45 real-listener RED must keep sending a fragmented incomplete HTTP/1 header often enough to stay below the supplier per-read inactivity timeout while remaining below the configured or future byte/count ceiling, then prove a monotonic whole-header budget terminates the connection. The test must establish that application callbacks are not the enforcement phase. When a supported supplier capability exists, GREEN must also cover keepalive/request-prefix behavior where applicable, preserve process health and an independent admitted route, and retain payload-safe diagnostics. A tiny global read timeout, retained Nginx/Traefik front proxy, or mutable local Pingora fork is not an admissible repair.
+
 ## Version-2 response-body lifetime
 
 `tests/pg_erd_response_lifetime_config.rs` freezes the version transition. Pg-erd version 2 requires a positive explicit `max_upstream_response_body_ms`; version 2 rejects zero or omission, and version 1 rejects the field so timing semantics cannot change silently.
@@ -58,4 +64,4 @@ Supply-chain evidence must remain exact-source-bound and include dependency audi
 
 ## Remaining gaps
 
-Open acceptance includes downstream TLS/H2, H2-to-H1 Cookie normalization, versioned WebSocket/Extended CONNECT, explicit H3/QUIC disposition, incomplete-response-header slow-drip/absolute header-read handling, broader admitted long-lived-stream semantics where consumer evidence requires them, dynamic reload, tracing, property/fuzz testing, representative routed TLS/origin-capacity load, shadow/canary, rollback, cutover, and verified legacy proxy removal. Every changed descendant must reacquire applicable exact-head evidence; neither source presence nor predecessor GREEN is release evidence.
+Open acceptance includes downstream HTTP/1 parser-phase byte/count admission and monotonic whole-header lifetime, downstream TLS/H2, H2-to-H1 Cookie normalization, versioned WebSocket/Extended CONNECT, explicit H3/QUIC disposition, incomplete-response-header slow-drip/absolute header-read handling, broader admitted long-lived-stream semantics where consumer evidence requires them, dynamic reload, tracing, property/fuzz testing, representative routed TLS/origin-capacity load, shadow/canary, rollback, cutover, and verified legacy proxy removal. Every changed descendant must reacquire applicable exact-head evidence; neither source presence nor predecessor GREEN is release evidence.
