@@ -58,6 +58,17 @@ fn released_pingora_dependencies_are_exact_registry_packages() {
         );
     }
 
+    for forbidden in [
+        "source = \"git+",
+        "github.com/cloudflare/pingora.git",
+        "09696b51bc59315353d96686355861604d0bb48c",
+    ] {
+        assert!(
+            !lock.contains(forbidden),
+            "Cargo.lock must not retain mutable git dependency identity after released-registry adoption: {forbidden}"
+        );
+    }
+
     for required in [
         "fc02712a3847828d6b798ecf31f0ac64e138df26b9513e20d52319cf3cecd11e",
         "56fc7764cf4a5ff68aae5e373a4e8e2cbff077dd9dea975cc04ca9aa863abb2c",
