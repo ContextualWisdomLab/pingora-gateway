@@ -10,6 +10,7 @@ const DEFAULT_PAYLOAD: &str = "upstream-ok";
 const DEFAULT_WORKERS: usize = 32;
 const MAX_WORKERS: usize = 256;
 const DEFAULT_RESPONSE_DELAY_MS: u64 = 0;
+const MAX_RESPONSE_DELAY_MS: u64 = 60_000;
 const MAX_REQUEST_HEADER_BYTES: usize = 64 * 1024;
 
 /// Controls whether the synthetic origin exposes connection reuse or forces
@@ -192,13 +193,21 @@ fn parse_workers() -> Result<usize, Box<dyn std::error::Error>> {
     }
 }
 
-/// Parses the startup-only service delay without global environment mutation so
-/// malformed values can be rejected by deterministic tests.
+/// Parses the startup-only service delay and caps it before any worker can sleep
+/// so malformed or effectively unbounded evidence input fails closed.
 fn parse_response_delay_ms_value(value: Option<&str>) -> Result<u64, Box<dyn std::error::Error>> {
-    match value {
-        Some(value) => Ok(value.parse::<u64>()?),
-        None => Ok(DEFAULT_RESPONSE_DELAY_MS),
+    let Some(value) = value else {
+        return Ok(DEFAULT_RESPONSE_DELAY_MS);
+    };
+    let delay_ms = value.parse::<u64>()?;
+    if delay_ms > MAX_RESPONSE_DELAY_MS {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("UPSTREAM_RESPONSE_DELAY_MS must be <= {MAX_RESPONSE_DELAY_MS}"),
+        )
+        .into());
     }
+    Ok(delay_ms)
 }
 
 /// Reads the startup-only service delay used to make finite origin capacity
@@ -305,7 +314,7 @@ mod tests {
     use super::{
         build_response, find_header_end, parse_port_value, parse_response_delay_ms_value,
         parse_workers_value, ConnectionMode, DEFAULT_PORT, DEFAULT_RESPONSE_DELAY_MS,
-        DEFAULT_WORKERS, MAX_WORKERS,
+        DEFAULT_WORKERS, MAX_RESPONSE_DELAY_MS, MAX_WORKERS,
     };
 
     /// Proves malformed startup controls are rejected by the parsers that run
@@ -332,6 +341,15 @@ mod tests {
             parse_response_delay_ms_value(None).unwrap(),
             DEFAULT_RESPONSE_DELAY_MS
         );
+        let maximum_delay = MAX_RESPONSE_DELAY_MS.to_string();
+        let above_maximum_delay = (MAX_RESPONSE_DELAY_MS + 1).to_string();
+        let u64_maximum_delay = u64::MAX.to_string();
+        assert_eq!(
+            parse_response_delay_ms_value(Some(maximum_delay.as_str())).unwrap(),
+            MAX_RESPONSE_DELAY_MS
+        );
+        assert!(parse_response_delay_ms_value(Some(above_maximum_delay.as_str())).is_err());
+        assert!(parse_response_delay_ms_value(Some(u64_maximum_delay.as_str())).is_err());
 
         assert!(ConnectionMode::parse(Some("upgrade")).is_err());
         assert_eq!(
