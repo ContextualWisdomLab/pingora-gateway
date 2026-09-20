@@ -2,8 +2,8 @@
 //!
 //! Pingora's peer `read_timeout` is an inactivity timeout that resets after each successful read.
 //! This fixture therefore keeps each origin write well inside `read_ms` while extending the response
-//! beyond an explicit migration-owned response-body lifetime. The version-2 admin/runtime boundary
-//! must terminate that body without retrying or failing over after the response has been committed.
+//! beyond an explicit migration-owned response-body lifetime. Fixture readiness and I/O use absolute
+//! deadlines so partial progress cannot renew the evidence window.
 
 use std::io::{ErrorKind, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
@@ -13,8 +13,10 @@ use std::time::{Duration, Instant};
 
 use tempfile::NamedTempFile;
 
-const MAX_REQUEST_HEADER_BYTES: usize = 64 * 1024;
-const SOCKET_IO_TIMEOUT: Duration = Duration::from_secs(5);
+const MAX_HEADER_BYTES: usize = 64 * 1024;
+const FIXTURE_IO_TIMEOUT: Duration = Duration::from_secs(5);
+const STARTUP_TIMEOUT: Duration = Duration::from_secs(10);
+const TERMINATION_TIMEOUT: Duration = Duration::from_secs(2);
 const PRE_RESPONSE_HEADER_DELAY: Duration = Duration::from_millis(150);
 const RESPONSE_BODY_LIFETIME: Duration = Duration::from_millis(300);
 
@@ -33,7 +35,6 @@ enum DownstreamTermination {
     ConnectionReset,
 }
 
-/// Holds traffic and metrics ports simultaneously so sequential bind/drop cannot reuse one port.
 fn reserve_distinct_loopback_listeners() -> (TcpListener, TcpListener) {
     let traffic = TcpListener::bind("127.0.0.1:0").expect("traffic port should be reservable");
     let metrics = TcpListener::bind("127.0.0.1:0").expect("metrics port should be reservable");
@@ -44,7 +45,6 @@ fn reserve_distinct_loopback_listeners() -> (TcpListener, TcpListener) {
     (traffic, metrics)
 }
 
-/// Writes the version-2 bounded response-lifetime contract while route authority remains compiled.
 fn write_config(
     listener: SocketAddr,
     metrics_listener: SocketAddr,
@@ -60,28 +60,90 @@ fn write_config(
     file
 }
 
-/// Waits for one real listener while failing immediately if process activation aborts.
-fn wait_until_listening(address: SocketAddr, process: &mut Child) {
-    let deadline = Instant::now() + Duration::from_secs(10);
+fn remaining(deadline: Instant, context: &str) -> Duration {
+    deadline
+        .checked_duration_since(Instant::now())
+        .filter(|duration| !duration.is_zero())
+        .unwrap_or_else(|| panic!("absolute fixture deadline expired while {context}"))
+}
+
+fn set_read_timeout_to_remaining(stream: &TcpStream, deadline: Instant, context: &str) {
+    stream
+        .set_read_timeout(Some(remaining(deadline, context)))
+        .expect("read timeout should be configurable");
+}
+
+fn set_write_timeout_to_remaining(stream: &TcpStream, deadline: Instant, context: &str) {
+    stream
+        .set_write_timeout(Some(remaining(deadline, context)))
+        .expect("write timeout should be configurable");
+}
+
+fn read_header_block(
+    stream: &mut TcpStream,
+    deadline: Instant,
+    context: &str,
+) -> std::io::Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    let mut buffer = [0_u8; 1024];
+    loop {
+        set_read_timeout_to_remaining(stream, deadline, context);
+        let read = stream.read(&mut buffer)?;
+        if read == 0 {
+            return Err(std::io::Error::new(
+                ErrorKind::UnexpectedEof,
+                "connection closed before response headers completed",
+            ));
+        }
+        bytes.extend_from_slice(&buffer[..read]);
+        if bytes.len() > MAX_HEADER_BYTES {
+            return Err(std::io::Error::new(
+                ErrorKind::InvalidData,
+                "header block exceeded 64 KiB fixture bound",
+            ));
+        }
+        if bytes.windows(4).any(|window| window == b"\r\n\r\n") {
+            return Ok(bytes);
+        }
+    }
+}
+
+fn probe_http_status(address: SocketAddr, path: &str, deadline: Instant) -> Option<u16> {
+    let connect_timeout =
+        remaining(deadline, "connecting readiness probe").min(Duration::from_millis(100));
+    let mut stream = TcpStream::connect_timeout(&address, connect_timeout).ok()?;
+    let request =
+        format!("GET {path} HTTP/1.1\r\nHost: readiness.invalid\r\nConnection: close\r\n\r\n");
+    set_write_timeout_to_remaining(&stream, deadline, "writing readiness probe");
+    stream.write_all(request.as_bytes()).ok()?;
+    let headers = read_header_block(&mut stream, deadline, "reading readiness response").ok()?;
+    http11_status(&String::from_utf8_lossy(&headers))
+}
+
+fn wait_until_http_status(address: SocketAddr, path: &str, process: &mut Child, expected: u16) {
+    let deadline = Instant::now() + STARTUP_TIMEOUT;
     loop {
         if let Some(status) = process
             .try_wait()
             .expect("gateway process state should be readable")
         {
-            panic!("gateway exited before accepting traffic: {status}");
+            panic!("gateway exited before HTTP readiness: {status}");
         }
-        if TcpStream::connect_timeout(&address, Duration::from_millis(100)).is_ok() {
+
+        if Instant::now() >= deadline {
+            panic!("gateway did not return HTTP {expected} for {path} within 10s");
+        }
+
+        if probe_http_status(address, path, deadline) == Some(expected) {
             return;
         }
-        assert!(
-            Instant::now() < deadline,
-            "gateway did not start within 10s"
-        );
-        thread::sleep(Duration::from_millis(25));
+
+        let sleep_for =
+            remaining(deadline, "waiting to retry readiness").min(Duration::from_millis(25));
+        thread::sleep(sleep_for);
     }
 }
 
-/// Starts the compiled pg-erd gateway after its traffic/metrics reservations are released.
 fn start_gateway(
     config: &NamedTempFile,
     gateway_address: SocketAddr,
@@ -94,47 +156,18 @@ fn start_gateway(
         .stderr(Stdio::null())
         .spawn()
         .expect("compiled pg-erd migration binary should start");
-    wait_until_listening(gateway_address, &mut child);
-    wait_until_listening(metrics_address, &mut child);
+
+    wait_until_http_status(gateway_address, "/readyz", &mut child, 200);
+    wait_until_http_status(metrics_address, "/metrics", &mut child, 200);
     GatewayProcess(child)
 }
 
-/// Applies finite origin I/O bounds before any fixture read or write can stall the hosted lane.
-fn set_origin_deadlines(stream: &TcpStream) {
-    stream
-        .set_read_timeout(Some(SOCKET_IO_TIMEOUT))
-        .expect("origin read timeout should be configurable");
-    stream
-        .set_write_timeout(Some(SOCKET_IO_TIMEOUT))
-        .expect("origin write timeout should be configurable");
-}
-
-/// Sends a bounded raw request used for readiness, metrics, and independent-route recovery checks.
 fn raw_request(address: SocketAddr, request: &[u8]) -> String {
-    let mut downstream = TcpStream::connect(address).expect("gateway should accept traffic");
-    downstream
-        .set_read_timeout(Some(SOCKET_IO_TIMEOUT))
-        .expect("downstream timeout should be configurable");
-    downstream
-        .write_all(request)
-        .expect("downstream request should be writable");
-    let mut response = String::new();
-    downstream
-        .read_to_string(&mut response)
-        .expect("gateway response should be readable");
-    response
-}
-
-/// Captures the committed response until EOF/RST and records the wall-clock termination boundary.
-fn raw_request_until_terminal(
-    address: SocketAddr,
-    request: &[u8],
-) -> (Vec<u8>, DownstreamTermination, Duration) {
-    let started = Instant::now();
-    let mut downstream = TcpStream::connect(address).expect("gateway should accept traffic");
-    downstream
-        .set_read_timeout(Some(Duration::from_secs(2)))
-        .expect("downstream timeout should be configurable");
+    let deadline = Instant::now() + FIXTURE_IO_TIMEOUT;
+    let mut downstream =
+        TcpStream::connect_timeout(&address, remaining(deadline, "connecting bounded request"))
+            .expect("gateway should accept traffic");
+    set_write_timeout_to_remaining(&downstream, deadline, "writing bounded request");
     downstream
         .write_all(request)
         .expect("downstream request should be writable");
@@ -142,6 +175,39 @@ fn raw_request_until_terminal(
     let mut response = Vec::new();
     let mut buffer = [0_u8; 1024];
     loop {
+        set_read_timeout_to_remaining(&downstream, deadline, "reading bounded response");
+        match downstream.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(read) => response.extend_from_slice(&buffer[..read]),
+            Err(error) if error.kind() == ErrorKind::ConnectionReset => break,
+            Err(error) => {
+                panic!("gateway response should complete inside absolute deadline: {error}")
+            }
+        }
+    }
+    String::from_utf8_lossy(&response).into_owned()
+}
+
+fn raw_request_until_terminal(
+    address: SocketAddr,
+    request: &[u8],
+) -> (Vec<u8>, DownstreamTermination, Duration) {
+    let started = Instant::now();
+    let deadline = started + TERMINATION_TIMEOUT;
+    let mut downstream = TcpStream::connect_timeout(
+        &address,
+        remaining(deadline, "connecting slow-drip downstream"),
+    )
+    .expect("gateway should accept traffic");
+    set_write_timeout_to_remaining(&downstream, deadline, "writing slow-drip request");
+    downstream
+        .write_all(request)
+        .expect("downstream request should be writable");
+
+    let mut response = Vec::new();
+    let mut buffer = [0_u8; 1024];
+    loop {
+        set_read_timeout_to_remaining(&downstream, deadline, "reading slow-drip termination");
         match downstream.read(&mut buffer) {
             Ok(0) => return (response, DownstreamTermination::Eof, started.elapsed()),
             Ok(read) => response.extend_from_slice(&buffer[..read]),
@@ -152,14 +218,13 @@ fn raw_request_until_terminal(
                     started.elapsed(),
                 );
             }
-            Err(error) => {
-                panic!("slow-drip downstream response should terminate, not stall: {error}")
-            }
+            Err(error) => panic!(
+                "slow-drip downstream response must terminate inside one absolute 2s deadline: {error}"
+            ),
         }
     }
 }
 
-/// Sends one characterized close-delimited GET through a gateway or metrics listener.
 fn get(address: SocketAddr, path: &str) -> String {
     raw_request(
         address,
@@ -168,31 +233,13 @@ fn get(address: SocketAddr, path: &str) -> String {
     )
 }
 
-/// Reads exactly one finite HTTP/1 request header block from an origin connection.
 fn read_request_headers(stream: &mut TcpStream) -> String {
-    set_origin_deadlines(stream);
-    let mut bytes = Vec::new();
-    let mut buffer = [0_u8; 1024];
-    loop {
-        let read = stream
-            .read(&mut buffer)
-            .expect("origin request should be readable inside the fixture deadline");
-        assert!(
-            read > 0,
-            "gateway closed origin request before headers completed"
-        );
-        bytes.extend_from_slice(&buffer[..read]);
-        assert!(
-            bytes.len() <= MAX_REQUEST_HEADER_BYTES,
-            "origin request headers exceeded the 64 KiB fixture bound"
-        );
-        if bytes.windows(4).any(|window| window == b"\r\n\r\n") {
-            return String::from_utf8_lossy(&bytes).into_owned();
-        }
-    }
+    let deadline = Instant::now() + FIXTURE_IO_TIMEOUT;
+    let bytes = read_header_block(stream, deadline, "reading origin request headers")
+        .expect("origin request headers should complete inside one absolute 5s deadline");
+    String::from_utf8_lossy(&bytes).into_owned()
 }
 
-/// Parses only an exact case-sensitive HTTP/1.1 three-digit status token.
 fn http11_status(response: &str) -> Option<u16> {
     let mut tokens = response.lines().next()?.split_ascii_whitespace();
     if tokens.next()? != "HTTP/1.1" {
@@ -205,7 +252,6 @@ fn http11_status(response: &str) -> Option<u16> {
     code.parse().ok()
 }
 
-/// Returns semantically exact values for one HTTP field name, rejecting lookalike field names.
 fn header_values(headers: &str, field_name: &str) -> Vec<String> {
     headers
         .lines()
@@ -216,12 +262,10 @@ fn header_values(headers: &str, field_name: &str) -> Vec<String> {
         .collect()
 }
 
-/// Requires one exact unlabelled Prometheus sample so numeric-prefix values cannot create GREEN.
 fn has_exact_metric_sample(metrics: &str, sample: &str) -> bool {
     metrics.lines().any(|line| line.trim() == sample)
 }
 
-/// Proves progress inside `read_ms` cannot evade the versioned whole-body lifetime boundary.
 #[test]
 fn compiled_pg_erd_terminates_continuous_response_drip_without_poisoning_other_routes() {
     let backend = TcpListener::bind("127.0.0.1:0").expect("backend fixture should bind");
@@ -230,11 +274,12 @@ fn compiled_pg_erd_terminates_continuous_response_drip_without_poisoning_other_r
         let (mut stream, _) = backend
             .accept()
             .expect("routed request should reach the characterized backend authority");
+        stream
+            .set_write_timeout(Some(FIXTURE_IO_TIMEOUT))
+            .expect("origin write timeout should be configurable");
         let request = read_request_headers(&mut stream);
         assert!(request.starts_with("GET /api/slow-drip HTTP/1.1\r\n"));
 
-        // The delay stays below read_ms but makes a request-start lifetime distinguishable from the
-        // selected first-final-response-header lifetime on the real listener path.
         thread::sleep(PRE_RESPONSE_HEADER_DELAY);
         stream
             .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 20\r\nConnection: close\r\n\r\n")
@@ -267,6 +312,9 @@ fn compiled_pg_erd_terminates_continuous_response_drip_without_poisoning_other_r
         let (mut stream, _) = frontend
             .accept()
             .expect("fallback request should reach the independent frontend authority");
+        stream
+            .set_write_timeout(Some(FIXTURE_IO_TIMEOUT))
+            .expect("origin write timeout should be configurable");
         let request = read_request_headers(&mut stream);
         assert!(request.starts_with("GET /after-slow-drip HTTP/1.1\r\n"));
         stream
@@ -297,20 +345,17 @@ fn compiled_pg_erd_terminates_continuous_response_drip_without_poisoning_other_r
         gateway_address,
         b"GET /api/slow-drip HTTP/1.1\r\nHost: app.example:8080\r\nConnection: close\r\n\r\n",
     );
-    assert!(
-        matches!(
-            termination,
-            DownstreamTermination::Eof | DownstreamTermination::ConnectionReset
-        ),
-        "an over-budget response body must terminate the downstream connection"
-    );
+    assert!(matches!(
+        termination,
+        DownstreamTermination::Eof | DownstreamTermination::ConnectionReset
+    ));
     assert!(
         elapsed < Duration::from_secs(1),
-        "the response-body budget must stop the delayed-header continuous drip instead of allowing it to run to completion: {elapsed:?}"
+        "response-body lifetime must stop the continuous drip instead of allowing completion: {elapsed:?}"
     );
     assert!(
         elapsed >= PRE_RESPONSE_HEADER_DELAY + RESPONSE_BODY_LIFETIME,
-        "termination must occur only after the 150ms pre-header delay plus the 300ms body-progress budget, proving the budget starts at the response header: {elapsed:?}"
+        "lifetime must start at the final response header rather than request start: {elapsed:?}"
     );
 
     let header_end = partial
@@ -322,33 +367,25 @@ fn compiled_pg_erd_terminates_continuous_response_drip_without_poisoning_other_r
     assert_eq!(
         http11_status(&headers),
         Some(200),
-        "a post-commit lifetime failure cannot be rewritten as a second status: {headers:?}"
+        "post-commit lifetime failure cannot be rewritten as a second status: {headers:?}"
     );
-    assert_eq!(
-        header_values(&headers, "Content-Length"),
-        vec!["20"],
-        "the committed framing must remain the characterized single Content-Length field"
-    );
+    assert_eq!(header_values(&headers, "Content-Length"), vec!["20"]);
     let body = &partial[header_end..];
     assert!(
         !body.is_empty(),
-        "the committed response must deliver body progress before the budget terminates it"
+        "body progress must cross the callback boundary"
     );
     assert!(
         body.len() < 20,
-        "the configured response-body budget must terminate before the declared body completes"
+        "configured lifetime must terminate before the declared body completes"
     );
 
     let readiness = get(gateway_address, "/readyz");
-    assert_eq!(
-        http11_status(&readiness),
-        Some(200),
-        "one slow-drip origin must not poison process readiness: {readiness:?}"
-    );
+    assert_eq!(http11_status(&readiness), Some(200));
     let metrics = get(metrics_address, "/metrics");
     assert!(
         has_exact_metric_sample(&metrics, "cwl_pingora_gateway_request_errors_total 1"),
-        "response-lifetime enforcement must remain visible through low-cardinality error telemetry: {metrics:?}"
+        "lifetime enforcement must remain visible through bounded error telemetry: {metrics:?}"
     );
     let recovered = get(gateway_address, "/after-slow-drip");
     assert_eq!(http11_status(&recovered), Some(200));
@@ -362,7 +399,6 @@ fn compiled_pg_erd_terminates_continuous_response_drip_without_poisoning_other_r
         .expect("slow-drip backend fixture should complete");
 }
 
-/// Prevents status, header-name, and metric-value lookalikes from satisfying the traffic oracle.
 #[test]
 fn slow_drip_evidence_parsers_reject_lookalikes() {
     assert_eq!(http11_status("HTTP/1.1 200 OK\r\n\r\n"), Some(200));

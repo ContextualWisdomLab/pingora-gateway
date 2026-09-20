@@ -1,4 +1,5 @@
 const CAPACITY_WORKFLOW: &str = include_str!("../.github/workflows/pg-erd-capacity.yml");
+const CAPACITY_RUNNER: &str = include_str!("load/run_pg_erd_capacity.sh");
 
 fn contains_cargo_toolchain_selector(source: &str) -> bool {
     let logical_source = source.replace("\\\r\n", "").replace("\\\n", "");
@@ -47,6 +48,18 @@ fn capacity_lane_uses_fixed_release_compiler_before_building_candidate() {
     assert!(!CAPACITY_WORKFLOW.contains("1.98.0"));
     assert!(!CAPACITY_WORKFLOW.contains("RUSTUP_TOOLCHAIN"));
     assert!(!contains_cargo_toolchain_selector(CAPACITY_WORKFLOW));
+}
+
+#[test]
+fn capacity_fixture_consumes_the_integrated_version_two_lifetime_contract() {
+    assert_eq!(CAPACITY_RUNNER.matches("version: 2").count(), 1);
+    assert!(!CAPACITY_RUNNER.contains("version: 1"));
+    assert_eq!(
+        CAPACITY_RUNNER
+            .matches("max_upstream_response_body_ms: 5000")
+            .count(),
+        1
+    );
 }
 
 #[test]

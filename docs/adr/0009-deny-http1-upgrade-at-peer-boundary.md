@@ -10,7 +10,7 @@ Generic v1 and the bounded pg-erd migration candidate already reject uncharacter
 
 At pinned supplier revision `09696b51bc59315353d96686355861604d0bb48c`, `standard()`/`default()` retains `H1UpgradePolicy::WebSocketOnly`. Pingora therefore retains WebSocket forwarding capability below a CWL contract that deliberately admits no WebSocket policy. The current callbacks prevent that capability from being reached, but the transport object itself did not encode the same invariant. A later callback/composition refactor could consequently widen the protocol surface without changing the transport-neutral admission contract.
 
-Fresh supplier verification on 2026-09-09 still finds protected `cloudflare/pingora/main` at `09696b51bc59315353d96686355861604d0bb48c`, issue `cloudflare/pingora#946` open, and proposed repair `cloudflare/pingora#947` open/unmerged. That supplier state reinforces fail-closed admission; it is not consumed as mutable dependency authority.
+Fresh supplier verification on 2026-09-17 finds protected `cloudflare/pingora/main` at `4487f7b2ab50f159e4a2cf4f6a6b813f61bb6e19`, issue `cloudflare/pingora#946` open, and proposed repair `cloudflare/pingora#947` open/unmerged. That supplier state reinforces fail-closed admission; it is not consumed as mutable dependency authority.
 
 ## Constraints
 
@@ -44,7 +44,7 @@ Selected. At the pinned supplier revision it preserves the standard hop-by-hop/c
 
 Historical RED `b0719a893c0136083efc12918c6e906a28f39319` requires a peer returned by public `build_peer()` to equal `HttpUpstreamRequestPolicy::deny_upgrades()`; its parent still configured `standard()`. Historical source fix `0109031b97ce1816a7936987a4d63330a2d19cba` demonstrated the minimal semantic repair.
 
-The current ordinary/non-force succession must preserve final #31 as the resolution basis, reapply only this valid peer-policy source/test/documentation delta, and reacquire exact-head hosted and current-range review evidence. Predecessor execution does not transfer.
+The current ordinary/non-force succession preserves the latest payload-safe logging parent as the resolution basis, reapplies only this valid peer-policy source/test/documentation delta, and must reacquire exact-head hosted and current-range review evidence. Predecessor execution does not transfer.
 
 This ADR remains Proposed until the final exact PR head has terminal formatting, compile/test, Clippy, warning-denied rustdoc, 100% owned-production coverage, applicable security/supply-chain/OCI/load checks, and required review evidence. Source presence is not GREEN evidence.
 
@@ -55,5 +55,5 @@ Ordinary HTTP/1 proxy traffic keeps the same supplier sanitization contract. An 
 ## Follow-up
 
 - Reacquire exact-head hosted evidence without gate weakening or no-op retrigger churn.
-- Keep `TRD.md`, `ARCHITECTURE.md`, `SECURITY.md`, `TEST_STRATEGY.md`, `CHANGELOG.md`, TRACEABILITY, and the product/technical gap baseline synchronized with the final source head.
+- Keep `TRD.md`, `ARCHITECTURE.md`, `SECURITY.md`, `TEST_STRATEGY.md`, `CHANGELOG.md`, TRACEABILITY, and the product/technical gap baseline synchronized through their respective owners.
 - Do not claim WebSocket, HTTP/2 Extended CONNECT, HTTP/3/QUIC, parity, canary, cutover, or legacy removal from this decision.
