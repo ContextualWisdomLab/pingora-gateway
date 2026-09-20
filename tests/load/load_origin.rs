@@ -193,13 +193,21 @@ fn parse_workers() -> Result<usize, Box<dyn std::error::Error>> {
     }
 }
 
-/// Parses the startup-only service delay without global environment mutation so
-/// malformed values can be rejected by deterministic tests.
+/// Parses the startup-only service delay and caps it before any worker can sleep
+/// so malformed or effectively unbounded evidence input fails closed.
 fn parse_response_delay_ms_value(value: Option<&str>) -> Result<u64, Box<dyn std::error::Error>> {
-    match value {
-        Some(value) => Ok(value.parse::<u64>()?),
-        None => Ok(DEFAULT_RESPONSE_DELAY_MS),
+    let Some(value) = value else {
+        return Ok(DEFAULT_RESPONSE_DELAY_MS);
+    };
+    let delay_ms = value.parse::<u64>()?;
+    if delay_ms > MAX_RESPONSE_DELAY_MS {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("UPSTREAM_RESPONSE_DELAY_MS must be <= {MAX_RESPONSE_DELAY_MS}"),
+        )
+        .into());
     }
+    Ok(delay_ms)
 }
 
 /// Reads the startup-only service delay used to make finite origin capacity
