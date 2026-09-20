@@ -18,6 +18,7 @@ use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use cwl_pingora_gateway::runtime_policy::V1_TERMINATION_BUDGET_SECONDS;
 use tempfile::NamedTempFile;
 
 const SOL_SOCKET: i32 = 1;
@@ -236,6 +237,36 @@ fn start_gateway(
     wait_until_http_ready(gateway_address, &mut child);
     wait_until_listening(metrics_address, &mut child);
     GatewayProcess(child)
+}
+
+/// Ends a successful compiled-process fixture through the production SIGTERM drain path.
+fn terminate_gateway_gracefully(process: &mut GatewayProcess) {
+    let signal_status = Command::new("kill")
+        .args(["-TERM", &process.0.id().to_string()])
+        .status()
+        .expect("system kill command should send SIGTERM");
+    assert!(signal_status.success(), "SIGTERM delivery should succeed");
+
+    let deadline = Instant::now() + Duration::from_secs(V1_TERMINATION_BUDGET_SECONDS);
+    loop {
+        match process
+            .0
+            .try_wait()
+            .expect("gateway process state should remain readable")
+        {
+            Some(status) => {
+                assert!(
+                    status.success(),
+                    "SIGTERM graceful shutdown should exit successfully: {status}"
+                );
+                return;
+            }
+            None if Instant::now() < deadline => thread::sleep(Duration::from_millis(25)),
+            None => panic!(
+                "gateway did not exit inside the {V1_TERMINATION_BUDGET_SECONDS}s termination budget"
+            ),
+        }
+    }
 }
 
 /// Sends a small raw HTTP/1.1 request with a finite downstream read budget for
@@ -635,7 +666,7 @@ fn compiled_pg_erd_post_commit_reset_preserves_committed_status_and_independent_
         backend_address,
         frontend_address,
     );
-    let _process = start_gateway(
+    let mut process = start_gateway(
         &config,
         gateway_reservation,
         metrics_reservation,
@@ -707,4 +738,5 @@ fn compiled_pg_erd_post_commit_reset_preserves_committed_status_and_independent_
     backend_origin
         .join()
         .expect("post-commit reset backend fixture should complete");
+    terminate_gateway_gracefully(&mut process);
 }
