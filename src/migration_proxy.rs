@@ -17,6 +17,9 @@ use pingora::ErrorSource;
 use thiserror::Error;
 
 use crate::forwarding_policy::{DownstreamScheme, ForwardingContext};
+use crate::http_intermediary_policy::{
+    apply_max_forwards_before_forward, max_forwards_action, MaxForwardsAction,
+};
 use crate::migration_delivery::MigrationDeliveryPlan;
 use crate::observability::{record_backpressure_rejection, record_request};
 use crate::process_health::{respond_healthy, LIVENESS_PATH, READINESS_PATH};
@@ -113,7 +116,7 @@ impl MigrationGatewayProxy {
             .try_for_each(|rule| response.insert_header(rule.name.clone(), rule.value.as_str()))
     }
 
-    /// Acquires one process-wide application lease or fails locally with bounded 503 telemetry.
+    /// Acquires the shared in-flight lease before application request processing begins.
     fn admit_request(&self, ctx: &mut MigrationRequestContext) -> pingora::Result<()> {
         if let Some(admission) = self.admission_budget.acquire() {
             ctx.admission = Some(admission);
@@ -127,7 +130,7 @@ impl MigrationGatewayProxy {
         ))
     }
 
-    /// Rejects a known oversized Content-Length before the request may select/connect an origin.
+    /// Rejects an oversized declared body before streaming additional request bytes upstream.
     fn reject_oversize_declared_body(
         session: &Session,
         ctx: &MigrationRequestContext,
@@ -144,6 +147,30 @@ impl MigrationGatewayProxy {
                 .map_err(body_rejection_to_pingora)?;
         }
         Ok(())
+    }
+
+    /// Terminates an exhausted TRACE/OPTIONS forwarding budget without contacting an origin.
+    ///
+    /// Pg-erd has no product-specific OPTIONS responder and does not implement TRACE reflection, so
+    /// the gateway returns the same bounded 501 used by generic v1 while retaining characterized
+    /// response-security fields. Application admission and declared-body checks happen first.
+    async fn respond_max_forwards_final_recipient(
+        &self,
+        session: &mut Session,
+    ) -> pingora::Result<()> {
+        let mut response = ResponseHeader::build(501, None)
+            .expect("literal HTTP 501 response header must be valid");
+        response
+            .insert_header("Content-Length", "0")
+            .expect("literal Content-Length response header must be valid");
+        response
+            .insert_header("Cache-Control", "no-store")
+            .expect("literal Cache-Control response header must be valid");
+        self.apply_response_headers(&mut response)
+            .expect("validated response-header policy must remain transport-safe");
+        session
+            .write_response_header(Box::new(response), true)
+            .await
     }
 }
 
@@ -192,7 +219,7 @@ fn append_migration_request_via(
     Ok(())
 }
 
-/// Maps internal body-budget diagnostics to a stable 413 without exposing resource counts.
+/// Maps request-body budget violations to the stable downstream 413 contract.
 fn body_rejection_to_pingora(rejection: BodyLimitExceeded) -> Box<Error> {
     let _ = (rejection.observed, rejection.limit);
     Error::explain(
@@ -201,7 +228,7 @@ fn body_rejection_to_pingora(rejection: BodyLimitExceeded) -> Box<Error> {
     )
 }
 
-/// Maps an unmatched characterized route to fail-closed 404 rather than inventing a fallback peer.
+/// Maps unmatched characterized routes to a stable downstream 404.
 fn unmatched_route_to_pingora(_error: MigrationGatewayProxyError) -> Box<Error> {
     Error::explain(
         ErrorType::HTTPStatus(404),
@@ -209,7 +236,7 @@ fn unmatched_route_to_pingora(_error: MigrationGatewayProxyError) -> Box<Error> 
     )
 }
 
-/// Preserves explicit HTTP status while normalizing Pingora transport-source failures for clients.
+/// Preserves Pingora failure-source semantics for local pg-erd error delivery.
 fn proxy_error_status(error: &Error) -> u16 {
     if let ErrorType::HTTPStatus(code) = &error.etype {
         return *code;
@@ -249,6 +276,11 @@ impl ProxyHttp for MigrationGatewayProxy {
             _ => {
                 self.admit_request(ctx)?;
                 Self::reject_oversize_declared_body(session, ctx)?;
+                let max_forwards = max_forwards_action(session.req_header())?;
+                if max_forwards == MaxForwardsAction::FinalRecipient {
+                    self.respond_max_forwards_final_recipient(session).await?;
+                    return Ok(true);
+                }
                 Ok(false)
             }
         }
@@ -289,6 +321,7 @@ impl ProxyHttp for MigrationGatewayProxy {
     where
         Self::CTX: Send + Sync,
     {
+        apply_max_forwards_before_forward(upstream_request)?;
         let forwarding = pg_erd_forwarding_context(session, upstream_request)?;
         self.apply_upstream_request_policy(upstream_request, &forwarding)?;
         append_migration_request_via(upstream_request, session.req_header().version)
