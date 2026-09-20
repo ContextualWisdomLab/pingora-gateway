@@ -28,7 +28,9 @@ pub const READINESS_PATH: &str = "/readyz";
 /// Per-request delivery state. Product domain state does not belong here.
 #[derive(Debug)]
 pub struct RequestContext {
+    /// Per-request declared/streamed body budget inherited from validated runtime limits.
     request_body: RequestBodyBudget,
+    /// RAII application-admission lease retained for the complete admitted request lifetime.
     admission: Option<RequestAdmission>,
 }
 
@@ -59,8 +61,11 @@ pub enum GatewayProxyError {
 /// Pingora HTTP application backed by one explicitly configured upstream.
 #[derive(Debug, Clone)]
 pub struct GatewayProxy {
+    /// Immutable prevalidated single-upstream transport authority for generic version 1.
     upstream_peer: HttpPeer,
+    /// Validated request-body and concurrent-request limits shared by each new request context.
     limits: RuntimeIsolationLimits,
+    /// Process-wide lock-free capacity budget cloned by Pingora workers but counted once.
     admission_budget: RequestAdmissionBudget,
 }
 
