@@ -42,11 +42,14 @@ pub enum MigrationGatewayProxyError {
 /// Per-request state for the characterized multi-route Pingora adapter.
 #[derive(Debug)]
 pub struct MigrationRequestContext {
+    /// Per-request declared and streamed body accounting under validated Runtime Isolation limits.
     request_body: RequestBodyBudget,
+    /// RAII in-flight lease retained from application admission through request completion.
     admission: Option<RequestAdmission>,
 }
 
 impl MigrationRequestContext {
+    /// Creates request-local body state without consuming an application admission lease yet.
     fn new(limits: RuntimeIsolationLimits) -> Self {
         Self {
             request_body: RequestBodyBudget::new(limits),
@@ -58,8 +61,11 @@ impl MigrationRequestContext {
 /// Pingora HTTP application backed only by a prevalidated migration delivery plan.
 #[derive(Debug, Clone)]
 pub struct MigrationGatewayProxy {
+    /// Immutable characterized route, response-policy, and prevalidated peer authority.
     delivery: MigrationDeliveryPlan,
+    /// Validated body and concurrent-request budgets inherited by each request context.
     limits: RuntimeIsolationLimits,
+    /// Shared process-wide admission counter that bounds application concurrency across workers.
     admission_budget: RequestAdmissionBudget,
 }
 
@@ -168,6 +174,7 @@ impl MigrationGatewayProxy {
     }
 }
 
+/// Builds pg-erd forwarding compatibility metadata only from the accepted clear-text transport.
 fn pg_erd_forwarding_context(
     session: &Session,
     upstream_request: &RequestHeader,
