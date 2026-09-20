@@ -14,6 +14,8 @@ use std::time::{Duration, Instant};
 
 use tempfile::NamedTempFile;
 
+const MAX_REQUEST_HEADER_BYTES: usize = 64 * 1024;
+
 /// Owns the compiled gateway child so every assertion path tears the process down.
 struct GatewayProcess(Child);
 
@@ -25,21 +27,20 @@ impl Drop for GatewayProcess {
     }
 }
 
-/// Selects traffic and metrics loopback authorities while both ephemeral reservations remain held.
-fn reserve_distinct_loopbacks() -> (SocketAddr, SocketAddr) {
+/// Holds traffic and metrics reservations simultaneously until the child-bind handoff.
+fn reserve_distinct_loopback_listeners() -> (TcpListener, TcpListener) {
     let traffic = TcpListener::bind("127.0.0.1:0").expect("traffic port should be reservable");
     let metrics = TcpListener::bind("127.0.0.1:0").expect("metrics port should be reservable");
-    let traffic_address = traffic
-        .local_addr()
-        .expect("traffic reservation should expose an address");
-    let metrics_address = metrics
-        .local_addr()
-        .expect("metrics reservation should expose an address");
     assert_ne!(
-        traffic_address, metrics_address,
-        "traffic and metrics reservations must remain distinct while both sockets are held"
+        traffic
+            .local_addr()
+            .expect("traffic reservation should expose an address"),
+        metrics
+            .local_addr()
+            .expect("metrics reservation should expose an address"),
+        "traffic and metrics reservations must remain distinct"
     );
-    (traffic_address, metrics_address)
+    (traffic, metrics)
 }
 
 /// Writes the bounded pg-erd fixture with a 100 ms backend read budget and independent frontend.
@@ -122,19 +123,26 @@ fn get(address: SocketAddr, path: &str) -> String {
     )
 }
 
-/// Reads only through the HTTP header terminator so the silent fixture never emits response bytes.
+/// Reads one bounded origin request through the header terminator; no body is needed by this fixture.
 fn read_request_headers(stream: &mut TcpStream) -> String {
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .expect("origin header timeout should be configurable");
     let mut bytes = Vec::new();
     let mut buffer = [0_u8; 1024];
     loop {
         let read = stream
             .read(&mut buffer)
-            .expect("origin request should be readable");
+            .expect("origin request headers should complete within five seconds");
         assert!(
             read > 0,
             "gateway closed origin request before headers completed"
         );
         bytes.extend_from_slice(&buffer[..read]);
+        assert!(
+            bytes.len() <= MAX_REQUEST_HEADER_BYTES,
+            "origin request headers exceeded the 64 KiB fixture bound without a terminator"
+        );
         if bytes.windows(4).any(|window| window == b"\r\n\r\n") {
             return String::from_utf8_lossy(&bytes).into_owned();
         }
@@ -155,8 +163,8 @@ fn compiled_pg_erd_silent_backend_hits_read_timeout_and_preserves_independent_ro
         let request = read_request_headers(&mut stream);
         assert!(request.starts_with("GET /api/read-stall HTTP/1.1\r\n"));
         backend_connected_tx
-            .send(())
-            .expect("test should observe the connected silent backend");
+            .send(Instant::now())
+            .expect("test should observe when the connected backend becomes silent");
 
         // Keep the accepted connection open and send no response bytes until the gateway has
         // already produced its downstream failure. This prevents fixture closure from masquerading
@@ -183,24 +191,43 @@ fn compiled_pg_erd_silent_backend_hits_read_timeout_and_preserves_independent_ro
             .expect("frontend recovery response should be writable");
     });
 
-    let (gateway_address, metrics_address) = reserve_distinct_loopbacks();
+    let (gateway_reservation, metrics_reservation) = reserve_distinct_loopback_listeners();
+    let gateway_address = gateway_reservation
+        .local_addr()
+        .expect("traffic reservation should expose an address");
+    let metrics_address = metrics_reservation
+        .local_addr()
+        .expect("metrics reservation should expose an address");
     let config = write_config(
         gateway_address,
         metrics_address,
         backend_address,
         frontend_address,
     );
+
+    // Keep both selected authorities owned through config construction, then release them only at
+    // the child-bind handoff. This narrows ephemeral-port reuse to the unavoidable spawn boundary.
+    drop(gateway_reservation);
+    drop(metrics_reservation);
     let _process = start_gateway(&config, gateway_address, metrics_address);
 
     let started = Instant::now();
     let failed = get(gateway_address, "/api/read-stall");
+    let failure_observed_at = Instant::now();
     let failure_elapsed = started.elapsed();
-    backend_connected_rx
+    let silence_started_at = backend_connected_rx
         .recv_timeout(Duration::from_secs(1))
         .expect("the failure case must have connected to the characterized backend");
+    let silent_elapsed = failure_observed_at
+        .checked_duration_since(silence_started_at)
+        .expect("gateway failure must occur after the characterized backend becomes silent");
     assert!(
         failed.starts_with("HTTP/1.1 502"),
         "a characterized upstream read timeout must fail as Bad Gateway: {failed:?}"
+    );
+    assert!(
+        silent_elapsed >= Duration::from_millis(50),
+        "the downstream failure must not precede a conservative lower bound for the configured 100 ms read-inactivity path; silent_elapsed={silent_elapsed:?}"
     );
     assert!(
         failure_elapsed < Duration::from_secs(1),
