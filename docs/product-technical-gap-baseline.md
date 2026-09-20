@@ -69,6 +69,14 @@ Parent or sibling GREEN never transfers across changed exact heads. Queue state 
 
 #42 completed CI `35413351894`, Supply `35413351919`, and bounded-origin capacity `35413351906`, then normally integrated as `fab59139e74b0eec6988174f4a25fc31d7076633`. Its 16-VU/1600-iteration loopback measurement is controlled regression evidence, not WAN/TLS/NUMA production SLO evidence.
 
+## HTTP/1 header resource-control projection — #44 / #43 / #45
+
+#44 has now been ordinarily/non-force reconciled onto integrated #42. Two-parent commit `bd7483de2b6112d2ae52e84f18a28add2616b026` preserves historical #44 ancestry while adopting the exact #42 tree as resolution. Current exact `c60dc4f56958e8db9be3d365ff18e8ac542a191e` is ahead 47 / behind 0 with merge-base exactly `fab59139...` and exactly ten effective documentation paths. Repository-wide TRACEABILITY and this baseline are deliberately projected through dedicated #61 instead of being replayed by #44. COMMENT-only review `5260463574` verifies that no production Rust, workflow, routing, retry, product-auth/business, Keyverse, Wardnet, or EgressWeave authority moved.
+
+The projection keeps three controls distinct and does not claim any of them closed: #43 / supplier #993 is operator-controlled HTTP/1 parser-phase byte/count admission; fixed supplier ceilings or callback-only 431 are not pre-allocation admission. #45 / supplier #447 is a monotonic whole-request-header lifetime; the supplier's relative per-read inactivity timer is not equivalent when fragments continue arriving. #40 / supplier #992 is the separate upstream incomplete-response-header lifetime, distinct from pg-erd v2 response-body progress lifetime. Mutable supplier branches/forks, retained legacy front proxies, timeout reinterpretation, or HTTP/2 decoded-header-list controls are not accepted substitutes.
+
+#44 was moved to Ready only after reconciliation and current-range review. Its Draft-era exact runs on `c60dc4f...` were skipped; fresh Ready-trigger evidence must settle on the unchanged exact before merge, and historical #44 GREEN does not transfer.
+
 ## Released shutdown consumer — #70
 
 #70 exact `df5d2f05fc5fbdd94bbfb487283bf2a6d73a55bf` consumes crates.io `pingora = "=0.9.0"` and `pingora-prometheus = "=0.9.0"` with generated lock authority, but its lineage remains stale relative to foundation `38db194...`.
