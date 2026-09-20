@@ -69,7 +69,7 @@ fn released_pingora_dependencies_are_exact_registry_packages() {
     }
 }
 
-/// Dependency policy must fail closed while distinguishing upstream maintenance status from security defects.
+/// Dependency policy must fail closed and must not retain a mutable Pingora git-source exception.
 #[test]
 fn dependency_source_and_advisory_policy_is_fail_closed() {
     let policy = read_repository_file("deny.toml");
@@ -82,11 +82,20 @@ fn dependency_source_and_advisory_policy_is_fail_closed() {
         "unknown-git = \"deny\"",
         "required-git-spec = \"rev\"",
         "allow-registry = [\"https://github.com/rust-lang/crates.io-index\"]",
-        "allow-git = [\"https://github.com/cloudflare/pingora.git\"]",
     ] {
         assert!(
             policy.contains(required),
             "dependency policy must preserve the fail-closed supply-chain contract: {required}"
+        );
+    }
+
+    for forbidden in [
+        "allow-git",
+        "https://github.com/cloudflare/pingora.git",
+    ] {
+        assert!(
+            !policy.contains(forbidden),
+            "released registry-only Pingora consumption must not retain a mutable git-source allowance: {forbidden}"
         );
     }
 }
