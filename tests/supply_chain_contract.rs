@@ -100,10 +100,7 @@ fn dependency_source_and_advisory_policy_is_fail_closed() {
         );
     }
 
-    for forbidden in [
-        "allow-git",
-        "https://github.com/cloudflare/pingora.git",
-    ] {
+    for forbidden in ["allow-git", "https://github.com/cloudflare/pingora.git"] {
         assert!(
             !policy.contains(forbidden),
             "released registry-only Pingora consumption must not retain a mutable git-source allowance: {forbidden}"
