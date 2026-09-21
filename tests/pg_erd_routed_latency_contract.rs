@@ -54,7 +54,32 @@ fn threshold_section_contains_exact_entry(script: &str, expected: &str) -> bool 
 }
 
 fn contains_active_binding_line(script: &str, expected: &str) -> bool {
-    script.contains(expected)
+    let mut in_block_comment = false;
+
+    for raw_line in script.lines() {
+        let line = raw_line.trim();
+
+        if in_block_comment {
+            if line.contains("*/") {
+                in_block_comment = false;
+            }
+            continue;
+        }
+        if line.starts_with("/*") {
+            if !line.contains("*/") {
+                in_block_comment = true;
+            }
+            continue;
+        }
+        if line.is_empty() || line.starts_with("//") {
+            continue;
+        }
+        if line == expected {
+            return true;
+        }
+    }
+
+    false
 }
 
 #[test]
