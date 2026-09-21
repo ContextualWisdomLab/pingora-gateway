@@ -1,5 +1,46 @@
 use std::fs;
 
+fn options_section_contains_exact_entry(script: &str, expected: &str) -> bool {
+    let mut in_options = false;
+    let mut in_block_comment = false;
+
+    for raw_line in script.lines() {
+        let line = raw_line.trim();
+
+        if in_block_comment {
+            if line.contains("*/") {
+                in_block_comment = false;
+            }
+            continue;
+        }
+        if line.starts_with("/*") {
+            if !line.contains("*/") {
+                in_block_comment = true;
+            }
+            continue;
+        }
+        if line.is_empty() || line.starts_with("//") {
+            continue;
+        }
+
+        if !in_options {
+            if line == "export const options = {" {
+                in_options = true;
+            }
+            continue;
+        }
+
+        if line == "thresholds: {" || line == "};" {
+            return false;
+        }
+        if line == expected {
+            return true;
+        }
+    }
+
+    false
+}
+
 fn threshold_section_contains_exact_entry(script: &str, expected: &str) -> bool {
     let mut in_options = false;
     let mut in_thresholds = false;
@@ -82,15 +123,21 @@ fn contains_active_binding_line(script: &str, expected: &str) -> bool {
     false
 }
 
-fn current_oracle_accepts_without_workload_shape(script: &str) -> bool {
-    [
-        "'http_req_duration{route:backend}': ['p(95)<20'],",
-        "'http_req_duration{route:frontend}': ['p(95)<20'],",
-        "'http_reqs{route:backend}': ['count>=198'],",
-        "'http_reqs{route:frontend}': ['count>=198'],",
-    ]
-    .iter()
-    .all(|threshold| threshold_section_contains_exact_entry(script, threshold))
+fn routed_evidence_contract_accepts(script: &str) -> bool {
+    ["vus: 4,", "iterations: 400,"]
+        .iter()
+        .all(|entry| options_section_contains_exact_entry(script, entry))
+        && [
+            "checks: ['rate==1'],",
+            "http_req_failed: ['rate==0'],",
+            "http_req_duration: ['p(95)<20'],",
+            "'http_req_duration{route:backend}': ['p(95)<20'],",
+            "'http_req_duration{route:frontend}': ['p(95)<20'],",
+            "'http_reqs{route:backend}': ['count>=198'],",
+            "'http_reqs{route:frontend}': ['count>=198'],",
+        ]
+        .iter()
+        .all(|threshold| threshold_section_contains_exact_entry(script, threshold))
         && [
             "const backendRoute = (__VU + __ITER) % 2 === 0;",
             "const route = backendRoute ? 'backend' : 'frontend';",
@@ -107,30 +154,10 @@ fn routed_latency_is_gated_for_each_characterized_route() {
     let script = fs::read_to_string("tests/load/pg_erd_gateway_smoke.js")
         .expect("pg-erd routed load script must be readable");
 
-    for threshold in [
-        "'http_req_duration{route:backend}': ['p(95)<20'],",
-        "'http_req_duration{route:frontend}': ['p(95)<20'],",
-        "'http_reqs{route:backend}': ['count>=198'],",
-        "'http_reqs{route:frontend}': ['count>=198'],",
-    ] {
-        assert!(
-            threshold_section_contains_exact_entry(&script, threshold),
-            "routed load contract must gate {threshold} independently inside active k6 thresholds"
-        );
-    }
-
-    for binding in [
-        "const backendRoute = (__VU + __ITER) % 2 === 0;",
-        "const route = backendRoute ? 'backend' : 'frontend';",
-        "const path = backendRoute ? '/api/load-contract' : '/load-contract';",
-        "const expectedBody = backendRoute ? 'backend-ok' : 'frontend-ok';",
-        "const response = http.get(`${gatewayUrl}${path}`, { tags: { route } });",
-    ] {
-        assert!(
-            contains_active_binding_line(&script, binding),
-            "routed load contract must keep active route/path/body/tag binding {binding}"
-        );
-    }
+    assert!(
+        routed_evidence_contract_accepts(&script),
+        "routed load contract must bind the declared workload shape, failure gates, latency thresholds, route sample floors, and route/path/body/tag execution"
+    );
 }
 
 #[test]
@@ -142,8 +169,20 @@ fn reduced_workload_shape_must_not_retain_commercial_latency_evidence() {
         .replace("iterations: 400,", "iterations: 396,");
 
     assert!(
-        !current_oracle_accepts_without_workload_shape(&reduced),
+        !routed_evidence_contract_accepts(&reduced),
         "a one-VU / 396-iteration run must not satisfy the declared 4-VU / 400-iteration evidence contract"
+    );
+}
+
+#[test]
+fn disabled_check_failure_gate_must_not_retain_body_parity_evidence() {
+    let script = fs::read_to_string("tests/load/pg_erd_gateway_smoke.js")
+        .expect("pg-erd routed load script must be readable");
+    let ungated = script.replace("checks: ['rate==1'],", "// checks: ['rate==1'],");
+
+    assert!(
+        !routed_evidence_contract_accepts(&ungated),
+        "status/body check failures must remain exit-failing k6 evidence rather than advisory checks"
     );
 }
 
