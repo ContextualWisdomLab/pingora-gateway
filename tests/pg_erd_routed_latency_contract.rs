@@ -41,8 +41,8 @@ fn active_lines(script: &str) -> Vec<&str> {
             }
             continue;
         }
-        if line.starts_with("/*") {
-            if !line.contains("*/") {
+        if let Some(comment_start) = line.find("/*") {
+            if !line[comment_start + 2..].contains("*/") {
                 in_block_comment = true;
             }
             continue;
