@@ -2,9 +2,9 @@
 //!
 //! A routed latency receipt is only attributable to the pull-request head when checkout and the
 //! checkout-identity gate consume the workflow-owned `EXPECTED_SHA` without job-, step-, or
-//! persisted runtime rebinding. Because shell code can reconstruct an `EXPECTED_SHA` assignment
-//! without ever containing that literal token, the evidence-bearing path forbids `$GITHUB_ENV`
-//! persistence before the routed summary gate instead of trying to parse arbitrary shell writes.
+//! persisted runtime rebinding. Because shell code can reconstruct protected assignments or
+//! prepend executable shims without leaving a reliable static trace, the evidence-bearing path
+//! forbids `$GITHUB_ENV` and `$GITHUB_PATH` persistence before the routed summary gate.
 
 use serde_yaml::Value;
 use std::fs;
@@ -36,7 +36,7 @@ fn expected_sha_overridden(node: &Value) -> bool {
 fn persists_runtime_environment(step: &Value) -> bool {
     step.get("run")
         .and_then(Value::as_str)
-        .is_some_and(|run| run.contains("GITHUB_ENV"))
+        .is_some_and(|run| run.contains("GITHUB_ENV") || run.contains("GITHUB_PATH"))
 }
 
 fn unique_named_step<'a>(steps: &'a [Value], name: &str) -> Option<(usize, &'a Value)> {
