@@ -111,3 +111,21 @@ jobs:
         "a conditional evidence-bearing step must not claim unconditional release evidence"
     );
 }
+
+#[test]
+fn skipped_load_job_must_not_claim_routed_release_evidence() {
+    let source = r#"
+jobs:
+  load-contract:
+    if: ${{ false }}
+    steps:
+      - name: Run routed pg-erd loopback traffic
+        run: |
+          k6 run --quiet tests/load/pg_erd_gateway_smoke.js
+"#;
+
+    assert!(
+        !routed_load_failure_propagates(source),
+        "a skipped load-contract job must not claim routed release evidence"
+    );
+}
