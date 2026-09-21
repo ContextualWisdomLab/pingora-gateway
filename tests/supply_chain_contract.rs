@@ -26,6 +26,16 @@ fn contains_exact_root_dependency_line(manifest: &str, expected: &str) -> bool {
     false
 }
 
+/// Historical checksum matching is intentionally extracted so a regression can prove its weakness.
+fn lock_contains_reviewed_registry_package(
+    lock: &str,
+    _name: &str,
+    _version: &str,
+    checksum: &str,
+) -> bool {
+    lock.contains(checksum)
+}
+
 /// Candidate supply-chain evidence must be generated from the exact reviewed source revision.
 #[test]
 fn supply_chain_workflow_binds_evidence_to_exact_source() {
@@ -88,15 +98,36 @@ fn released_pingora_dependencies_are_exact_registry_packages() {
         );
     }
 
-    for required in [
-        "fc02712a3847828d6b798ecf31f0ac64e138df26b9513e20d52319cf3cecd11e",
-        "56fc7764cf4a5ff68aae5e373a4e8e2cbff077dd9dea975cc04ca9aa863abb2c",
+    for (name, checksum) in [
+        (
+            "pingora",
+            "fc02712a3847828d6b798ecf31f0ac64e138df26b9513e20d52319cf3cecd11e",
+        ),
+        (
+            "pingora-prometheus",
+            "56fc7764cf4a5ff68aae5e373a4e8e2cbff077dd9dea975cc04ca9aa863abb2c",
+        ),
     ] {
         assert!(
-            lock.contains(required),
-            "Cargo.lock must preserve the reviewed Pingora 0.9.0 registry checksum: {required}"
+            lock_contains_reviewed_registry_package(&lock, name, "0.9.0", checksum),
+            "Cargo.lock must bind the reviewed Pingora 0.9.0 registry checksum to package {name}: {checksum}"
         );
     }
+}
+
+/// A reviewed checksum elsewhere in the lockfile must not authenticate the Pingora package block.
+#[test]
+fn unrelated_lock_package_checksum_bait_is_not_pingora_evidence() {
+    let reviewed_checksum =
+        "fc02712a3847828d6b798ecf31f0ac64e138df26b9513e20d52319cf3cecd11e";
+    let lock = format!(
+        "[[package]]\nname = \"pingora\"\nversion = \"0.9.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"wrong\"\n\n[[package]]\nname = \"decoy\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"{reviewed_checksum}\"\n"
+    );
+
+    assert!(
+        !lock_contains_reviewed_registry_package(&lock, "pingora", "0.9.0", reviewed_checksum),
+        "an unrelated package carrying the reviewed checksum must not manufacture Pingora lock evidence"
+    );
 }
 
 /// Dependency policy must fail closed and must not retain a mutable Pingora git-source exception.
