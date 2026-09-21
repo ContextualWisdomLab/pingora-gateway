@@ -3,7 +3,7 @@
 //! Routed k6 thresholds are release evidence only when the measured step, summary-presence gate,
 //! and their enclosing job propagate failures. A green workflow must not be manufactured by
 //! `continue-on-error`, skip conditions, duplicate named decoys, non-executing shell overrides,
-//! or archived/dead shell text around this evidence path.
+//! redirected working directories, or archived/dead shell text around this evidence path.
 
 use serde_yaml::Value;
 use std::fs;
@@ -38,6 +38,17 @@ fn has_run_shell_default(node: &Value) -> bool {
         .is_some()
 }
 
+fn has_run_working_directory_default(node: &Value) -> bool {
+    node.get("defaults")
+        .and_then(|defaults| defaults.get("run"))
+        .and_then(|run| run.get("working-directory"))
+        .is_some()
+}
+
+fn overrides_working_directory(step: &Value) -> bool {
+    step.get("working-directory").is_some()
+}
+
 fn unique_named_step<'a>(steps: &'a [Value], name: &str) -> Option<&'a Value> {
     let mut matches = steps
         .iter()
@@ -54,7 +65,7 @@ fn routed_load_failure_propagates(source: &str) -> bool {
     let Ok(document) = serde_yaml::from_str::<Value>(source) else {
         return false;
     };
-    if has_run_shell_default(&document) {
+    if has_run_shell_default(&document) || has_run_working_directory_default(&document) {
         return false;
     }
 
@@ -64,6 +75,7 @@ fn routed_load_failure_propagates(source: &str) -> bool {
     if job.get("if").and_then(Value::as_str) != Some(LOAD_JOB_IF)
         || !failure_propagates(job)
         || has_run_shell_default(job)
+        || has_run_working_directory_default(job)
     {
         return false;
     }
@@ -77,6 +89,7 @@ fn routed_load_failure_propagates(source: &str) -> bool {
     if routed_step.get("if").is_some()
         || !failure_propagates(routed_step)
         || !run_shell_executes_normally(routed_step)
+        || overrides_working_directory(routed_step)
     {
         return false;
     }
@@ -93,6 +106,7 @@ fn routed_load_failure_propagates(source: &str) -> bool {
     if summary_step.get("if").is_some()
         || !failure_propagates(summary_step)
         || !run_shell_executes_normally(summary_step)
+        || overrides_working_directory(summary_step)
     {
         return false;
     }
@@ -358,5 +372,30 @@ jobs:
     assert!(
         !routed_load_failure_propagates(&source),
         "an inherited working-directory can redirect both measurement and summary gates to a decoy worktree"
+    );
+}
+
+#[test]
+fn routed_step_working_directory_must_not_claim_routed_release_evidence() {
+    let source = format!(
+        r#"
+jobs:
+  load-contract:
+    if: {LOAD_JOB_IF}
+    steps:
+      - name: Run routed pg-erd loopback traffic
+        shell: bash
+        working-directory: /tmp/decoy-worktree
+        run: |
+          PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
+            k6 run --quiet tests/load/pg_erd_gateway_smoke.js
+      - name: Require routed pg-erd latency summary
+        run: test -s k6-pg-erd-summary.json
+"#
+    );
+
+    assert!(
+        !routed_load_failure_propagates(&source),
+        "step-local working-directory redirection must not retarget the measured workload away from the checked-out source"
     );
 }
