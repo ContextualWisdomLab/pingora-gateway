@@ -52,6 +52,92 @@ fn strip_shell_comments(script: &str) -> String {
         .join("\n")
 }
 
+fn quote_state_after(line: &str, mut single_quoted: bool, mut double_quoted: bool) -> (bool, bool) {
+    let mut escaped = false;
+    for character in line.chars() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if character == '\\' && !single_quoted {
+            escaped = true;
+            continue;
+        }
+        if character == '\'' && !double_quoted {
+            single_quoted = !single_quoted;
+            continue;
+        }
+        if character == '"' && !single_quoted {
+            double_quoted = !double_quoted;
+            continue;
+        }
+        if character == '#' && !single_quoted && !double_quoted {
+            break;
+        }
+    }
+    (single_quoted, double_quoted)
+}
+
+fn heredoc_terminator(line: &str) -> Option<String> {
+    let marker = line.find("<<")?;
+    let mut remainder = line[marker + 2..].trim_start();
+    if let Some(stripped) = remainder.strip_prefix('-') {
+        remainder = stripped.trim_start();
+    }
+    if remainder.is_empty() {
+        return None;
+    }
+
+    let first = remainder.chars().next()?;
+    if first == '\'' || first == '"' {
+        let quoted = &remainder[first.len_utf8()..];
+        let end = quoted.find(first)?;
+        let terminator = &quoted[..end];
+        return (!terminator.is_empty()).then(|| terminator.to_string());
+    }
+
+    let terminator = remainder
+        .split(|character: char| character.is_whitespace() || character == ';')
+        .next()?;
+    (!terminator.is_empty()).then(|| terminator.to_string())
+}
+
+fn active_shell_lines(script: &str) -> Vec<String> {
+    let mut active = Vec::new();
+    let mut heredoc_end: Option<String> = None;
+    let mut single_quoted = false;
+    let mut double_quoted = false;
+
+    for raw_line in script.lines() {
+        let trimmed = raw_line.trim();
+        if let Some(terminator) = heredoc_end.as_deref() {
+            if trimmed == terminator {
+                heredoc_end = None;
+            }
+            continue;
+        }
+
+        let started_inside_multiline_quote = single_quoted || double_quoted;
+        (single_quoted, double_quoted) =
+            quote_state_after(raw_line, single_quoted, double_quoted);
+        if started_inside_multiline_quote {
+            continue;
+        }
+
+        let visible = strip_shell_comments(raw_line);
+        let visible = visible.trim();
+        if visible.is_empty() {
+            continue;
+        }
+        if let Some(terminator) = heredoc_terminator(visible) {
+            heredoc_end = Some(terminator);
+        }
+        active.push(visible.to_string());
+    }
+
+    active
+}
+
 fn load_job_scripts(source: &str) -> Option<Vec<String>> {
     let document: Value = serde_yaml::from_str(source).ok()?;
     let steps = document
@@ -65,28 +151,40 @@ fn load_job_scripts(source: &str) -> Option<Vec<String>> {
             .iter()
             .filter(|step| step.get("if").is_none())
             .filter_map(|step| step.get("run").and_then(Value::as_str))
-            .map(strip_shell_comments)
+            .map(str::to_string)
             .collect(),
     )
 }
 
 fn script_proves_readiness(source: &str) -> bool {
-    let Some(origin_start) = source.find("/tmp/load_origin >/tmp/upstream-fixture.log 2>&1 &")
-    else {
+    let lines = active_shell_lines(source);
+    let find_line = |predicate: &dyn Fn(&str) -> bool| lines.iter().position(|line| predicate(line));
+
+    let Some(origin_start) = find_line(&|line| {
+        line == "/tmp/load_origin >/tmp/upstream-fixture.log 2>&1 &"
+    }) else {
         return false;
     };
-    let Some(origin_ready) = source.find("http://127.0.0.1:18081/fixture-ready") else {
+    let Some(origin_ready) = find_line(&|line| {
+        line.starts_with("if curl ")
+            && line.contains("http://127.0.0.1:18081/fixture-ready")
+            && line.ends_with("; then")
+    }) else {
         return false;
     };
-    let Some(origin_liveness) = source.find("kill -0 \"$upstream_pid\"") else {
+    let Some(origin_liveness) = find_line(&|line| {
+        line == "if ! kill -0 \"$upstream_pid\" 2>/dev/null; then"
+    }) else {
         return false;
     };
-    let Some(gateway_start) =
-        source.find("target/release/cwl-pingora-gateway --config /tmp/gateway-load.yaml")
-    else {
+    let Some(gateway_start) = find_line(&|line| {
+        line.starts_with("target/release/cwl-pingora-gateway --config /tmp/gateway-load.yaml")
+    }) else {
         return false;
     };
-    let Some(measured_traffic) = source.find("GATEWAY_URL=http://127.0.0.1:18080 k6 run") else {
+    let Some(measured_traffic) = find_line(&|line| {
+        line.starts_with("GATEWAY_URL=http://127.0.0.1:18080 k6 run")
+    }) else {
         return false;
     };
 
@@ -107,7 +205,7 @@ fn load_contract_proves_origin_readiness_before_gateway_measurement() {
 
     assert!(
         readiness_contract_accepts(&source),
-        "origin readiness and liveness must be established inside one unconditional measured load step before gateway startup and measured traffic"
+        "origin readiness and liveness must be established as executable commands inside one unconditional measured load step before gateway startup and measured traffic"
     );
 }
 
@@ -119,8 +217,12 @@ jobs:
     steps:
       - run: |
           /tmp/load_origin >/tmp/upstream-fixture.log 2>&1 &
-          curl http://127.0.0.1:18081/fixture-ready
-          kill -0 "$upstream_pid"
+          if curl http://127.0.0.1:18081/fixture-ready; then
+            break
+          fi
+          if ! kill -0 "$upstream_pid" 2>/dev/null; then
+            exit 1
+          fi
           target/release/cwl-pingora-gateway --config /tmp/gateway-load.yaml
           GATEWAY_URL=http://127.0.0.1:18080 k6 run
   load-contract:
@@ -132,7 +234,7 @@ jobs:
 
     assert!(
         !readiness_contract_accepts(source),
-        "readiness strings in another job must not let the measured load job omit its own origin-readiness proof"
+        "readiness commands in another job must not let the measured load job omit its own origin-readiness proof"
     );
 }
 
@@ -145,8 +247,12 @@ jobs:
       - if: ${{ false }}
         run: |
           /tmp/load_origin >/tmp/upstream-fixture.log 2>&1 &
-          curl http://127.0.0.1:18081/fixture-ready
-          kill -0 "$upstream_pid"
+          if curl http://127.0.0.1:18081/fixture-ready; then
+            break
+          fi
+          if ! kill -0 "$upstream_pid" 2>/dev/null; then
+            exit 1
+          fi
           target/release/cwl-pingora-gateway --config /tmp/gateway-load.yaml
           GATEWAY_URL=http://127.0.0.1:18080 k6 run
       - run: |
@@ -168,8 +274,10 @@ jobs:
     steps:
       - run: |
           /tmp/load_origin >/tmp/upstream-fixture.log 2>&1 &
-          curl http://127.0.0.1:18081/fixture-ready
-          # kill -0 "$upstream_pid"
+          if curl http://127.0.0.1:18081/fixture-ready; then
+            break
+          fi
+          # if ! kill -0 "$upstream_pid" 2>/dev/null; then
           target/release/cwl-pingora-gateway --config /tmp/gateway-load.yaml
           GATEWAY_URL=http://127.0.0.1:18080 k6 run
 "#;
@@ -188,9 +296,13 @@ jobs:
     steps:
       - run: |
           /tmp/load_origin >/tmp/upstream-fixture.log 2>&1 &
-          curl http://127.0.0.1:18081/fixture-ready
+          if curl http://127.0.0.1:18081/fixture-ready; then
+            break
+          fi
       - run: |
-          kill -0 "$upstream_pid"
+          if ! kill -0 "$upstream_pid" 2>/dev/null; then
+            exit 1
+          fi
           target/release/cwl-pingora-gateway --config /tmp/gateway-load.yaml
           GATEWAY_URL=http://127.0.0.1:18080 k6 run
 "#;
@@ -204,8 +316,8 @@ jobs:
 #[test]
 fn shell_data_must_not_manufacture_liveness_evidence() {
     for archived_liveness in [
-        "archive='kill -0 \"$upstream_pid\"'",
-        "cat <<'ARCHIVE'\nkill -0 \"$upstream_pid\"\nARCHIVE",
+        "archive='if ! kill -0 \"$upstream_pid\" 2>/dev/null; then'",
+        "cat <<'ARCHIVE'\nif ! kill -0 \"$upstream_pid\" 2>/dev/null; then\nARCHIVE",
     ] {
         let source = format!(
             r#"
