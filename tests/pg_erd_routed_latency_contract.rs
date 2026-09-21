@@ -290,6 +290,39 @@ fn dead_code_parity_block_must_not_retain_evidence() {
 }
 
 #[test]
+fn template_literal_bait_must_not_retain_executable_body_evidence() {
+    let baited = r#"
+const archived_contract = `
+export default function () {
+const backendRoute = (__VU + __ITER) % 2 === 0;
+const route = backendRoute ? 'backend' : 'frontend';
+const path = backendRoute ? '/api/load-contract' : '/load-contract';
+const expectedBody = backendRoute ? 'backend-ok' : 'frontend-ok';
+const response = http.get(`${gatewayUrl}${path}`, { tags: { route } });
+check(response, {
+'pg-erd gateway returns 200': (result) => result.status === 200,
+'pg-erd gateway preserves characterized route body': (result) => result.body === expectedBody,
+});
+}
+export function handleSummary(data) {
+`;
+export default function () {
+  check(response, {
+    'pg-erd gateway returns 200': (_result) => true,
+    'pg-erd gateway preserves characterized route body': (_result) => true,
+  });
+}
+export function handleSummary(data) {
+}
+"#;
+
+    assert!(
+        !default_function_matches_canonical_body(baited),
+        "canonical text inside a non-executed multiline template literal must not manufacture executable request/body parity evidence"
+    );
+}
+
+#[test]
 fn commented_threshold_bait_does_not_satisfy_the_contract() {
     let commented_bait = r#"
 export const options = {
