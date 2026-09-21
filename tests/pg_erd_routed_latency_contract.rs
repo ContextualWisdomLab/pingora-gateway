@@ -144,6 +144,9 @@ fn routed_evidence_contract_accepts(script: &str) -> bool {
             "const path = backendRoute ? '/api/load-contract' : '/load-contract';",
             "const expectedBody = backendRoute ? 'backend-ok' : 'frontend-ok';",
             "const response = http.get(`${gatewayUrl}${path}`, { tags: { route } });",
+            "check(response, {",
+            "'pg-erd gateway returns 200': (result) => result.status === 200,",
+            "'pg-erd gateway preserves characterized route body': (result) => result.body === expectedBody,",
         ]
         .iter()
         .all(|binding| contains_active_binding_line(script, binding))
@@ -156,7 +159,7 @@ fn routed_latency_is_gated_for_each_characterized_route() {
 
     assert!(
         routed_evidence_contract_accepts(&script),
-        "routed load contract must bind the declared workload shape, failure gates, latency thresholds, route sample floors, and route/path/body/tag execution"
+        "routed load contract must bind workload shape, failure gates, latency thresholds, route sample floors, request routing, and exact status/body predicates"
     );
 }
 
