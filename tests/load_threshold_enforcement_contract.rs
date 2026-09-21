@@ -217,3 +217,42 @@ jobs:
 
     assert!(!routed_thresholds_are_enforced(source));
 }
+
+#[test]
+fn job_level_workload_override_must_not_claim_routed_release_evidence() {
+    let source = r#"
+jobs:
+  load-contract:
+    env:
+      K6_VUS: 1
+      K6_ITERATIONS: 2
+    steps:
+      - name: Run routed pg-erd loopback traffic
+        run: |
+          PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
+            k6 run --quiet tests/load/pg_erd_gateway_smoke.js
+"#;
+
+    assert!(
+        !routed_thresholds_are_enforced(source),
+        "k6 environment options override the checked-in 4-VU / 400-iteration script contract"
+    );
+}
+
+#[test]
+fn routed_step_workload_override_must_not_claim_routed_release_evidence() {
+    let source = r#"
+jobs:
+  load-contract:
+    steps:
+      - name: Run routed pg-erd loopback traffic
+        env:
+          K6_VUS: 1
+          K6_ITERATIONS: 2
+        run: |
+          PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
+            k6 run --quiet tests/load/pg_erd_gateway_smoke.js
+"#;
+
+    assert!(!routed_thresholds_are_enforced(source));
+}
