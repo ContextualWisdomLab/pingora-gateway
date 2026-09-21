@@ -210,6 +210,33 @@ fn weakened_status_and_body_predicates_must_not_retain_parity_evidence() {
 }
 
 #[test]
+fn dead_code_parity_block_must_not_retain_evidence() {
+    let script = fs::read_to_string("tests/load/pg_erd_gateway_smoke.js")
+        .expect("pg-erd routed load script must be readable");
+    let canonical = r#"  check(response, {
+    'pg-erd gateway returns 200': (result) => result.status === 200,
+    'pg-erd gateway preserves characterized route body': (result) => result.body === expectedBody,
+  });"#;
+    let dead_coded = r#"  if (false) {
+    check(response, {
+      'pg-erd gateway returns 200': (result) => result.status === 200,
+      'pg-erd gateway preserves characterized route body': (result) => result.body === expectedBody,
+    });
+  }
+  check(response, {
+    'pg-erd gateway returns 200': (_result) => true,
+    'pg-erd gateway preserves characterized route body': (_result) => true,
+  });"#;
+    let weakened = script.replace(canonical, dead_coded);
+
+    assert_ne!(weakened, script, "dead-code mutation must apply to the canonical check block");
+    assert!(
+        !routed_evidence_contract_accepts(&weakened),
+        "dead-code exact predicates must not manufacture parity evidence while permissive runtime checks execute"
+    );
+}
+
+#[test]
 fn commented_threshold_bait_does_not_satisfy_the_contract() {
     let commented_bait = r#"
 export const options = {
