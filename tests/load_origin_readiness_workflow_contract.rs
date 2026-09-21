@@ -52,7 +52,7 @@ fn strip_shell_comments(script: &str) -> String {
         .join("\n")
 }
 
-fn load_job_scripts(source: &str) -> Option<String> {
+fn load_job_scripts(source: &str) -> Option<Vec<String>> {
     let document: Value = serde_yaml::from_str(source).ok()?;
     let steps = document
         .get("jobs")?
@@ -66,15 +66,11 @@ fn load_job_scripts(source: &str) -> Option<String> {
             .filter(|step| step.get("if").is_none())
             .filter_map(|step| step.get("run").and_then(Value::as_str))
             .map(strip_shell_comments)
-            .collect::<Vec<_>>()
-            .join("\n"),
+            .collect(),
     )
 }
 
-fn readiness_contract_accepts(source: &str) -> bool {
-    let Some(source) = load_job_scripts(source) else {
-        return false;
-    };
+fn script_proves_readiness(source: &str) -> bool {
     let Some(origin_start) = source.find("/tmp/load_origin >/tmp/upstream-fixture.log 2>&1 &")
     else {
         return false;
@@ -98,6 +94,11 @@ fn readiness_contract_accepts(source: &str) -> bool {
         && origin_ready < origin_liveness
         && origin_liveness < gateway_start
         && gateway_start < measured_traffic
+}
+
+fn readiness_contract_accepts(source: &str) -> bool {
+    load_job_scripts(source)
+        .is_some_and(|scripts| scripts.iter().any(|script| script_proves_readiness(script)))
 }
 
 #[test]
