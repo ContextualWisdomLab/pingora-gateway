@@ -7,12 +7,23 @@ fn read_repository_file(path: &str) -> String {
         .unwrap_or_else(|error| panic!("required repository evidence {path} is missing: {error}"))
 }
 
-/// Returns true only when the required evidence is an active, exact source line rather than comment bait.
-fn contains_active_exact_line(document: &str, expected: &str) -> bool {
-    document.lines().any(|line| {
+/// Matches only an exact, active entry in Cargo's root `[dependencies]` table.
+fn contains_exact_root_dependency_line(manifest: &str, expected: &str) -> bool {
+    let mut in_root_dependencies = false;
+
+    for line in manifest.lines() {
         let trimmed = line.trim();
-        !trimmed.starts_with('#') && trimmed == expected
-    })
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            in_root_dependencies = trimmed == "[dependencies]";
+            continue;
+        }
+
+        if in_root_dependencies && !trimmed.starts_with('#') && trimmed == expected {
+            return true;
+        }
+    }
+
+    false
 }
 
 /// Candidate supply-chain evidence must be generated from the exact reviewed source revision.
@@ -51,8 +62,8 @@ fn released_pingora_dependencies_are_exact_registry_packages() {
         "pingora-prometheus = \"=0.9.0\"",
     ] {
         assert!(
-            contains_active_exact_line(&manifest, required),
-            "released Pingora dependencies must remain active exact registry versions: {required}"
+            contains_exact_root_dependency_line(&manifest, required),
+            "released Pingora dependencies must remain exact entries in the root dependency table: {required}"
         );
     }
 
@@ -120,10 +131,12 @@ fn dependency_source_and_advisory_policy_is_fail_closed() {
 #[test]
 fn commented_manifest_dependency_bait_is_not_active_evidence() {
     let required = "pingora = { version = \"=0.9.0\", features = [\"proxy\", \"openssl\"] }";
-    let manifest = format!("# {required}\npingora = {{ version = \"=0.8.0\" }}\n");
+    let manifest = format!(
+        "[dependencies]\n# {required}\npingora = {{ version = \"=0.8.0\" }}\n"
+    );
 
     assert!(
-        !contains_active_exact_line(&manifest, required),
+        !contains_exact_root_dependency_line(&manifest, required),
         "commented dependency text must not manufacture released-supplier evidence"
     );
 }
@@ -137,7 +150,7 @@ fn package_metadata_dependency_bait_is_not_active_evidence() {
     );
 
     assert!(
-        !contains_active_exact_line(&manifest, required),
+        !contains_exact_root_dependency_line(&manifest, required),
         "metadata text outside the root dependency table must not manufacture released-supplier evidence"
     );
 }
