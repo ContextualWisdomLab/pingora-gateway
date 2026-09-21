@@ -4,11 +4,33 @@
 //! prove the measured upstream fixture has bound its socket. The load harness must therefore prove
 //! origin readiness directly before starting the gateway candidate or k6 measurement.
 
+use serde_yaml::Value;
 use std::fs;
 
 const CI_WORKFLOW: &str = ".github/workflows/ci.yml";
+const LOAD_JOB: &str = "load-contract";
+
+fn load_job_scripts(source: &str) -> Option<String> {
+    let document: Value = serde_yaml::from_str(source).ok()?;
+    let steps = document
+        .get("jobs")?
+        .get(LOAD_JOB)?
+        .get("steps")?
+        .as_sequence()?;
+
+    Some(
+        steps
+            .iter()
+            .filter_map(|step| step.get("run").and_then(Value::as_str))
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
+}
 
 fn readiness_contract_accepts(source: &str) -> bool {
+    let Some(source) = load_job_scripts(source) else {
+        return false;
+    };
     let Some(origin_start) = source.find("/tmp/load_origin >/tmp/upstream-fixture.log 2>&1 &")
     else {
         return false;
@@ -40,7 +62,7 @@ fn load_contract_proves_origin_readiness_before_gateway_measurement() {
 
     assert!(
         readiness_contract_accepts(&source),
-        "origin readiness and liveness must be established before gateway startup and measured traffic"
+        "origin readiness and liveness must be established inside the measured load job before gateway startup and measured traffic"
     );
 }
 
