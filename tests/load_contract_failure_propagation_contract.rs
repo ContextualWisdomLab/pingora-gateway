@@ -333,3 +333,30 @@ jobs:
         "the canonical routed k6 command must remain the terminal command of the failure-propagating step"
     );
 }
+
+#[test]
+fn inherited_working_directory_must_not_claim_routed_release_evidence() {
+    let source = format!(
+        r#"
+jobs:
+  load-contract:
+    if: {LOAD_JOB_IF}
+    defaults:
+      run:
+        working-directory: /tmp/decoy-worktree
+    steps:
+      - name: Run routed pg-erd loopback traffic
+        shell: bash
+        run: |
+          PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
+            k6 run --quiet tests/load/pg_erd_gateway_smoke.js
+      - name: Require routed pg-erd latency summary
+        run: test -s k6-pg-erd-summary.json
+"#
+    );
+
+    assert!(
+        !routed_load_failure_propagates(&source),
+        "an inherited working-directory can redirect both measurement and summary gates to a decoy worktree"
+    );
+}
