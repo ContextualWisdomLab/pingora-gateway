@@ -7,6 +7,14 @@ fn read_repository_file(path: &str) -> String {
         .unwrap_or_else(|error| panic!("required repository evidence {path} is missing: {error}"))
 }
 
+/// Returns true only when the required evidence is an active, exact source line rather than comment bait.
+fn contains_active_exact_line(document: &str, expected: &str) -> bool {
+    document.lines().any(|line| {
+        let trimmed = line.trim();
+        !trimmed.starts_with('#') && trimmed == expected
+    })
+}
+
 /// Candidate supply-chain evidence must be generated from the exact reviewed source revision.
 #[test]
 fn supply_chain_workflow_binds_evidence_to_exact_source() {
@@ -43,8 +51,8 @@ fn released_pingora_dependencies_are_exact_registry_packages() {
         "pingora-prometheus = \"=0.9.0\"",
     ] {
         assert!(
-            manifest.contains(required),
-            "released Pingora dependencies must remain exact registry versions: {required}"
+            contains_active_exact_line(&manifest, required),
+            "released Pingora dependencies must remain active exact registry versions: {required}"
         );
     }
 
