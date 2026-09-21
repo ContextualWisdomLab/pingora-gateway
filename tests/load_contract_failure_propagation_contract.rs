@@ -1,8 +1,8 @@
 //! Fail-closed contract for routed-load failure propagation in GitHub Actions.
 //!
-//! Routed k6 thresholds are release evidence only when the measured step and its enclosing job
-//! propagate a non-zero k6 exit status. A green workflow must not be manufactured by
-//! `continue-on-error` or skip conditions around the evidence-bearing step or job.
+//! Routed k6 thresholds are release evidence only when the measured step, summary-presence gate,
+//! and their enclosing job propagate failures. A green workflow must not be manufactured by
+//! `continue-on-error`, skip conditions, or duplicate named decoys around this evidence path.
 
 use serde_yaml::Value;
 use std::fs;
@@ -12,12 +12,22 @@ const LOAD_JOB: &str = "load-contract";
 const LOAD_JOB_IF: &str = "github.event_name != 'pull_request' || github.event.pull_request.draft == false";
 const ROUTED_STEP: &str = "Run routed pg-erd loopback traffic";
 const ROUTED_K6_LINE: &str = "k6 run --quiet tests/load/pg_erd_gateway_smoke.js";
+const SUMMARY_STEP: &str = "Require routed pg-erd latency summary";
+const SUMMARY_RUN: &str = "test -s k6-pg-erd-summary.json";
 
 fn failure_propagates(node: &Value) -> bool {
     match node.get("continue-on-error") {
         None | Some(Value::Bool(false)) => true,
         Some(_) => false,
     }
+}
+
+fn unique_named_step<'a>(steps: &'a [Value], name: &str) -> Option<&'a Value> {
+    let mut matches = steps
+        .iter()
+        .filter(|step| step.get("name").and_then(Value::as_str) == Some(name));
+    let step = matches.next()?;
+    matches.next().is_none().then_some(step)
 }
 
 fn routed_load_failure_propagates(source: &str) -> bool {
@@ -34,20 +44,30 @@ fn routed_load_failure_propagates(source: &str) -> bool {
     let Some(steps) = job.get("steps").and_then(Value::as_sequence) else {
         return false;
     };
-    let Some(step) = steps.iter().find(|step| {
-        step.get("name").and_then(Value::as_str) == Some(ROUTED_STEP)
-    }) else {
+    let Some(routed_step) = unique_named_step(steps, ROUTED_STEP) else {
         return false;
     };
-    if step.get("if").is_some() || !failure_propagates(step) {
+    if routed_step.get("if").is_some() || !failure_propagates(routed_step) {
+        return false;
+    }
+    let Some(run) = routed_step.get("run").and_then(Value::as_str) else {
+        return false;
+    };
+    if !run.lines().any(|line| line.trim() == ROUTED_K6_LINE) {
         return false;
     }
 
-    let Some(run) = step.get("run").and_then(Value::as_str) else {
+    let Some(summary_step) = unique_named_step(steps, SUMMARY_STEP) else {
         return false;
     };
+    if summary_step.get("if").is_some() || !failure_propagates(summary_step) {
+        return false;
+    }
 
-    run.lines().any(|line| line.trim() == ROUTED_K6_LINE)
+    summary_step
+        .get("run")
+        .and_then(Value::as_str)
+        .is_some_and(|run| run.trim() == SUMMARY_RUN)
 }
 
 #[test]
@@ -55,7 +75,7 @@ fn live_workflow_propagates_routed_load_failure() {
     let source = fs::read_to_string(CI_WORKFLOW).expect("CI workflow should be readable UTF-8");
     assert!(
         routed_load_failure_propagates(&source),
-        "routed k6 threshold failures must fail the admitted load-contract job"
+        "routed k6 threshold and summary-presence failures must fail the admitted load-contract job"
     );
 }
 
@@ -71,6 +91,8 @@ jobs:
         continue-on-error: true
         run: |
           k6 run --quiet tests/load/pg_erd_gateway_smoke.js
+      - name: Require routed pg-erd latency summary
+        run: test -s k6-pg-erd-summary.json
 "#
     );
 
@@ -92,6 +114,8 @@ jobs:
       - name: Run routed pg-erd loopback traffic
         run: |
           k6 run --quiet tests/load/pg_erd_gateway_smoke.js
+      - name: Require routed pg-erd latency summary
+        run: test -s k6-pg-erd-summary.json
 "#
     );
 
@@ -113,6 +137,8 @@ jobs:
         if: ${{{{ false }}}}
         run: |
           k6 run --quiet tests/load/pg_erd_gateway_smoke.js
+      - name: Require routed pg-erd latency summary
+        run: test -s k6-pg-erd-summary.json
 "#
     );
 
@@ -132,6 +158,8 @@ jobs:
       - name: Run routed pg-erd loopback traffic
         run: |
           k6 run --quiet tests/load/pg_erd_gateway_smoke.js
+      - name: Require routed pg-erd latency summary
+        run: test -s k6-pg-erd-summary.json
 "#;
 
     assert!(
