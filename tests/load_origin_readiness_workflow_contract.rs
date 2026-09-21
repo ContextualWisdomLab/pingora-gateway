@@ -202,6 +202,35 @@ jobs:
 }
 
 #[test]
+fn shell_data_must_not_manufacture_liveness_evidence() {
+    for archived_liveness in [
+        "archive='kill -0 \"$upstream_pid\"'",
+        "cat <<'ARCHIVE'\nkill -0 \"$upstream_pid\"\nARCHIVE",
+    ] {
+        let source = format!(
+            r#"
+jobs:
+  load-contract:
+    steps:
+      - run: |
+          /tmp/load_origin >/tmp/upstream-fixture.log 2>&1 &
+          if curl http://127.0.0.1:18081/fixture-ready; then
+            break
+          fi
+          {archived_liveness}
+          target/release/cwl-pingora-gateway --config /tmp/gateway-load.yaml
+          GATEWAY_URL=http://127.0.0.1:18080 k6 run
+"#
+        );
+
+        assert!(
+            !readiness_contract_accepts(&source),
+            "quoted assignments and heredoc payloads are shell data, not executable liveness proof"
+        );
+    }
+}
+
+#[test]
 fn quoted_hashes_are_not_treated_as_shell_comments() {
     let source = "printf '%s\\n' '# fixture marker' \"# second marker\" # actual comment";
     assert_eq!(
