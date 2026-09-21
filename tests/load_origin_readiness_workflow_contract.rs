@@ -115,3 +115,23 @@ jobs:
         "a skipped step must not manufacture origin-readiness ordering for the measured load lane"
     );
 }
+
+#[test]
+fn commented_liveness_decoy_must_not_manufacture_readiness_order_evidence() {
+    let source = r#"
+jobs:
+  load-contract:
+    steps:
+      - run: |
+          /tmp/load_origin >/tmp/upstream-fixture.log 2>&1 &
+          curl http://127.0.0.1:18081/fixture-ready
+          # kill -0 "$upstream_pid"
+          target/release/cwl-pingora-gateway --config /tmp/gateway-load.yaml
+          GATEWAY_URL=http://127.0.0.1:18080 k6 run
+"#;
+
+    assert!(
+        !readiness_contract_accepts(source),
+        "commented shell text must not manufacture origin-liveness evidence for the measured load lane"
+    );
+}
