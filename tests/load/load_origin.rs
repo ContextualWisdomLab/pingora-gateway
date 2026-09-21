@@ -427,7 +427,13 @@ mod tests {
         drop(client);
         worker.join().unwrap().unwrap();
 
-        assert!(observed.0.is_some(), "accepted sockets need a finite read timeout");
-        assert!(observed.1.is_some(), "accepted sockets need a finite write timeout");
+        assert!(
+            observed.0.is_some(),
+            "accepted sockets need a finite read timeout"
+        );
+        assert!(
+            observed.1.is_some(),
+            "accepted sockets need a finite write timeout"
+        );
     }
 }
