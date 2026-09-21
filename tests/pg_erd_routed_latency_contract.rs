@@ -82,6 +82,26 @@ fn contains_active_binding_line(script: &str, expected: &str) -> bool {
     false
 }
 
+fn current_oracle_accepts_without_workload_shape(script: &str) -> bool {
+    [
+        "'http_req_duration{route:backend}': ['p(95)<20'],",
+        "'http_req_duration{route:frontend}': ['p(95)<20'],",
+        "'http_reqs{route:backend}': ['count>=198'],",
+        "'http_reqs{route:frontend}': ['count>=198'],",
+    ]
+    .iter()
+    .all(|threshold| threshold_section_contains_exact_entry(script, threshold))
+        && [
+            "const backendRoute = (__VU + __ITER) % 2 === 0;",
+            "const route = backendRoute ? 'backend' : 'frontend';",
+            "const path = backendRoute ? '/api/load-contract' : '/load-contract';",
+            "const expectedBody = backendRoute ? 'backend-ok' : 'frontend-ok';",
+            "const response = http.get(`${gatewayUrl}${path}`, { tags: { route } });",
+        ]
+        .iter()
+        .all(|binding| contains_active_binding_line(script, binding))
+}
+
 #[test]
 fn routed_latency_is_gated_for_each_characterized_route() {
     let script = fs::read_to_string("tests/load/pg_erd_gateway_smoke.js")
@@ -111,6 +131,20 @@ fn routed_latency_is_gated_for_each_characterized_route() {
             "routed load contract must keep active route/path/body/tag binding {binding}"
         );
     }
+}
+
+#[test]
+fn reduced_workload_shape_must_not_retain_commercial_latency_evidence() {
+    let script = fs::read_to_string("tests/load/pg_erd_gateway_smoke.js")
+        .expect("pg-erd routed load script must be readable");
+    let reduced = script
+        .replace("vus: 4,", "vus: 1,")
+        .replace("iterations: 400,", "iterations: 396,");
+
+    assert!(
+        !current_oracle_accepts_without_workload_shape(&reduced),
+        "a one-VU / 396-iteration run must not satisfy the declared 4-VU / 400-iteration evidence contract"
+    );
 }
 
 #[test]
