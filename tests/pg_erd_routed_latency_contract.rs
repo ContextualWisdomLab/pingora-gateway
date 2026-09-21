@@ -1,8 +1,30 @@
 use std::fs;
 
-fn options_section_contains_exact_entry(script: &str, expected: &str) -> bool {
-    let mut in_options = false;
+fn has_odd_unescaped_backtick_count(line: &str) -> bool {
+    let mut escaped = false;
+    let mut count = 0usize;
+
+    for ch in line.chars() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' {
+            escaped = true;
+            continue;
+        }
+        if ch == '`' {
+            count += 1;
+        }
+    }
+
+    count % 2 == 1
+}
+
+fn active_lines(script: &str) -> Vec<&str> {
+    let mut lines = Vec::new();
     let mut in_block_comment = false;
+    let mut in_multiline_template = false;
 
     for raw_line in script.lines() {
         let line = raw_line.trim();
@@ -10,6 +32,12 @@ fn options_section_contains_exact_entry(script: &str, expected: &str) -> bool {
         if in_block_comment {
             if line.contains("*/") {
                 in_block_comment = false;
+            }
+            continue;
+        }
+        if in_multiline_template {
+            if has_odd_unescaped_backtick_count(raw_line) {
+                in_multiline_template = false;
             }
             continue;
         }
@@ -23,6 +51,19 @@ fn options_section_contains_exact_entry(script: &str, expected: &str) -> bool {
             continue;
         }
 
+        lines.push(line);
+        if has_odd_unescaped_backtick_count(raw_line) {
+            in_multiline_template = true;
+        }
+    }
+
+    lines
+}
+
+fn options_section_contains_exact_entry(script: &str, expected: &str) -> bool {
+    let mut in_options = false;
+
+    for line in active_lines(script) {
         if !in_options {
             if line == "export const options = {" {
                 in_options = true;
@@ -44,27 +85,8 @@ fn options_section_contains_exact_entry(script: &str, expected: &str) -> bool {
 fn threshold_section_contains_exact_entry(script: &str, expected: &str) -> bool {
     let mut in_options = false;
     let mut in_thresholds = false;
-    let mut in_block_comment = false;
 
-    for raw_line in script.lines() {
-        let line = raw_line.trim();
-
-        if in_block_comment {
-            if line.contains("*/") {
-                in_block_comment = false;
-            }
-            continue;
-        }
-        if line.starts_with("/*") {
-            if !line.contains("*/") {
-                in_block_comment = true;
-            }
-            continue;
-        }
-        if line.is_empty() || line.starts_with("//") {
-            continue;
-        }
-
+    for line in active_lines(script) {
         if !in_options {
             if line == "export const options = {" {
                 in_options = true;
@@ -95,60 +117,7 @@ fn threshold_section_contains_exact_entry(script: &str, expected: &str) -> bool 
 }
 
 fn contains_active_binding_line(script: &str, expected: &str) -> bool {
-    let mut in_block_comment = false;
-
-    for raw_line in script.lines() {
-        let line = raw_line.trim();
-
-        if in_block_comment {
-            if line.contains("*/") {
-                in_block_comment = false;
-            }
-            continue;
-        }
-        if line.starts_with("/*") {
-            if !line.contains("*/") {
-                in_block_comment = true;
-            }
-            continue;
-        }
-        if line.is_empty() || line.starts_with("//") {
-            continue;
-        }
-        if line == expected {
-            return true;
-        }
-    }
-
-    false
-}
-
-fn active_lines(script: &str) -> Vec<&str> {
-    let mut lines = Vec::new();
-    let mut in_block_comment = false;
-
-    for raw_line in script.lines() {
-        let line = raw_line.trim();
-
-        if in_block_comment {
-            if line.contains("*/") {
-                in_block_comment = false;
-            }
-            continue;
-        }
-        if line.starts_with("/*") {
-            if !line.contains("*/") {
-                in_block_comment = true;
-            }
-            continue;
-        }
-        if line.is_empty() || line.starts_with("//") {
-            continue;
-        }
-        lines.push(line);
-    }
-
-    lines
+    active_lines(script).into_iter().any(|line| line == expected)
 }
 
 fn default_function_matches_canonical_body(script: &str) -> bool {
