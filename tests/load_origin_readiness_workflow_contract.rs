@@ -90,3 +90,27 @@ jobs:
         "readiness strings in another job must not let the measured load job omit its own origin-readiness proof"
     );
 }
+
+#[test]
+fn skipped_step_decoy_must_not_manufacture_readiness_order_evidence() {
+    let source = r#"
+jobs:
+  load-contract:
+    steps:
+      - if: ${{ false }}
+        run: |
+          /tmp/load_origin >/tmp/upstream-fixture.log 2>&1 &
+          curl http://127.0.0.1:18081/fixture-ready
+          kill -0 "$upstream_pid"
+          target/release/cwl-pingora-gateway --config /tmp/gateway-load.yaml
+          GATEWAY_URL=http://127.0.0.1:18080 k6 run
+      - run: |
+          target/release/cwl-pingora-gateway --config /tmp/gateway-load.yaml
+          GATEWAY_URL=http://127.0.0.1:18080 k6 run
+"#;
+
+    assert!(
+        !readiness_contract_accepts(source),
+        "a skipped step must not manufacture origin-readiness ordering for the measured load lane"
+    );
+}
