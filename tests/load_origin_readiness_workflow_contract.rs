@@ -21,6 +21,7 @@ fn load_job_scripts(source: &str) -> Option<String> {
     Some(
         steps
             .iter()
+            .filter(|step| step.get("if").is_none())
             .filter_map(|step| step.get("run").and_then(Value::as_str))
             .collect::<Vec<_>>()
             .join("\n"),
@@ -62,7 +63,7 @@ fn load_contract_proves_origin_readiness_before_gateway_measurement() {
 
     assert!(
         readiness_contract_accepts(&source),
-        "origin readiness and liveness must be established inside the measured load job before gateway startup and measured traffic"
+        "origin readiness and liveness must be established inside unconditional measured load steps before gateway startup and measured traffic"
     );
 }
 
