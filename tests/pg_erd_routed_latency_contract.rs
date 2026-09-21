@@ -1,5 +1,9 @@
 use std::fs;
 
+fn contains_contract_line(script: &str, expected: &str) -> bool {
+    script.contains(expected)
+}
+
 #[test]
 fn routed_latency_is_gated_for_each_characterized_route() {
     let script = fs::read_to_string("tests/load/pg_erd_gateway_smoke.js")
@@ -12,7 +16,7 @@ fn routed_latency_is_gated_for_each_characterized_route() {
         "'http_reqs{route:frontend}': ['count>=198']",
     ] {
         assert!(
-            script.contains(threshold),
+            contains_contract_line(&script, threshold),
             "routed load contract must gate {threshold} independently"
         );
     }
@@ -36,5 +40,24 @@ fn routed_latency_is_gated_for_each_characterized_route() {
     assert!(
         script.contains("http.get(`${gatewayUrl}${path}`, { tags: { route } })"),
         "k6 request metrics must be tagged so per-route thresholds are enforceable"
+    );
+}
+
+#[test]
+fn commented_threshold_bait_does_not_satisfy_the_contract() {
+    let commented_bait = r#"
+export const options = {
+  thresholds: {
+    // 'http_req_duration{route:backend}': ['p(95)<20'],
+  },
+};
+"#;
+
+    assert!(
+        !contains_contract_line(
+            commented_bait,
+            "'http_req_duration{route:backend}': ['p(95)<20']"
+        ),
+        "commented threshold text must not manufacture routed-latency evidence"
     );
 }
