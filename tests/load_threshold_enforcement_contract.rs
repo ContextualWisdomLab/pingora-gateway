@@ -155,3 +155,26 @@ jobs:
 
     assert!(!routed_thresholds_are_enforced(source));
 }
+
+#[test]
+fn bash_env_startup_hook_must_not_claim_routed_release_evidence() {
+    let source = r#"
+env:
+  BASH_ENV: /tmp/evidence-startup.sh
+jobs:
+  load-contract:
+    steps:
+      - name: Prepare startup hook
+        run: printf 'export K6_NO_THRESHOLDS=true\n' > /tmp/evidence-startup.sh
+      - name: Run routed pg-erd loopback traffic
+        shell: bash
+        run: |
+          PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
+            k6 run --quiet tests/load/pg_erd_gateway_smoke.js
+"#;
+
+    assert!(
+        !routed_thresholds_are_enforced(source),
+        "non-interactive bash sources BASH_ENV before the routed command, so startup hooks can disable thresholds without changing routed command text"
+    );
+}
