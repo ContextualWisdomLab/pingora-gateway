@@ -138,6 +138,12 @@ fn wait_for_exit(process: &mut Child, deadline: Instant) -> std::process::ExitSt
     }
 }
 
+/// Historical oracle semantics: an expected body prefix was enough, even with trailing bytes buffered.
+fn response_matches_exact_body(response: &[u8], header_end: usize, expected_body: &[u8]) -> bool {
+    let expected_end = header_end + expected_body.len();
+    response.len() >= expected_end && &response[header_end..expected_end] == expected_body
+}
+
 fn read_response_through_body(stream: &mut TcpStream, expected_body: &[u8]) -> Vec<u8> {
     stream
         .set_read_timeout(Some(Duration::from_secs(V1_GRACE_PERIOD_SECONDS + 1)))
@@ -168,13 +174,29 @@ fn read_response_through_body(stream: &mut TcpStream, expected_body: &[u8]) -> V
             continue;
         }
 
-        assert_eq!(
-            &response[header_end..header_end + expected_body.len()],
-            expected_body,
+        assert!(
+            response_matches_exact_body(&response, header_end, expected_body),
             "gateway should forward the admitted in-flight response body exactly"
         );
         return response;
     }
+}
+
+/// Proves the old graceful-drain body oracle accepted bytes beyond the admitted body boundary.
+#[test]
+fn graceful_response_reader_rejects_trailing_bytes_already_in_userspace() {
+    let response =
+        b"HTTP/1.1 200 OK\r\nContent-Length: 7\r\nConnection: close\r\n\r\ndrainedX";
+    let header_end = response
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .map(|position| position + 4)
+        .expect("regression response should contain a complete header block");
+
+    assert!(
+        !response_matches_exact_body(response, header_end, b"drained"),
+        "graceful-drain evidence must reject bytes trailing the exact admitted response body"
+    );
 }
 
 #[test]
