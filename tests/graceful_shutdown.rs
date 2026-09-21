@@ -2,11 +2,12 @@
 //!
 //! The fixture holds one upstream response open, sends SIGTERM only after the request has reached
 //! the upstream, then releases the response. The downstream request must complete during the
-//! configured grace period and the process must terminate before the external hard-kill budget.
+//! configured grace period and the process must terminate before the signal-relative external
+//! hard-kill budget.
 
 #![cfg(unix)]
 
-use std::io::{Read, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
@@ -15,6 +16,8 @@ use std::time::{Duration, Instant};
 
 use cwl_pingora_gateway::runtime_policy::{V1_GRACE_PERIOD_SECONDS, V1_TERMINATION_BUDGET_SECONDS};
 use tempfile::NamedTempFile;
+
+const MAX_FIXTURE_EVIDENCE_BYTES: usize = 64 * 1024;
 
 struct GatewayProcess(Child);
 
@@ -25,19 +28,20 @@ impl Drop for GatewayProcess {
     }
 }
 
-fn reserve_distinct_loopback_addresses() -> (SocketAddr, SocketAddr) {
+/// Holds traffic and metrics authorities simultaneously until the child-bind handoff.
+fn reserve_distinct_loopback_listeners() -> (TcpListener, TcpListener) {
     let traffic = TcpListener::bind("127.0.0.1:0").expect("traffic port should be available");
     let metrics = TcpListener::bind("127.0.0.1:0").expect("metrics port should be available");
-    let addresses = (
+    assert_ne!(
         traffic
             .local_addr()
             .expect("traffic reservation has an address"),
         metrics
             .local_addr()
             .expect("metrics reservation has an address"),
+        "traffic and metrics reservations must remain distinct"
     );
-    assert_ne!(addresses.0, addresses.1);
-    addresses
+    (traffic, metrics)
 }
 
 fn write_gateway_config(
@@ -54,28 +58,71 @@ fn write_gateway_config(
     file
 }
 
-fn wait_until_listening(address: SocketAddr, process: &mut Child) {
+/// Waits for a complete process-local readiness response instead of treating bare TCP accept as ready.
+fn wait_until_ready(address: SocketAddr, process: &mut Child) {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         if let Some(status) = process
             .try_wait()
             .expect("gateway process state should be readable")
         {
-            panic!("gateway exited before accepting traffic: {status}");
+            panic!("gateway exited before becoming ready: {status}");
         }
-        if TcpStream::connect_timeout(&address, Duration::from_millis(100)).is_ok() {
-            return;
+
+        if let Ok(mut stream) = TcpStream::connect_timeout(&address, Duration::from_millis(100)) {
+            stream
+                .set_read_timeout(Some(Duration::from_millis(250)))
+                .expect("readiness read timeout should be configurable");
+            stream
+                .set_write_timeout(Some(Duration::from_millis(250)))
+                .expect("readiness write timeout should be configurable");
+
+            if stream
+                .write_all(
+                    b"GET /readyz HTTP/1.1\r\nHost: gateway.test\r\nConnection: close\r\n\r\n",
+                )
+                .is_ok()
+            {
+                let mut response = Vec::new();
+                let mut buffer = [0_u8; 1024];
+                loop {
+                    match stream.read(&mut buffer) {
+                        Ok(0) => break,
+                        Ok(read) => {
+                            response.extend_from_slice(&buffer[..read]);
+                            if response.len() > MAX_FIXTURE_EVIDENCE_BYTES {
+                                break;
+                            }
+                            if response.windows(4).any(|window| window == b"\r\n\r\n") {
+                                if response.starts_with(b"HTTP/1.1 200 ") {
+                                    return;
+                                }
+                                break;
+                            }
+                        }
+                        Err(error)
+                            if matches!(
+                                error.kind(),
+                                ErrorKind::WouldBlock | ErrorKind::TimedOut
+                            ) =>
+                        {
+                            break;
+                        }
+                        Err(_) => break,
+                    }
+                }
+            }
         }
+
         assert!(
             Instant::now() < deadline,
-            "gateway did not start within 10s"
+            "gateway did not become ready within 10s"
         );
         thread::sleep(Duration::from_millis(25));
     }
 }
 
-fn wait_for_exit(process: &mut Child) -> std::process::ExitStatus {
-    let deadline = Instant::now() + Duration::from_secs(V1_TERMINATION_BUDGET_SECONDS);
+fn wait_for_exit(process: &mut Child, deadline: Instant) -> std::process::ExitStatus {
     loop {
         if let Some(status) = process
             .try_wait()
@@ -91,6 +138,67 @@ fn wait_for_exit(process: &mut Child) -> std::process::ExitStatus {
     }
 }
 
+/// Requires both the admitted body bytes and the already-buffered response boundary to be exact.
+fn response_matches_exact_body(response: &[u8], header_end: usize, expected_body: &[u8]) -> bool {
+    let expected_end = header_end + expected_body.len();
+    response.len() == expected_end && &response[header_end..expected_end] == expected_body
+}
+
+fn read_response_through_body(stream: &mut TcpStream, expected_body: &[u8]) -> Vec<u8> {
+    stream
+        .set_read_timeout(Some(Duration::from_secs(V1_GRACE_PERIOD_SECONDS + 1)))
+        .expect("downstream response timeout should be configurable");
+
+    let mut response = Vec::new();
+    let mut buffer = [0_u8; 1024];
+    loop {
+        let read = stream
+            .read(&mut buffer)
+            .expect("downstream response should arrive before its fixture timeout");
+        assert!(read > 0, "gateway closed before completing the response");
+        response.extend_from_slice(&buffer[..read]);
+        assert!(
+            response.len() <= MAX_FIXTURE_EVIDENCE_BYTES,
+            "fixture response exceeded the 64 KiB evidence ceiling"
+        );
+
+        let Some(header_end) = response
+            .windows(4)
+            .position(|window| window == b"\r\n\r\n")
+            .map(|position| position + 4)
+        else {
+            continue;
+        };
+
+        if response.len() < header_end + expected_body.len() {
+            continue;
+        }
+
+        assert!(
+            response_matches_exact_body(&response, header_end, expected_body),
+            "gateway should forward the admitted in-flight response body exactly with no buffered trailing bytes"
+        );
+        return response;
+    }
+}
+
+/// Proves already-buffered bytes beyond the admitted body cannot satisfy graceful-drain evidence.
+#[test]
+fn graceful_response_reader_rejects_trailing_bytes_already_in_userspace() {
+    let response =
+        b"HTTP/1.1 200 OK\r\nContent-Length: 7\r\nConnection: close\r\n\r\ndrainedX";
+    let header_end = response
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .map(|position| position + 4)
+        .expect("regression response should contain a complete header block");
+
+    assert!(
+        !response_matches_exact_body(response, header_end, b"drained"),
+        "graceful-drain evidence must reject bytes trailing the exact admitted response body"
+    );
+}
+
 #[test]
 fn sigterm_drains_an_in_flight_request_before_process_exit() {
     let upstream_listener =
@@ -98,7 +206,13 @@ fn sigterm_drains_an_in_flight_request_before_process_exit() {
     let upstream_address = upstream_listener
         .local_addr()
         .expect("fixture upstream should expose its address");
-    let (gateway_address, metrics_address) = reserve_distinct_loopback_addresses();
+    let (gateway_reservation, metrics_reservation) = reserve_distinct_loopback_listeners();
+    let gateway_address = gateway_reservation
+        .local_addr()
+        .expect("traffic reservation should expose an address");
+    let metrics_address = metrics_reservation
+        .local_addr()
+        .expect("metrics reservation should expose an address");
     let config = write_gateway_config(gateway_address, metrics_address, upstream_address);
 
     let (request_seen_tx, request_seen_rx) = mpsc::channel();
@@ -107,6 +221,9 @@ fn sigterm_drains_an_in_flight_request_before_process_exit() {
         let (mut stream, _) = upstream_listener
             .accept()
             .expect("gateway should connect to fixture upstream");
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .expect("upstream request timeout should be configurable");
         let mut request = Vec::new();
         let mut buffer = [0_u8; 1024];
         while !request.windows(4).any(|window| window == b"\r\n\r\n") {
@@ -115,18 +232,26 @@ fn sigterm_drains_an_in_flight_request_before_process_exit() {
                 .expect("upstream request should be readable");
             assert!(read > 0, "gateway closed upstream request prematurely");
             request.extend_from_slice(&buffer[..read]);
+            assert!(
+                request.len() <= MAX_FIXTURE_EVIDENCE_BYTES,
+                "fixture request exceeded the 64 KiB evidence ceiling"
+            );
         }
         request_seen_tx
             .send(())
             .expect("test should observe the in-flight request");
         release_response_rx
-            .recv_timeout(Duration::from_secs(V1_GRACE_PERIOD_SECONDS))
-            .expect("test should release the held response during the grace period");
+            .recv_timeout(Duration::from_secs(V1_TERMINATION_BUDGET_SECONDS))
+            .expect("test controller should release the held response before its hard watchdog");
         stream
             .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 7\r\nConnection: close\r\n\r\ndrained")
             .expect("held upstream response should be writable");
     });
 
+    // Release the exact reserved sockets only at the child-bind handoff. Keeping them alive through
+    // config construction and origin setup prevents another fixture from reclaiming either port.
+    drop(gateway_reservation);
+    drop(metrics_reservation);
     let child = Command::new(env!("CARGO_BIN_EXE_cwl-pingora-gateway"))
         .args(["--config", config.path().to_str().expect("UTF-8 temp path")])
         .env("RUST_LOG", "info")
@@ -136,22 +261,15 @@ fn sigterm_drains_an_in_flight_request_before_process_exit() {
         .spawn()
         .expect("compiled gateway binary should start");
     let mut process = GatewayProcess(child);
-    wait_until_listening(gateway_address, &mut process.0);
+    wait_until_ready(gateway_address, &mut process.0);
 
     let downstream = thread::spawn(move || {
         let mut stream =
             TcpStream::connect(gateway_address).expect("gateway should accept downstream traffic");
         stream
-            .set_read_timeout(Some(Duration::from_secs(V1_TERMINATION_BUDGET_SECONDS)))
-            .expect("downstream timeout should be configurable");
-        stream
             .write_all(b"GET /held HTTP/1.1\r\nHost: gateway.test\r\nConnection: close\r\n\r\n")
             .expect("downstream request should be writable");
-        let mut response = String::new();
-        stream
-            .read_to_string(&mut response)
-            .expect("drained downstream response should be readable");
-        response
+        read_response_through_body(&mut stream, b"drained")
     });
 
     request_seen_rx
@@ -159,6 +277,7 @@ fn sigterm_drains_an_in_flight_request_before_process_exit() {
         .expect("request should reach upstream before SIGTERM");
 
     let signal_sent_at = Instant::now();
+    let termination_deadline = signal_sent_at + Duration::from_secs(V1_TERMINATION_BUDGET_SECONDS);
     let signal_status = Command::new("kill")
         .args(["-TERM", &process.0.id().to_string()])
         .status()
@@ -172,17 +291,17 @@ fn sigterm_drains_an_in_flight_request_before_process_exit() {
         .join()
         .expect("downstream request thread should complete");
     assert!(
-        response.starts_with("HTTP/1.1 200"),
-        "in-flight request should complete during graceful drain: {response:?}"
+        response.starts_with(b"HTTP/1.1 200 "),
+        "in-flight request should complete during graceful drain: {:?}",
+        String::from_utf8_lossy(&response)
     );
-    assert!(response.ends_with("\r\n\r\ndrained"));
     assert!(
         signal_sent_at.elapsed() < Duration::from_secs(V1_GRACE_PERIOD_SECONDS + 1),
         "in-flight response should complete during the configured grace period"
     );
 
     upstream.join().expect("upstream fixture should complete");
-    let exit_status = wait_for_exit(&mut process.0);
+    let exit_status = wait_for_exit(&mut process.0, termination_deadline);
     assert!(
         exit_status.success(),
         "SIGTERM graceful shutdown should exit successfully: {exit_status}"

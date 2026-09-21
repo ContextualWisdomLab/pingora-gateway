@@ -1,6 +1,6 @@
 # Release dependency policy for the shared edge runtime.
 # Vulnerability and unsoundness advisories remain fail-closed. Unmaintained
-# transitive crates inherited from the pinned upstream framework are reported
+# transitive crates inherited from the released upstream framework are reported
 # without blocking; an unmaintained direct workspace dependency still fails.
 
 [advisories]
@@ -34,4 +34,3 @@ unknown-registry = "deny"
 unknown-git = "deny"
 required-git-spec = "rev"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-allow-git = ["https://github.com/cloudflare/pingora.git"]
