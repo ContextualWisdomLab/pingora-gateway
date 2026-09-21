@@ -8,30 +8,63 @@ use std::fs;
 
 const CI_WORKFLOW: &str = ".github/workflows/ci.yml";
 
+fn readiness_contract_accepts(source: &str) -> bool {
+    let Some(origin_start) = source.find("/tmp/load_origin >/tmp/upstream-fixture.log 2>&1 &")
+    else {
+        return false;
+    };
+    let Some(origin_ready) = source.find("http://127.0.0.1:18081/fixture-ready") else {
+        return false;
+    };
+    let Some(origin_liveness) = source.find("kill -0 \"$upstream_pid\"") else {
+        return false;
+    };
+    let Some(gateway_start) =
+        source.find("target/release/cwl-pingora-gateway --config /tmp/gateway-load.yaml")
+    else {
+        return false;
+    };
+    let Some(measured_traffic) = source.find("GATEWAY_URL=http://127.0.0.1:18080 k6 run") else {
+        return false;
+    };
+
+    origin_start < origin_ready
+        && origin_ready < origin_liveness
+        && origin_liveness < gateway_start
+        && gateway_start < measured_traffic
+}
+
 #[test]
 fn load_contract_proves_origin_readiness_before_gateway_measurement() {
     let source = fs::read_to_string(CI_WORKFLOW).expect("CI workflow should be readable UTF-8");
-    let origin_start = source
-        .find("/tmp/load_origin >/tmp/upstream-fixture.log 2>&1 &")
-        .expect("load contract should start the bounded Rust upstream fixture");
-    let origin_ready = source
-        .find("http://127.0.0.1:18081/fixture-ready")
-        .expect("load contract must probe the measured origin directly before gateway traffic");
-    let origin_liveness = source
-        .find("kill -0 \"$upstream_pid\"")
-        .expect("load contract must fail when the origin process exits before readiness");
-    let gateway_start = source
-        .find("target/release/cwl-pingora-gateway --config /tmp/gateway-load.yaml")
-        .expect("load contract should start the exact gateway candidate");
-    let measured_traffic = source
-        .find("GATEWAY_URL=http://127.0.0.1:18080 k6 run")
-        .expect("load contract should execute measured k6 traffic");
 
     assert!(
-        origin_start < origin_ready
-            && origin_ready < origin_liveness
-            && origin_liveness < gateway_start
-            && gateway_start < measured_traffic,
+        readiness_contract_accepts(&source),
         "origin readiness and liveness must be established before gateway startup and measured traffic"
+    );
+}
+
+#[test]
+fn unrelated_job_decoy_must_not_manufacture_readiness_order_evidence() {
+    let source = r#"
+jobs:
+  unrelated:
+    steps:
+      - run: |
+          /tmp/load_origin >/tmp/upstream-fixture.log 2>&1 &
+          curl http://127.0.0.1:18081/fixture-ready
+          kill -0 "$upstream_pid"
+          target/release/cwl-pingora-gateway --config /tmp/gateway-load.yaml
+          GATEWAY_URL=http://127.0.0.1:18080 k6 run
+  load-contract:
+    steps:
+      - run: |
+          target/release/cwl-pingora-gateway --config /tmp/gateway-load.yaml
+          GATEWAY_URL=http://127.0.0.1:18080 k6 run
+"#;
+
+    assert!(
+        !readiness_contract_accepts(source),
+        "readiness strings in another job must not let the measured load job omit its own origin-readiness proof"
     );
 }
