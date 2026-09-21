@@ -106,7 +106,7 @@ fn load_contract_proves_origin_readiness_before_gateway_measurement() {
 
     assert!(
         readiness_contract_accepts(&source),
-        "origin readiness and liveness must be established inside unconditional measured load steps before gateway startup and measured traffic"
+        "origin readiness and liveness must be established inside one unconditional measured load step before gateway startup and measured traffic"
     );
 }
 
@@ -176,6 +176,27 @@ jobs:
     assert!(
         !readiness_contract_accepts(source),
         "commented shell text must not manufacture origin-liveness evidence for the measured load lane"
+    );
+}
+
+#[test]
+fn split_step_decoy_must_not_manufacture_one_process_readiness_evidence() {
+    let source = r#"
+jobs:
+  load-contract:
+    steps:
+      - run: |
+          /tmp/load_origin >/tmp/upstream-fixture.log 2>&1 &
+          curl http://127.0.0.1:18081/fixture-ready
+      - run: |
+          kill -0 "$upstream_pid"
+          target/release/cwl-pingora-gateway --config /tmp/gateway-load.yaml
+          GATEWAY_URL=http://127.0.0.1:18080 k6 run
+"#;
+
+    assert!(
+        !readiness_contract_accepts(source),
+        "markers spread across separate shell processes must not manufacture one-step readiness/liveness evidence"
     );
 }
 
