@@ -10,6 +10,48 @@ use std::fs;
 const CI_WORKFLOW: &str = ".github/workflows/ci.yml";
 const LOAD_JOB: &str = "load-contract";
 
+fn strip_shell_comments(script: &str) -> String {
+    script
+        .lines()
+        .map(|line| {
+            let mut single_quoted = false;
+            let mut double_quoted = false;
+            let mut escaped = false;
+            let mut visible = String::new();
+
+            for character in line.chars() {
+                if escaped {
+                    visible.push(character);
+                    escaped = false;
+                    continue;
+                }
+                if character == '\\' && !single_quoted {
+                    visible.push(character);
+                    escaped = true;
+                    continue;
+                }
+                if character == '\'' && !double_quoted {
+                    single_quoted = !single_quoted;
+                    visible.push(character);
+                    continue;
+                }
+                if character == '"' && !single_quoted {
+                    double_quoted = !double_quoted;
+                    visible.push(character);
+                    continue;
+                }
+                if character == '#' && !single_quoted && !double_quoted {
+                    break;
+                }
+                visible.push(character);
+            }
+
+            visible
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn load_job_scripts(source: &str) -> Option<String> {
     let document: Value = serde_yaml::from_str(source).ok()?;
     let steps = document
@@ -23,6 +65,7 @@ fn load_job_scripts(source: &str) -> Option<String> {
             .iter()
             .filter(|step| step.get("if").is_none())
             .filter_map(|step| step.get("run").and_then(Value::as_str))
+            .map(strip_shell_comments)
             .collect::<Vec<_>>()
             .join("\n"),
     )
@@ -133,5 +176,14 @@ jobs:
     assert!(
         !readiness_contract_accepts(source),
         "commented shell text must not manufacture origin-liveness evidence for the measured load lane"
+    );
+}
+
+#[test]
+fn quoted_hashes_are_not_treated_as_shell_comments() {
+    let source = "printf '%s\\n' '# fixture marker' \"# second marker\" # actual comment";
+    assert_eq!(
+        strip_shell_comments(source),
+        "printf '%s\\n' '# fixture marker' \"# second marker\" "
     );
 }
