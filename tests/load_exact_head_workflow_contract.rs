@@ -3,8 +3,9 @@
 //! A routed latency receipt is only attributable to the pull-request head when checkout and the
 //! checkout-identity gate consume the workflow-owned `EXPECTED_SHA` without job-, step-, or
 //! persisted runtime rebinding. Because shell code can reconstruct protected assignments or
-//! prepend executable shims without leaving a reliable static trace, the evidence-bearing path
-//! forbids `$GITHUB_ENV` and `$GITHUB_PATH` persistence before the routed summary gate.
+//! replace executable resolution without leaving a reliable static trace, the evidence-bearing
+//! path forbids persisted environment/path mutation and explicit `PATH` overrides at critical
+//! checkout, identity, measurement, and summary boundaries.
 
 use serde_yaml::Value;
 use std::fs;
@@ -33,6 +34,12 @@ fn expected_sha_overridden(node: &Value) -> bool {
         .is_some()
 }
 
+fn execution_path_overridden(node: &Value) -> bool {
+    node.get("env")
+        .and_then(|env| env.get("PATH"))
+        .is_some()
+}
+
 fn persists_runtime_environment(step: &Value) -> bool {
     step.get("run")
         .and_then(Value::as_str)
@@ -51,6 +58,7 @@ fn checkout_contract(step: &Value) -> bool {
     if step.get("if").is_some()
         || !failure_propagates(step)
         || expected_sha_overridden(step)
+        || execution_path_overridden(step)
     {
         return false;
     }
@@ -68,6 +76,7 @@ fn verify_contract(step: &Value) -> bool {
     step.get("if").is_none()
         && failure_propagates(step)
         && !expected_sha_overridden(step)
+        && !execution_path_overridden(step)
         && step.get("run").and_then(Value::as_str) == Some(VERIFY_RUN)
 }
 
@@ -80,6 +89,7 @@ fn load_evidence_claims_exact_head(source: &str) -> bool {
         .and_then(|env| env.get("EXPECTED_SHA"))
         .and_then(Value::as_str)
         != Some(EXPECTED_SHA_EXPR)
+        || execution_path_overridden(&document)
     {
         return false;
     }
@@ -87,7 +97,7 @@ fn load_evidence_claims_exact_head(source: &str) -> bool {
     let Some(job) = document.get("jobs").and_then(|jobs| jobs.get(LOAD_JOB)) else {
         return false;
     };
-    if expected_sha_overridden(job) {
+    if expected_sha_overridden(job) || execution_path_overridden(job) {
         return false;
     }
     let Some(steps) = job.get("steps").and_then(Value::as_sequence) else {
@@ -121,7 +131,9 @@ fn load_evidence_claims_exact_head(source: &str) -> bool {
         && checkout_contract(checkout)
         && verify_contract(verify)
         && !expected_sha_overridden(routed)
+        && !execution_path_overridden(routed)
         && !expected_sha_overridden(summary)
+        && !execution_path_overridden(summary)
 }
 
 #[test]
