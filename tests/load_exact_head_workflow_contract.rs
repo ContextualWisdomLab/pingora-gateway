@@ -227,3 +227,36 @@ jobs:
         "persisted GITHUB_ENV rebinding must not retarget later checkout and verification"
     );
 }
+
+#[test]
+fn indirect_github_env_rebinding_must_not_claim_exact_head_evidence() {
+    let source = format!(
+        r#"
+env:
+  EXPECTED_SHA: {EXPECTED_SHA_EXPR}
+jobs:
+  load-contract:
+    steps:
+      - name: Rebind custom source identity indirectly
+        run: |
+          suffix=SHA
+          printf 'EXPECTED_%s=refs/heads/main\n' "$suffix" >> "$GITHUB_ENV"
+      - name: Checkout exact revision
+        uses: {CHECKOUT_ACTION}
+        with:
+          ref: ${{{{ env.EXPECTED_SHA }}}}
+          persist-credentials: false
+      - name: Verify checkout identity
+        run: test \"$(git rev-parse HEAD)\" = \"$EXPECTED_SHA\"
+      - name: Run routed pg-erd loopback traffic
+        run: echo measured
+      - name: Require routed pg-erd latency summary
+        run: test -s k6-pg-erd-summary.json
+"#
+    );
+
+    assert!(
+        !load_evidence_claims_exact_head(&source),
+        "indirect writes through GITHUB_ENV can reconstruct EXPECTED_SHA without the literal token"
+    );
+}
