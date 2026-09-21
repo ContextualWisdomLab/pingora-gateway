@@ -23,6 +23,21 @@ fn failure_propagates(node: &Value) -> bool {
     }
 }
 
+fn run_shell_executes_normally(step: &Value) -> bool {
+    match step.get("shell") {
+        None => true,
+        Some(Value::String(shell)) => shell == "bash",
+        Some(_) => false,
+    }
+}
+
+fn has_run_shell_default(node: &Value) -> bool {
+    node.get("defaults")
+        .and_then(|defaults| defaults.get("run"))
+        .and_then(|run| run.get("shell"))
+        .is_some()
+}
+
 fn unique_named_step<'a>(steps: &'a [Value], name: &str) -> Option<&'a Value> {
     let mut matches = steps
         .iter()
@@ -35,10 +50,17 @@ fn routed_load_failure_propagates(source: &str) -> bool {
     let Ok(document) = serde_yaml::from_str::<Value>(source) else {
         return false;
     };
+    if has_run_shell_default(&document) {
+        return false;
+    }
+
     let Some(job) = document.get("jobs").and_then(|jobs| jobs.get(LOAD_JOB)) else {
         return false;
     };
-    if job.get("if").and_then(Value::as_str) != Some(LOAD_JOB_IF) || !failure_propagates(job) {
+    if job.get("if").and_then(Value::as_str) != Some(LOAD_JOB_IF)
+        || !failure_propagates(job)
+        || has_run_shell_default(job)
+    {
         return false;
     }
 
@@ -48,7 +70,10 @@ fn routed_load_failure_propagates(source: &str) -> bool {
     let Some(routed_step) = unique_named_step(steps, ROUTED_STEP) else {
         return false;
     };
-    if routed_step.get("if").is_some() || !failure_propagates(routed_step) {
+    if routed_step.get("if").is_some()
+        || !failure_propagates(routed_step)
+        || !run_shell_executes_normally(routed_step)
+    {
         return false;
     }
     let Some(run) = routed_step.get("run").and_then(Value::as_str) else {
@@ -61,7 +86,10 @@ fn routed_load_failure_propagates(source: &str) -> bool {
     let Some(summary_step) = unique_named_step(steps, SUMMARY_STEP) else {
         return false;
     };
-    if summary_step.get("if").is_some() || !failure_propagates(summary_step) {
+    if summary_step.get("if").is_some()
+        || !failure_propagates(summary_step)
+        || !run_shell_executes_normally(summary_step)
+    {
         return false;
     }
 
@@ -213,5 +241,31 @@ jobs:
     assert!(
         !routed_load_failure_propagates(&source),
         "syntax-check-only or otherwise custom shell overrides must not manufacture routed release evidence"
+    );
+}
+
+#[test]
+fn inherited_custom_shell_must_not_claim_routed_release_evidence() {
+    let source = format!(
+        r#"
+jobs:
+  load-contract:
+    if: {LOAD_JOB_IF}
+    defaults:
+      run:
+        shell: bash -n {{0}}
+    steps:
+      - name: Run routed pg-erd loopback traffic
+        shell: bash
+        run: |
+          k6 run --quiet tests/load/pg_erd_gateway_smoke.js
+      - name: Require routed pg-erd latency summary
+        run: test -s k6-pg-erd-summary.json
+"#
+    );
+
+    assert!(
+        !routed_load_failure_propagates(&source),
+        "job-level shell defaults must not silently turn the summary gate into non-executing evidence"
     );
 }
