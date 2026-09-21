@@ -193,6 +193,15 @@ fn read_headers(stream: &mut TcpStream) -> Vec<u8> {
     }
 }
 
+/// Rejects bytes already consumed past the exact admitted HTTP body boundary.
+fn assert_no_trailing_response_bytes(response: &[u8], expected_end: usize) {
+    assert_eq!(
+        response.len(),
+        expected_end,
+        "gateway response reader consumed unexpected trailing bytes beyond the admitted body"
+    );
+}
+
 /// Reads exactly far enough to prove the held admitted body completed without waiting for connection EOF.
 fn read_response_through_body(stream: &mut TcpStream, expected_body: &[u8]) -> Vec<u8> {
     stream
@@ -229,11 +238,7 @@ fn read_response_through_body(stream: &mut TcpStream, expected_body: &[u8]) -> V
             expected_body,
             "gateway should forward the admitted response body exactly"
         );
-        assert_eq!(
-            response.len(),
-            expected_end,
-            "gateway response reader consumed unexpected trailing bytes beyond the admitted body"
-        );
+        assert_no_trailing_response_bytes(&response, expected_end);
         return response;
     }
 }
@@ -415,33 +420,20 @@ fn prove_waiter_created_after_cleanup_observes_shutdown(
     );
 }
 
-/// Proves the response reader cannot hide bytes that arrived after the admitted body in one read.
+/// Proves already-buffered bytes beyond the admitted body cannot be hidden from the EOF oracle.
 #[test]
+#[should_panic(
+    expected = "gateway response reader consumed unexpected trailing bytes beyond the admitted body"
+)]
 fn response_reader_rejects_trailing_bytes_already_in_userspace() {
-    let listener = TcpListener::bind("127.0.0.1:0").expect("regression listener should bind");
-    let address = listener
-        .local_addr()
-        .expect("regression listener should expose its address");
-    let writer = thread::spawn(move || {
-        let (mut stream, _) = listener
-            .accept()
-            .expect("regression client should connect");
-        stream
-            .write_all(
-                b"HTTP/1.1 200 OK\r\nContent-Length: 7\r\nConnection: keep-alive\r\n\r\ndrainedX",
-            )
-            .expect("regression response should be writable");
-    });
-
-    let mut client = TcpStream::connect(address).expect("regression client should connect");
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let _ = read_response_through_body(&mut client, b"drained");
-    }));
-    assert!(
-        result.is_err(),
-        "response reader must reject trailing bytes already consumed with the admitted body"
-    );
-    writer.join().expect("regression writer should complete");
+    let response =
+        b"HTTP/1.1 200 OK\r\nContent-Length: 7\r\nConnection: keep-alive\r\n\r\ndrainedX";
+    let header_end = response
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .map(|position| position + 4)
+        .expect("regression response should contain a complete header block");
+    assert_no_trailing_response_bytes(response, header_end + b"drained".len());
 }
 
 /// Proves generic v1 creates the subject's next waiter only after an externally observed cleanup wake.
