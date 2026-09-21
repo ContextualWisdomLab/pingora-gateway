@@ -271,6 +271,42 @@ export function handleSummary(data) {
 }
 
 #[test]
+fn nested_template_literal_bait_must_not_retain_executable_body_evidence() {
+    let baited = r#"
+const archived_contract = `
+${`
+export default function () {
+const backendRoute = (__VU + __ITER) % 2 === 0;
+const route = backendRoute ? 'backend' : 'frontend';
+const path = backendRoute ? '/api/load-contract' : '/load-contract';
+const expectedBody = backendRoute ? 'backend-ok' : 'frontend-ok';
+const response = http.get(`${gatewayUrl}${path}`, { tags: { route } });
+check(response, {
+'pg-erd gateway returns 200': (result) => result.status === 200,
+'pg-erd gateway preserves characterized route body': (result) => result.body === expectedBody,
+});
+}
+export function handleSummary(data) {
+`;
+}
+`;
+export default function () {
+  check(response, {
+    'pg-erd gateway returns 200': (_result) => true,
+    'pg-erd gateway preserves characterized route body': (_result) => true,
+  });
+}
+export function handleSummary(data) {
+}
+"#;
+
+    assert!(
+        !default_function_matches_canonical_body(baited),
+        "nested multiline template syntax must not let archived canonical source manufacture executable request/body parity evidence"
+    );
+}
+
+#[test]
 fn inline_block_comment_bait_must_not_retain_executable_body_evidence() {
     let baited = r#"
 const archive_marker = true; /*
