@@ -7,6 +7,10 @@ license = "Apache-2.0"
 description = "ContextualWisdomLab shared edge runtime built on Cloudflare Pingora"
 repository = "https://github.com/ContextualWisdomLab/pingora-gateway"
 
+[features]
+default = []
+supplier-red = []
+
 [lib]
 name = "cwl_pingora_gateway"
 path = "src/lib.rs"
@@ -18,6 +22,11 @@ path = "src/bin/cwl-pingora-gateway.rs"
 [[bin]]
 name = "cwl-pingora-pg-erd-migration"
 path = "src/bin/cwl-pingora-pg-erd-migration.rs"
+
+[[test]]
+name = "websocket_fast_101_supplier_red"
+path = "tests/websocket_fast_101_supplier_red.rs"
+required-features = ["supplier-red"]
 
 [dependencies]
 async-trait = "0.1.89"
