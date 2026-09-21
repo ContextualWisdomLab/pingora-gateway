@@ -24,7 +24,6 @@ fn has_odd_unescaped_backtick_count(line: &str) -> bool {
 fn active_lines(script: &str) -> Vec<&str> {
     let mut lines = Vec::new();
     let mut in_block_comment = false;
-    let mut in_multiline_template = false;
 
     for raw_line in script.lines() {
         let line = raw_line.trim();
@@ -32,12 +31,6 @@ fn active_lines(script: &str) -> Vec<&str> {
         if in_block_comment {
             if line.contains("*/") {
                 in_block_comment = false;
-            }
-            continue;
-        }
-        if in_multiline_template {
-            if has_odd_unescaped_backtick_count(raw_line) {
-                in_multiline_template = false;
             }
             continue;
         }
@@ -50,11 +43,11 @@ fn active_lines(script: &str) -> Vec<&str> {
         if line.is_empty() || line.starts_with("//") {
             continue;
         }
+        if has_odd_unescaped_backtick_count(raw_line) {
+            return Vec::new();
+        }
 
         lines.push(line);
-        if has_odd_unescaped_backtick_count(raw_line) {
-            in_multiline_template = true;
-        }
     }
 
     lines
