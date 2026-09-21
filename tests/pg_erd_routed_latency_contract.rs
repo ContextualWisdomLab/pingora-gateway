@@ -187,6 +187,26 @@ fn disabled_check_failure_gate_must_not_retain_body_parity_evidence() {
 }
 
 #[test]
+fn weakened_status_and_body_predicates_must_not_retain_parity_evidence() {
+    let script = fs::read_to_string("tests/load/pg_erd_gateway_smoke.js")
+        .expect("pg-erd routed load script must be readable");
+    let weakened = script
+        .replace(
+            "'pg-erd gateway returns 200': (result) => result.status === 200,",
+            "'pg-erd gateway returns 200': (_result) => true,",
+        )
+        .replace(
+            "'pg-erd gateway preserves characterized route body': (result) => result.body === expectedBody,",
+            "'pg-erd gateway preserves characterized route body': (_result) => true,",
+        );
+
+    assert!(
+        !routed_evidence_contract_accepts(&weakened),
+        "the checks threshold must not manufacture status/body parity when the runtime predicates are weakened"
+    );
+}
+
+#[test]
 fn commented_threshold_bait_does_not_satisfy_the_contract() {
     let commented_bait = r#"
 export const options = {
