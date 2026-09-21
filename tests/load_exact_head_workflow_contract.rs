@@ -1,9 +1,9 @@
 //! Exact-head source-binding contract for routed load evidence.
 //!
 //! A routed latency receipt is only attributable to the pull-request head when checkout and the
-//! checkout-identity gate consume the immutable GitHub event expression directly. A mutable custom
-//! environment variable can be rebound through job/step `env` or `$GITHUB_ENV`, so it is not source
-//! authority even when checkout and a later identity check agree with each other.
+//! checkout-identity gate consume the workflow-owned `EXPECTED_SHA` without job-, step-, or
+//! persisted runtime rebinding. GitHub Actions lets an earlier shell step alter later custom env
+//! values through `$GITHUB_ENV`, so that channel is part of the source-attribution boundary.
 
 use serde_yaml::Value;
 use std::fs;
@@ -13,10 +13,9 @@ const LOAD_JOB: &str = "load-contract";
 const EXPECTED_SHA_EXPR: &str = "${{ github.event.pull_request.head.sha || github.sha }}";
 const CHECKOUT_STEP: &str = "Checkout exact revision";
 const CHECKOUT_ACTION: &str = "actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8";
-const CHECKOUT_REF: &str = EXPECTED_SHA_EXPR;
+const CHECKOUT_REF: &str = "${{ env.EXPECTED_SHA }}";
 const VERIFY_STEP: &str = "Verify checkout identity";
-const VERIFY_RUN: &str =
-    "test \"$(git rev-parse HEAD)\" = \"${{ github.event.pull_request.head.sha || github.sha }}\"";
+const VERIFY_RUN: &str = "test \"$(git rev-parse HEAD)\" = \"$EXPECTED_SHA\"";
 const ROUTED_STEP: &str = "Run routed pg-erd loopback traffic";
 const SUMMARY_STEP: &str = "Require routed pg-erd latency summary";
 
@@ -31,6 +30,13 @@ fn expected_sha_overridden(node: &Value) -> bool {
     node.get("env")
         .and_then(|env| env.get("EXPECTED_SHA"))
         .is_some()
+}
+
+fn persists_expected_sha_override(step: &Value) -> bool {
+    let Some(run) = step.get("run").and_then(Value::as_str) else {
+        return false;
+    };
+    run.contains("GITHUB_ENV") && run.contains("EXPECTED_SHA")
 }
 
 fn unique_named_step<'a>(steps: &'a [Value], name: &str) -> Option<(usize, &'a Value)> {
@@ -101,6 +107,14 @@ fn load_evidence_claims_exact_head(source: &str) -> bool {
         return false;
     };
 
+    if steps
+        .iter()
+        .take(summary_index + 1)
+        .any(persists_expected_sha_override)
+    {
+        return false;
+    }
+
     checkout_index < verify_index
         && verify_index < routed_index
         && routed_index < summary_index
@@ -115,7 +129,7 @@ fn live_routed_load_evidence_is_bound_to_the_pull_request_head() {
     let source = fs::read_to_string(CI_WORKFLOW).expect("CI workflow should be readable UTF-8");
     assert!(
         load_evidence_claims_exact_head(&source),
-        "routed load checkout and verification must consume the immutable GitHub event SHA directly"
+        "routed load evidence must preserve workflow-owned source identity through measured traffic"
     );
 }
 
@@ -210,6 +224,6 @@ jobs:
 
     assert!(
         !load_evidence_claims_exact_head(&source),
-        "runtime GITHUB_ENV rebinding proves a custom env variable cannot be exact-head source authority"
+        "persisted GITHUB_ENV rebinding must not retarget later checkout and verification"
     );
 }
