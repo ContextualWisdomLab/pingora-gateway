@@ -123,6 +123,70 @@ fn contains_active_binding_line(script: &str, expected: &str) -> bool {
     false
 }
 
+fn active_lines(script: &str) -> Vec<&str> {
+    let mut lines = Vec::new();
+    let mut in_block_comment = false;
+
+    for raw_line in script.lines() {
+        let line = raw_line.trim();
+
+        if in_block_comment {
+            if line.contains("*/") {
+                in_block_comment = false;
+            }
+            continue;
+        }
+        if line.starts_with("/*") {
+            if !line.contains("*/") {
+                in_block_comment = true;
+            }
+            continue;
+        }
+        if line.is_empty() || line.starts_with("//") {
+            continue;
+        }
+        lines.push(line);
+    }
+
+    lines
+}
+
+fn default_function_matches_canonical_body(script: &str) -> bool {
+    const EXPECTED: [&str; 10] = [
+        "export default function () {",
+        "const backendRoute = (__VU + __ITER) % 2 === 0;",
+        "const route = backendRoute ? 'backend' : 'frontend';",
+        "const path = backendRoute ? '/api/load-contract' : '/load-contract';",
+        "const expectedBody = backendRoute ? 'backend-ok' : 'frontend-ok';",
+        "const response = http.get(`${gatewayUrl}${path}`, { tags: { route } });",
+        "check(response, {",
+        "'pg-erd gateway returns 200': (result) => result.status === 200,",
+        "'pg-erd gateway preserves characterized route body': (result) => result.body === expectedBody,",
+        "});",
+    ];
+
+    let lines = active_lines(script);
+    let Some(start) = lines
+        .iter()
+        .position(|line| *line == "export default function () {")
+    else {
+        return false;
+    };
+    let Some(summary_start) = lines
+        .iter()
+        .skip(start + 1)
+        .position(|line| *line == "export function handleSummary(data) {")
+        .map(|offset| start + 1 + offset)
+    else {
+        return false;
+    };
+
+    let function_lines = &lines[start..summary_start];
+    function_lines.len() == EXPECTED.len() + 1
+        && function_lines[..EXPECTED.len()] == EXPECTED
+        && function_lines[EXPECTED.len()] == "}"
+}
+
 fn routed_evidence_contract_accepts(script: &str) -> bool {
     ["vus: 4,", "iterations: 400,"]
         .iter()
@@ -138,18 +202,7 @@ fn routed_evidence_contract_accepts(script: &str) -> bool {
         ]
         .iter()
         .all(|threshold| threshold_section_contains_exact_entry(script, threshold))
-        && [
-            "const backendRoute = (__VU + __ITER) % 2 === 0;",
-            "const route = backendRoute ? 'backend' : 'frontend';",
-            "const path = backendRoute ? '/api/load-contract' : '/load-contract';",
-            "const expectedBody = backendRoute ? 'backend-ok' : 'frontend-ok';",
-            "const response = http.get(`${gatewayUrl}${path}`, { tags: { route } });",
-            "check(response, {",
-            "'pg-erd gateway returns 200': (result) => result.status === 200,",
-            "'pg-erd gateway preserves characterized route body': (result) => result.body === expectedBody,",
-        ]
-        .iter()
-        .all(|binding| contains_active_binding_line(script, binding))
+        && default_function_matches_canonical_body(script)
 }
 
 #[test]
@@ -159,7 +212,7 @@ fn routed_latency_is_gated_for_each_characterized_route() {
 
     assert!(
         routed_evidence_contract_accepts(&script),
-        "routed load contract must bind workload shape, failure gates, latency thresholds, route sample floors, request routing, and exact status/body predicates"
+        "routed load contract must bind workload shape, failure gates, latency thresholds, route sample floors, and the exact executable request/check body"
     );
 }
 
