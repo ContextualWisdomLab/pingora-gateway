@@ -2,8 +2,8 @@
 //!
 //! Routed k6 thresholds are release evidence only when the measured step, summary-presence gate,
 //! and their enclosing job propagate failures. A green workflow must not be manufactured by
-//! `continue-on-error`, skip conditions, duplicate named decoys, or non-executing shell overrides
-//! around this evidence path.
+//! `continue-on-error`, skip conditions, duplicate named decoys, non-executing shell overrides,
+//! or dead shell control-flow around this evidence path.
 
 use serde_yaml::Value;
 use std::fs;
@@ -267,5 +267,32 @@ jobs:
     assert!(
         !routed_load_failure_propagates(&source),
         "job-level shell defaults must not silently turn the summary gate into non-executing evidence"
+    );
+}
+
+#[test]
+fn routed_k6_inside_false_branch_must_not_claim_release_evidence() {
+    let source = format!(
+        r#"
+jobs:
+  load-contract:
+    if: {LOAD_JOB_IF}
+    steps:
+      - name: Run routed pg-erd loopback traffic
+        shell: bash
+        run: |
+          set -euo pipefail
+          if false; then
+            k6 run --quiet tests/load/pg_erd_gateway_smoke.js
+          fi
+          printf '{{}}' > k6-pg-erd-summary.json
+      - name: Require routed pg-erd latency summary
+        run: test -s k6-pg-erd-summary.json
+"#
+    );
+
+    assert!(
+        !routed_load_failure_propagates(&source),
+        "canonical k6 text inside dead shell control-flow is not executed routed-load evidence"
     );
 }
