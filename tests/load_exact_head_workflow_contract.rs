@@ -2,8 +2,9 @@
 //!
 //! A routed latency receipt is only attributable to the pull-request head when checkout and the
 //! checkout-identity gate consume the workflow-owned `EXPECTED_SHA` without job-, step-, or
-//! persisted runtime rebinding. GitHub Actions lets an earlier shell step alter later custom env
-//! values through `$GITHUB_ENV`, so that channel is part of the source-attribution boundary.
+//! persisted runtime rebinding. Because shell code can reconstruct an `EXPECTED_SHA` assignment
+//! without ever containing that literal token, the evidence-bearing path forbids `$GITHUB_ENV`
+//! persistence before the routed summary gate instead of trying to parse arbitrary shell writes.
 
 use serde_yaml::Value;
 use std::fs;
@@ -32,11 +33,10 @@ fn expected_sha_overridden(node: &Value) -> bool {
         .is_some()
 }
 
-fn persists_expected_sha_override(step: &Value) -> bool {
-    let Some(run) = step.get("run").and_then(Value::as_str) else {
-        return false;
-    };
-    run.contains("GITHUB_ENV") && run.contains("EXPECTED_SHA")
+fn persists_runtime_environment(step: &Value) -> bool {
+    step.get("run")
+        .and_then(Value::as_str)
+        .is_some_and(|run| run.contains("GITHUB_ENV"))
 }
 
 fn unique_named_step<'a>(steps: &'a [Value], name: &str) -> Option<(usize, &'a Value)> {
@@ -110,7 +110,7 @@ fn load_evidence_claims_exact_head(source: &str) -> bool {
     if steps
         .iter()
         .take(summary_index + 1)
-        .any(persists_expected_sha_override)
+        .any(persists_runtime_environment)
     {
         return false;
     }
