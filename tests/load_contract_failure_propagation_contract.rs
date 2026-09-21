@@ -139,3 +139,26 @@ jobs:
         "a skipped load-contract job must not claim routed release evidence"
     );
 }
+
+#[test]
+fn summary_gate_continue_on_error_must_not_claim_routed_release_evidence() {
+    let source = format!(
+        r#"
+jobs:
+  load-contract:
+    if: {LOAD_JOB_IF}
+    steps:
+      - name: Run routed pg-erd loopback traffic
+        run: |
+          k6 run --quiet tests/load/pg_erd_gateway_smoke.js
+      - name: Require routed pg-erd latency summary
+        continue-on-error: true
+        run: test -s k6-pg-erd-summary.json
+"#
+    );
+
+    assert!(
+        !routed_load_failure_propagates(&source),
+        "a masked summary-presence failure must not retain routed release evidence"
+    );
+}
