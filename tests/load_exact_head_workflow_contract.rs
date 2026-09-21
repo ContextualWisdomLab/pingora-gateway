@@ -1,10 +1,9 @@
 //! Exact-head source-binding contract for routed load evidence.
 //!
 //! A routed latency receipt is only attributable to the pull-request head when checkout and the
-//! checkout-identity gate consume the workflow-owned `EXPECTED_SHA` without job- or step-level
-//! rebinding. The contract keeps the exact checkout action/ref and identity command on the causal
-//! path before routed traffic so two internally consistent steps cannot silently agree on another
-//! revision.
+//! checkout-identity gate consume the immutable GitHub event expression directly. A mutable custom
+//! environment variable can be rebound through job/step `env` or `$GITHUB_ENV`, so it is not source
+//! authority even when checkout and a later identity check agree with each other.
 
 use serde_yaml::Value;
 use std::fs;
@@ -14,9 +13,10 @@ const LOAD_JOB: &str = "load-contract";
 const EXPECTED_SHA_EXPR: &str = "${{ github.event.pull_request.head.sha || github.sha }}";
 const CHECKOUT_STEP: &str = "Checkout exact revision";
 const CHECKOUT_ACTION: &str = "actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8";
-const CHECKOUT_REF: &str = "${{ env.EXPECTED_SHA }}";
+const CHECKOUT_REF: &str = EXPECTED_SHA_EXPR;
 const VERIFY_STEP: &str = "Verify checkout identity";
-const VERIFY_RUN: &str = "test \"$(git rev-parse HEAD)\" = \"$EXPECTED_SHA\"";
+const VERIFY_RUN: &str =
+    "test \"$(git rev-parse HEAD)\" = \"${{ github.event.pull_request.head.sha || github.sha }}\"";
 const ROUTED_STEP: &str = "Run routed pg-erd loopback traffic";
 const SUMMARY_STEP: &str = "Require routed pg-erd latency summary";
 
@@ -115,7 +115,7 @@ fn live_routed_load_evidence_is_bound_to_the_pull_request_head() {
     let source = fs::read_to_string(CI_WORKFLOW).expect("CI workflow should be readable UTF-8");
     assert!(
         load_evidence_claims_exact_head(&source),
-        "routed load evidence must checkout and verify the workflow-owned pull-request head"
+        "routed load checkout and verification must consume the immutable GitHub event SHA directly"
     );
 }
 
@@ -180,5 +180,36 @@ jobs:
     assert!(
         !load_evidence_claims_exact_head(&source),
         "step-local EXPECTED_SHA overrides must not make the wrong checkout self-consistent"
+    );
+}
+
+#[test]
+fn github_env_rebinding_must_not_claim_exact_head_evidence() {
+    let source = format!(
+        r#"
+env:
+  EXPECTED_SHA: {EXPECTED_SHA_EXPR}
+jobs:
+  load-contract:
+    steps:
+      - name: Rebind custom source identity
+        run: echo 'EXPECTED_SHA=refs/heads/main' >> \"$GITHUB_ENV\"
+      - name: Checkout exact revision
+        uses: {CHECKOUT_ACTION}
+        with:
+          ref: ${{{{ env.EXPECTED_SHA }}}}
+          persist-credentials: false
+      - name: Verify checkout identity
+        run: test \"$(git rev-parse HEAD)\" = \"$EXPECTED_SHA\"
+      - name: Run routed pg-erd loopback traffic
+        run: echo measured
+      - name: Require routed pg-erd latency summary
+        run: test -s k6-pg-erd-summary.json
+"#
+    );
+
+    assert!(
+        !load_evidence_claims_exact_head(&source),
+        "runtime GITHUB_ENV rebinding proves a custom env variable cannot be exact-head source authority"
     );
 }
