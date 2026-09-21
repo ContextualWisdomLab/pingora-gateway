@@ -154,7 +154,12 @@ fn wait_until_listener_stops_accepting(address: SocketAddr, process: &mut Child)
             panic!("gateway exited before graceful drain completed: {status}");
         }
         match TcpStream::connect_timeout(&address, Duration::from_millis(100)) {
-            Err(_) => return,
+            Err(error) if error.kind() == ErrorKind::ConnectionRefused => return,
+            Err(error)
+                if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {}
+            Err(error) => {
+                panic!("unexpected error while verifying listener shutdown: {error}")
+            }
             Ok(stream) => drop(stream),
         }
         assert!(
