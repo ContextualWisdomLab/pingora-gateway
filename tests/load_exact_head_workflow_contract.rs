@@ -260,3 +260,34 @@ jobs:
         "indirect writes through GITHUB_ENV can reconstruct EXPECTED_SHA without the literal token"
     );
 }
+
+#[test]
+fn github_path_poisoning_must_not_claim_exact_head_evidence() {
+    let source = format!(
+        r#"
+env:
+  EXPECTED_SHA: {EXPECTED_SHA_EXPR}
+jobs:
+  load-contract:
+    steps:
+      - name: Prepend executable shim directory
+        run: echo '/tmp/evidence-shims' >> "$GITHUB_PATH"
+      - name: Checkout exact revision
+        uses: {CHECKOUT_ACTION}
+        with:
+          ref: ${{{{ env.EXPECTED_SHA }}}}
+          persist-credentials: false
+      - name: Verify checkout identity
+        run: test \"$(git rev-parse HEAD)\" = \"$EXPECTED_SHA\"
+      - name: Run routed pg-erd loopback traffic
+        run: echo measured
+      - name: Require routed pg-erd latency summary
+        run: test -s k6-pg-erd-summary.json
+"#
+    );
+
+    assert!(
+        !load_evidence_claims_exact_head(&source),
+        "persisted GITHUB_PATH mutation can replace git or k6 and must not earn exact-head evidence"
+    );
+}
