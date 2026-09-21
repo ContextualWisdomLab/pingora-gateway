@@ -3,7 +3,7 @@
 //! Routed k6 thresholds are release evidence only when the measured step, summary-presence gate,
 //! and their enclosing job propagate failures. A green workflow must not be manufactured by
 //! `continue-on-error`, skip conditions, duplicate named decoys, non-executing shell overrides,
-//! or dead shell control-flow around this evidence path.
+//! or archived/dead shell text around this evidence path.
 
 use serde_yaml::Value;
 use std::fs;
@@ -12,7 +12,7 @@ const CI_WORKFLOW: &str = ".github/workflows/ci.yml";
 const LOAD_JOB: &str = "load-contract";
 const LOAD_JOB_IF: &str = "github.event_name != 'pull_request' || github.event.pull_request.draft == false";
 const ROUTED_STEP: &str = "Run routed pg-erd loopback traffic";
-const ROUTED_K6_LINE: &str = "k6 run --quiet tests/load/pg_erd_gateway_smoke.js";
+const ROUTED_K6_TAIL: &str = "PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \\\n  k6 run --quiet tests/load/pg_erd_gateway_smoke.js";
 const SUMMARY_STEP: &str = "Require routed pg-erd latency summary";
 const SUMMARY_RUN: &str = "test -s k6-pg-erd-summary.json";
 
@@ -44,6 +44,10 @@ fn unique_named_step<'a>(steps: &'a [Value], name: &str) -> Option<&'a Value> {
         .filter(|step| step.get("name").and_then(Value::as_str) == Some(name));
     let step = matches.next()?;
     matches.next().is_none().then_some(step)
+}
+
+fn routed_k6_is_terminal_command(run: &str) -> bool {
+    run.trim_end().ends_with(ROUTED_K6_TAIL)
 }
 
 fn routed_load_failure_propagates(source: &str) -> bool {
@@ -79,7 +83,7 @@ fn routed_load_failure_propagates(source: &str) -> bool {
     let Some(run) = routed_step.get("run").and_then(Value::as_str) else {
         return false;
     };
-    if !run.lines().any(|line| line.trim() == ROUTED_K6_LINE) {
+    if !routed_k6_is_terminal_command(run) {
         return false;
     }
 
@@ -119,7 +123,8 @@ jobs:
       - name: Run routed pg-erd loopback traffic
         continue-on-error: true
         run: |
-          k6 run --quiet tests/load/pg_erd_gateway_smoke.js
+          PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
+            k6 run --quiet tests/load/pg_erd_gateway_smoke.js
       - name: Require routed pg-erd latency summary
         run: test -s k6-pg-erd-summary.json
 "#
@@ -142,7 +147,8 @@ jobs:
     steps:
       - name: Run routed pg-erd loopback traffic
         run: |
-          k6 run --quiet tests/load/pg_erd_gateway_smoke.js
+          PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
+            k6 run --quiet tests/load/pg_erd_gateway_smoke.js
       - name: Require routed pg-erd latency summary
         run: test -s k6-pg-erd-summary.json
 "#
@@ -165,7 +171,8 @@ jobs:
       - name: Run routed pg-erd loopback traffic
         if: ${{{{ false }}}}
         run: |
-          k6 run --quiet tests/load/pg_erd_gateway_smoke.js
+          PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
+            k6 run --quiet tests/load/pg_erd_gateway_smoke.js
       - name: Require routed pg-erd latency summary
         run: test -s k6-pg-erd-summary.json
 "#
@@ -186,7 +193,8 @@ jobs:
     steps:
       - name: Run routed pg-erd loopback traffic
         run: |
-          k6 run --quiet tests/load/pg_erd_gateway_smoke.js
+          PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
+            k6 run --quiet tests/load/pg_erd_gateway_smoke.js
       - name: Require routed pg-erd latency summary
         run: test -s k6-pg-erd-summary.json
 "#;
@@ -207,7 +215,8 @@ jobs:
     steps:
       - name: Run routed pg-erd loopback traffic
         run: |
-          k6 run --quiet tests/load/pg_erd_gateway_smoke.js
+          PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
+            k6 run --quiet tests/load/pg_erd_gateway_smoke.js
       - name: Require routed pg-erd latency summary
         continue-on-error: true
         run: test -s k6-pg-erd-summary.json
@@ -231,7 +240,8 @@ jobs:
       - name: Run routed pg-erd loopback traffic
         shell: bash
         run: |
-          k6 run --quiet tests/load/pg_erd_gateway_smoke.js
+          PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
+            k6 run --quiet tests/load/pg_erd_gateway_smoke.js
       - name: Require routed pg-erd latency summary
         shell: bash -n {{0}}
         run: test -s k6-pg-erd-summary.json
@@ -258,7 +268,8 @@ jobs:
       - name: Run routed pg-erd loopback traffic
         shell: bash
         run: |
-          k6 run --quiet tests/load/pg_erd_gateway_smoke.js
+          PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
+            k6 run --quiet tests/load/pg_erd_gateway_smoke.js
       - name: Require routed pg-erd latency summary
         run: test -s k6-pg-erd-summary.json
 "#
@@ -283,7 +294,8 @@ jobs:
         run: |
           set -euo pipefail
           if false; then
-            k6 run --quiet tests/load/pg_erd_gateway_smoke.js
+            PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
+              k6 run --quiet tests/load/pg_erd_gateway_smoke.js
           fi
           printf '{{}}' > k6-pg-erd-summary.json
       - name: Require routed pg-erd latency summary
@@ -294,5 +306,30 @@ jobs:
     assert!(
         !routed_load_failure_propagates(&source),
         "canonical k6 text inside dead shell control-flow is not executed routed-load evidence"
+    );
+}
+
+#[test]
+fn canonical_routed_k6_tail_is_admitted() {
+    let source = format!(
+        r#"
+jobs:
+  load-contract:
+    if: {LOAD_JOB_IF}
+    steps:
+      - name: Run routed pg-erd loopback traffic
+        shell: bash
+        run: |
+          set -euo pipefail
+          PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
+            k6 run --quiet tests/load/pg_erd_gateway_smoke.js
+      - name: Require routed pg-erd latency summary
+        run: test -s k6-pg-erd-summary.json
+"#
+    );
+
+    assert!(
+        routed_load_failure_propagates(&source),
+        "the canonical routed k6 command must remain the terminal command of the failure-propagating step"
     );
 }
