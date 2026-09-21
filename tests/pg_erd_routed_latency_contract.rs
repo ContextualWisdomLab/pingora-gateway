@@ -200,6 +200,24 @@ fn reduced_workload_shape_must_not_retain_commercial_latency_evidence() {
 }
 
 #[test]
+fn nested_workload_shape_bait_must_not_retain_commercial_latency_evidence() {
+    let script = fs::read_to_string("tests/load/pg_erd_gateway_smoke.js")
+        .expect("pg-erd routed load script must be readable");
+    let baited = script
+        .replace(
+            "  vus: 4,",
+            "  vus: 1,\n  archived_scenario: {\n    vus: 4,\n    iterations: 400,\n  },",
+        )
+        .replace("  iterations: 400,\n", "");
+
+    assert_ne!(baited, script, "nested workload-shape mutation must apply");
+    assert!(
+        !routed_evidence_contract_accepts(&baited),
+        "nested object entries must not manufacture top-level 4-VU / 400-iteration evidence"
+    );
+}
+
+#[test]
 fn disabled_check_failure_gate_must_not_retain_body_parity_evidence() {
     let script = fs::read_to_string("tests/load/pg_erd_gateway_smoke.js")
         .expect("pg-erd routed load script must be readable");
