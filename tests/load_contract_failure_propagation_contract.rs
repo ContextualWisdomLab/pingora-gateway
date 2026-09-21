@@ -12,6 +12,13 @@ const LOAD_JOB: &str = "load-contract";
 const ROUTED_STEP: &str = "Run routed pg-erd loopback traffic";
 const ROUTED_K6_LINE: &str = "k6 run --quiet tests/load/pg_erd_gateway_smoke.js";
 
+fn failure_propagates(node: &Value) -> bool {
+    match node.get("continue-on-error") {
+        None | Some(Value::Bool(false)) => true,
+        Some(_) => false,
+    }
+}
+
 fn routed_load_failure_propagates(source: &str) -> bool {
     let Ok(document) = serde_yaml::from_str::<Value>(source) else {
         return false;
@@ -19,6 +26,10 @@ fn routed_load_failure_propagates(source: &str) -> bool {
     let Some(job) = document.get("jobs").and_then(|jobs| jobs.get(LOAD_JOB)) else {
         return false;
     };
+    if !failure_propagates(job) {
+        return false;
+    }
+
     let Some(steps) = job.get("steps").and_then(Value::as_sequence) else {
         return false;
     };
@@ -27,6 +38,10 @@ fn routed_load_failure_propagates(source: &str) -> bool {
     }) else {
         return false;
     };
+    if step.get("if").is_some() || !failure_propagates(step) {
+        return false;
+    }
+
     let Some(run) = step.get("run").and_then(Value::as_str) else {
         return false;
     };
@@ -76,5 +91,23 @@ jobs:
     assert!(
         !routed_load_failure_propagates(source),
         "a load-contract job with continue-on-error=true must not earn GREEN"
+    );
+}
+
+#[test]
+fn conditional_routed_step_must_not_claim_release_evidence() {
+    let source = r#"
+jobs:
+  load-contract:
+    steps:
+      - name: Run routed pg-erd loopback traffic
+        if: ${{ false }}
+        run: |
+          k6 run --quiet tests/load/pg_erd_gateway_smoke.js
+"#;
+
+    assert!(
+        !routed_load_failure_propagates(source),
+        "a conditional evidence-bearing step must not claim unconditional release evidence"
     );
 }
