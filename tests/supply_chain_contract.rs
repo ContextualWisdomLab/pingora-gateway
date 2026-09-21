@@ -107,3 +107,15 @@ fn dependency_source_and_advisory_policy_is_fail_closed() {
         );
     }
 }
+
+/// A commented dependency line must never satisfy the executable released-supplier contract.
+#[test]
+fn commented_manifest_dependency_bait_is_not_active_evidence() {
+    let required = "pingora = { version = \"=0.9.0\", features = [\"proxy\", \"openssl\"] }";
+    let manifest = format!("# {required}\npingora = {{ version = \"=0.8.0\" }}\n");
+
+    assert!(
+        !contains_active_exact_line(&manifest, required),
+        "commented dependency text must not manufacture released-supplier evidence"
+    );
+}
