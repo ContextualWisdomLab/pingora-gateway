@@ -220,13 +220,19 @@ fn read_response_through_body(stream: &mut TcpStream, expected_body: &[u8]) -> V
         else {
             continue;
         };
-        if response.len() < header_end + expected_body.len() {
+        let expected_end = header_end + expected_body.len();
+        if response.len() < expected_end {
             continue;
         }
         assert_eq!(
-            &response[header_end..header_end + expected_body.len()],
+            &response[header_end..expected_end],
             expected_body,
             "gateway should forward the admitted response body exactly"
+        );
+        assert_eq!(
+            response.len(),
+            expected_end,
+            "gateway response reader consumed unexpected trailing bytes beyond the admitted body"
         );
         return response;
     }
@@ -407,6 +413,35 @@ fn prove_waiter_created_after_cleanup_observes_shutdown(
         exit_status.success(),
         "SIGTERM graceful shutdown should exit successfully: {exit_status}"
     );
+}
+
+/// Proves the response reader cannot hide bytes that arrived after the admitted body in one read.
+#[test]
+fn response_reader_rejects_trailing_bytes_already_in_userspace() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("regression listener should bind");
+    let address = listener
+        .local_addr()
+        .expect("regression listener should expose its address");
+    let writer = thread::spawn(move || {
+        let (mut stream, _) = listener
+            .accept()
+            .expect("regression client should connect");
+        stream
+            .write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Length: 7\r\nConnection: keep-alive\r\n\r\ndrainedX",
+            )
+            .expect("regression response should be writable");
+    });
+
+    let mut client = TcpStream::connect(address).expect("regression client should connect");
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _ = read_response_through_body(&mut client, b"drained");
+    }));
+    assert!(
+        result.is_err(),
+        "response reader must reject trailing bytes already consumed with the admitted body"
+    );
+    writer.join().expect("regression writer should complete");
 }
 
 /// Proves generic v1 creates the subject's next waiter only after an externally observed cleanup wake.
