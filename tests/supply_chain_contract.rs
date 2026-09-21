@@ -26,14 +26,34 @@ fn contains_exact_root_dependency_line(manifest: &str, expected: &str) -> bool {
     false
 }
 
-/// Historical checksum matching is intentionally extracted so a regression can prove its weakness.
+/// Matches the reviewed registry identity only when all fields belong to one Cargo lock package block.
 fn lock_contains_reviewed_registry_package(
     lock: &str,
-    _name: &str,
-    _version: &str,
+    name: &str,
+    version: &str,
     checksum: &str,
 ) -> bool {
-    lock.contains(checksum)
+    let expected_name = format!("name = \"{name}\"");
+    let expected_version = format!("version = \"{version}\"");
+    let expected_checksum = format!("checksum = \"{checksum}\"");
+    let expected_source = "source = \"registry+https://github.com/rust-lang/crates.io-index\"";
+
+    lock.split("[[package]]").skip(1).any(|package| {
+        let mut has_name = false;
+        let mut has_version = false;
+        let mut has_source = false;
+        let mut has_checksum = false;
+
+        for line in package.lines() {
+            let trimmed = line.trim();
+            has_name |= trimmed == expected_name;
+            has_version |= trimmed == expected_version;
+            has_source |= trimmed == expected_source;
+            has_checksum |= trimmed == expected_checksum;
+        }
+
+        has_name && has_version && has_source && has_checksum
+    })
 }
 
 /// Candidate supply-chain evidence must be generated from the exact reviewed source revision.
