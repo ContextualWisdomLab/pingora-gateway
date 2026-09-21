@@ -60,60 +60,35 @@ fn active_lines(script: &str) -> Vec<&str> {
     lines
 }
 
-fn options_section_contains_exact_entry(script: &str, expected: &str) -> bool {
-    let mut in_options = false;
+fn options_block_matches_canonical_contract(script: &str) -> bool {
+    const EXPECTED: [&str; 13] = [
+        "export const options = {",
+        "vus: 4,",
+        "iterations: 400,",
+        "thresholds: {",
+        "checks: ['rate==1'],",
+        "http_req_failed: ['rate==0'],",
+        "http_req_duration: ['p(95)<20'],",
+        "'http_req_duration{route:backend}': ['p(95)<20'],",
+        "'http_req_duration{route:frontend}': ['p(95)<20'],",
+        "'http_reqs{route:backend}': ['count>=198'],",
+        "'http_reqs{route:frontend}': ['count>=198'],",
+        "},",
+        "};",
+    ];
 
-    for line in active_lines(script) {
-        if !in_options {
-            if line == "export const options = {" {
-                in_options = true;
-            }
-            continue;
-        }
+    let lines = active_lines(script);
+    let Some(start) = lines
+        .iter()
+        .position(|line| *line == "export const options = {")
+    else {
+        return false;
+    };
+    let Some(candidate) = lines.get(start..start + EXPECTED.len()) else {
+        return false;
+    };
 
-        if line == "thresholds: {" || line == "};" {
-            return false;
-        }
-        if line == expected {
-            return true;
-        }
-    }
-
-    false
-}
-
-fn threshold_section_contains_exact_entry(script: &str, expected: &str) -> bool {
-    let mut in_options = false;
-    let mut in_thresholds = false;
-
-    for line in active_lines(script) {
-        if !in_options {
-            if line == "export const options = {" {
-                in_options = true;
-            }
-            continue;
-        }
-
-        if !in_thresholds {
-            if line == "thresholds: {" {
-                in_thresholds = true;
-                continue;
-            }
-            if line == "};" {
-                return false;
-            }
-            continue;
-        }
-
-        if line == "}," {
-            return false;
-        }
-        if line == expected {
-            return true;
-        }
-    }
-
-    false
+    candidate == EXPECTED
 }
 
 fn contains_active_binding_line(script: &str, expected: &str) -> bool {
@@ -157,21 +132,7 @@ fn default_function_matches_canonical_body(script: &str) -> bool {
 }
 
 fn routed_evidence_contract_accepts(script: &str) -> bool {
-    ["vus: 4,", "iterations: 400,"]
-        .iter()
-        .all(|entry| options_section_contains_exact_entry(script, entry))
-        && [
-            "checks: ['rate==1'],",
-            "http_req_failed: ['rate==0'],",
-            "http_req_duration: ['p(95)<20'],",
-            "'http_req_duration{route:backend}': ['p(95)<20'],",
-            "'http_req_duration{route:frontend}': ['p(95)<20'],",
-            "'http_reqs{route:backend}': ['count>=198'],",
-            "'http_reqs{route:frontend}': ['count>=198'],",
-        ]
-        .iter()
-        .all(|threshold| threshold_section_contains_exact_entry(script, threshold))
-        && default_function_matches_canonical_body(script)
+    options_block_matches_canonical_contract(script) && default_function_matches_canonical_body(script)
 }
 
 #[test]
@@ -346,6 +307,8 @@ export function handleSummary(data) {
 fn commented_threshold_bait_does_not_satisfy_the_contract() {
     let commented_bait = r#"
 export const options = {
+  vus: 4,
+  iterations: 400,
   thresholds: {
     // 'http_req_duration{route:backend}': ['p(95)<20'],
   },
@@ -353,10 +316,7 @@ export const options = {
 "#;
 
     assert!(
-        !threshold_section_contains_exact_entry(
-            commented_bait,
-            "'http_req_duration{route:backend}': ['p(95)<20'],"
-        ),
+        !options_block_matches_canonical_contract(commented_bait),
         "commented threshold text must not manufacture routed-latency evidence"
     );
 }
