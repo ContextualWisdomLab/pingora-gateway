@@ -1,11 +1,13 @@
 //! Fail-closed contract that keeps routed k6 thresholds executable.
 //!
-//! The routed load receipt is only meaningful when k6 evaluates the thresholds declared by the
-//! checked-in script. Grafana k6 exposes `K6_NO_THRESHOLDS` / `--no-thresholds` specifically to
-//! disable threshold execution. GNU Bash also sources `BASH_ENV` for non-interactive shells, so a
-//! startup hook could silently export the k6 disable switch before the routed command. The evidence
-//! lane therefore rejects both controls at workflow, job, step, and routed shell-command scope.
-//! Earlier persisted-environment mutation is separately forbidden by the exact-head contract.
+//! The routed load receipt is only meaningful when k6 evaluates the thresholds and workload shape
+//! declared by the checked-in script. Grafana k6 exposes `K6_*` environment options that override
+//! script options, including `K6_VUS` and `K6_ITERATIONS`, while `K6_NO_THRESHOLDS` disables
+//! threshold execution. GNU Bash also sources `BASH_ENV` for non-interactive shells, so a startup
+//! hook could silently inject the same controls before the routed command. The evidence lane
+//! therefore rejects k6 option environment controls plus `BASH_ENV` at workflow, job, step, and
+//! routed shell-command scope. Earlier persisted-environment mutation is separately forbidden by
+//! the exact-head contract.
 
 use serde_yaml::Value;
 use std::fs;
@@ -14,7 +16,6 @@ const CI_WORKFLOW: &str = ".github/workflows/ci.yml";
 const LOAD_JOB: &str = "load-contract";
 const ROUTED_STEP: &str = "Run routed pg-erd loopback traffic";
 const ROUTED_K6: &str = "k6 run --quiet tests/load/pg_erd_gateway_smoke.js";
-const NO_THRESHOLDS_ENV: &str = "K6_NO_THRESHOLDS";
 const NO_THRESHOLDS_FLAG: &str = "--no-thresholds";
 const BASH_ENV: &str = "BASH_ENV";
 
@@ -30,8 +31,19 @@ fn env_key_present(node: &Value, key: &str) -> bool {
     node.get("env").and_then(|env| env.get(key)).is_some()
 }
 
+fn env_has_k6_option(node: &Value) -> bool {
+    node.get("env")
+        .and_then(Value::as_mapping)
+        .is_some_and(|env| {
+            env.keys().any(|key| {
+                key.as_str()
+                    .is_some_and(|key| key.to_ascii_uppercase().starts_with("K6_"))
+            })
+        })
+}
+
 fn evidence_environment_is_clean(node: &Value) -> bool {
-    !env_key_present(node, NO_THRESHOLDS_ENV) && !env_key_present(node, BASH_ENV)
+    !env_has_k6_option(node) && !env_key_present(node, BASH_ENV)
 }
 
 fn routed_thresholds_are_enforced(source: &str) -> bool {
@@ -61,7 +73,7 @@ fn routed_thresholds_are_enforced(source: &str) -> bool {
 
     routed.get("run").and_then(Value::as_str).is_some_and(|run| {
         run.contains(ROUTED_K6)
-            && !run.contains(NO_THRESHOLDS_ENV)
+            && !run.contains("K6_")
             && !run.contains(NO_THRESHOLDS_FLAG)
             && !run.contains(BASH_ENV)
     })
@@ -72,7 +84,7 @@ fn live_routed_load_keeps_threshold_execution_enabled() {
     let source = fs::read_to_string(CI_WORKFLOW).expect("CI workflow should be readable UTF-8");
     assert!(
         routed_thresholds_are_enforced(&source),
-        "routed release evidence must execute the checked-in k6 thresholds without shell startup injection"
+        "routed release evidence must execute the checked-in k6 thresholds and workload shape without environment or shell-startup overrides"
     );
 }
 
@@ -219,6 +231,24 @@ jobs:
 }
 
 #[test]
+fn workflow_level_workload_override_must_not_claim_routed_release_evidence() {
+    let source = r#"
+env:
+  K6_VUS: 1
+  K6_ITERATIONS: 2
+jobs:
+  load-contract:
+    steps:
+      - name: Run routed pg-erd loopback traffic
+        run: |
+          PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
+            k6 run --quiet tests/load/pg_erd_gateway_smoke.js
+"#;
+
+    assert!(!routed_thresholds_are_enforced(source));
+}
+
+#[test]
 fn job_level_workload_override_must_not_claim_routed_release_evidence() {
     let source = r#"
 jobs:
@@ -250,6 +280,22 @@ jobs:
           K6_VUS: 1
           K6_ITERATIONS: 2
         run: |
+          PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
+            k6 run --quiet tests/load/pg_erd_gateway_smoke.js
+"#;
+
+    assert!(!routed_thresholds_are_enforced(source));
+}
+
+#[test]
+fn shell_exported_workload_override_must_not_claim_routed_release_evidence() {
+    let source = r#"
+jobs:
+  load-contract:
+    steps:
+      - name: Run routed pg-erd loopback traffic
+        run: |
+          export K6_VUS=1 K6_ITERATIONS=2
           PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
             k6 run --quiet tests/load/pg_erd_gateway_smoke.js
 "#;
