@@ -127,3 +127,17 @@ fn commented_manifest_dependency_bait_is_not_active_evidence() {
         "commented dependency text must not manufacture released-supplier evidence"
     );
 }
+
+/// An exact-looking key outside `[dependencies]` must not satisfy the released-supplier contract.
+#[test]
+fn package_metadata_dependency_bait_is_not_active_evidence() {
+    let required = "pingora = { version = \"=0.9.0\", features = [\"proxy\", \"openssl\"] }";
+    let manifest = format!(
+        "[package.metadata]\n{required}\n\n[dependencies]\npingora = {{ version = \"=0.8.0\", features = [\"proxy\", \"openssl\"] }}\n"
+    );
+
+    assert!(
+        !contains_active_exact_line(&manifest, required),
+        "metadata text outside the root dependency table must not manufacture released-supplier evidence"
+    );
+}
