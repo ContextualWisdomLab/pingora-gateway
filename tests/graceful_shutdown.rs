@@ -138,10 +138,10 @@ fn wait_for_exit(process: &mut Child, deadline: Instant) -> std::process::ExitSt
     }
 }
 
-/// Historical oracle semantics: an expected body prefix was enough, even with trailing bytes buffered.
+/// Requires both the admitted body bytes and the already-buffered response boundary to be exact.
 fn response_matches_exact_body(response: &[u8], header_end: usize, expected_body: &[u8]) -> bool {
     let expected_end = header_end + expected_body.len();
-    response.len() >= expected_end && &response[header_end..expected_end] == expected_body
+    response.len() == expected_end && &response[header_end..expected_end] == expected_body
 }
 
 fn read_response_through_body(stream: &mut TcpStream, expected_body: &[u8]) -> Vec<u8> {
@@ -176,13 +176,13 @@ fn read_response_through_body(stream: &mut TcpStream, expected_body: &[u8]) -> V
 
         assert!(
             response_matches_exact_body(&response, header_end, expected_body),
-            "gateway should forward the admitted in-flight response body exactly"
+            "gateway should forward the admitted in-flight response body exactly with no buffered trailing bytes"
         );
         return response;
     }
 }
 
-/// Proves the old graceful-drain body oracle accepted bytes beyond the admitted body boundary.
+/// Proves already-buffered bytes beyond the admitted body cannot satisfy graceful-drain evidence.
 #[test]
 fn graceful_response_reader_rejects_trailing_bytes_already_in_userspace() {
     let response =
