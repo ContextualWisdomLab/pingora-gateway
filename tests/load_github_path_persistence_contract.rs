@@ -1,9 +1,10 @@
-//! Fail-closed contract for persisted PATH mutation in routed-load evidence.
+//! Fail-closed contract for persisted environment mutation in routed-load evidence.
 //!
-//! GitHub Actions applies entries written to `GITHUB_PATH` to the `PATH` of subsequent steps.
-//! The routed receipt resolves provenance utilities such as `sha256sum`, `tar`, and `cmp` by bare
-//! command name, so an earlier load-job step must not be able to prepend an unreviewed shim
-//! directory before the measured step.
+//! GitHub Actions applies entries written to `GITHUB_PATH` to the `PATH` of subsequent steps and
+//! variables written to `GITHUB_ENV` to subsequent steps in the same job. The routed receipt
+//! resolves provenance utilities such as `sha256sum`, `tar`, and `cmp` by bare command name, so an
+//! earlier load-job step must not be able to persist an unreviewed command-resolution environment
+//! before the measured step.
 
 use serde_yaml::Value;
 use std::fs;
@@ -17,11 +18,11 @@ fn env_overrides_path(node: &Value) -> bool {
         .is_some_and(|env| env.keys().filter_map(Value::as_str).any(|key| key == "PATH"))
 }
 
-fn active_run_mentions_github_path(run: &str) -> bool {
+fn active_run_mentions_persistent_environment_file(run: &str) -> bool {
     run.lines()
         .map(str::trim_start)
         .filter(|line| !line.starts_with('#'))
-        .any(|line| line.contains("GITHUB_PATH"))
+        .any(|line| line.contains("GITHUB_PATH") || line.contains("GITHUB_ENV"))
 }
 
 fn load_job_has_closed_persisted_path(source: &str) -> bool {
@@ -48,7 +49,7 @@ fn load_job_has_closed_persisted_path(source: &str) -> bool {
             || step
                 .get("run")
                 .and_then(Value::as_str)
-                .is_some_and(active_run_mentions_github_path)
+                .is_some_and(active_run_mentions_persistent_environment_file)
     })
 }
 
@@ -57,7 +58,7 @@ fn live_load_job_does_not_persist_an_unreviewed_path() {
     let source = fs::read_to_string(CI_WORKFLOW).expect("CI workflow should be readable UTF-8");
     assert!(
         load_job_has_closed_persisted_path(&source),
-        "load-contract must not allow PATH mutation before routed evidence"
+        "load-contract must not persist environment mutations before routed evidence"
     );
 }
 
@@ -106,6 +107,18 @@ jobs:
 }
 
 #[test]
+fn unrelated_github_env_persistence_is_also_fail_closed() {
+    let source = r#"
+jobs:
+  load-contract:
+    steps:
+      - run: echo "TOOL_MODE=shimmed" >> "$GITHUB_ENV"
+      - run: echo measured
+"#;
+    assert!(!load_job_has_closed_persisted_path(source));
+}
+
+#[test]
 fn workflow_level_path_override_must_not_claim_release_evidence() {
     let source = r#"
 env:
@@ -132,13 +145,13 @@ jobs:
 }
 
 #[test]
-fn comment_only_github_path_reference_is_not_execution() {
+fn comment_only_environment_file_reference_is_not_execution() {
     let source = r#"
 jobs:
   load-contract:
     steps:
       - run: |
-          # GITHUB_PATH persistence is forbidden in load evidence.
+          # GITHUB_PATH and GITHUB_ENV persistence are forbidden in load evidence.
           echo measured
 "#;
     assert!(load_job_has_closed_persisted_path(source));
