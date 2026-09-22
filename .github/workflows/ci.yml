@@ -299,7 +299,7 @@ jobs:
           fi
 
           PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
-            k6 run --quiet tests/load/pg_erd_gateway_smoke.js
+            /usr/local/bin/k6 run --quiet tests/load/pg_erd_gateway_smoke.js
       - name: Require routed pg-erd latency summary
         run: test -s k6-pg-erd-summary.json
       - name: Upload routed pg-erd exact-SHA load evidence
