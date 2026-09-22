@@ -3,8 +3,9 @@
 //! Checkout identity alone does not prove that the measured fixture, migration binary, or k6
 //! script still correspond to the checked-out head: an earlier step can mutate tracked source or
 //! replace a generated executable after checkout verification. The routed measurement therefore
-//! re-verifies HEAD, rejects tracked-source drift, rebuilds the Rust fixture, cleans the package's
-//! release artifacts, and rebuilds the migration binary before it starts measured traffic.
+//! re-verifies HEAD, rejects index and working-tree drift from HEAD, rebuilds the Rust fixture,
+//! cleans the package's release artifacts, and rebuilds the migration binary before it starts
+//! measured traffic.
 
 use serde_yaml::Value;
 use std::fs;
@@ -13,7 +14,7 @@ const CI_WORKFLOW: &str = ".github/workflows/ci.yml";
 const LOAD_JOB: &str = "load-contract";
 const ROUTED_STEP: &str = "Run routed pg-erd loopback traffic";
 const VERIFY_HEAD: &str = "test \"$(git rev-parse HEAD)\" = \"$EXPECTED_SHA\"";
-const VERIFY_SOURCE: &str = "git diff --exit-code -- Cargo.toml Cargo.lock src tests/load/load_origin.rs tests/load/pg_erd_gateway_smoke.js";
+const VERIFY_SOURCE: &str = "git diff --exit-code HEAD -- Cargo.toml Cargo.lock src tests/load/load_origin.rs tests/load/pg_erd_gateway_smoke.js";
 const REBUILD_ORIGIN: &str = "rustc --edition 2021 -D warnings -C opt-level=3 -C debuginfo=0 --out-dir /tmp tests/load/load_origin.rs";
 const CLEAN_RELEASE: &str = "cargo clean -p cwl-pingora-gateway --release";
 const REBUILD_CANDIDATE: &str =
@@ -113,7 +114,7 @@ jobs:
 }
 
 #[test]
-fn clean_source_without_fresh_candidate_rebuild_is_not_enough() {
+fn index_relative_diff_is_not_exact_head_binding() {
     let source = r#"
 jobs:
   load-contract:
@@ -122,6 +123,27 @@ jobs:
         run: |
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
           git diff --exit-code -- Cargo.toml Cargo.lock src tests/load/load_origin.rs tests/load/pg_erd_gateway_smoke.js
+          rustc --edition 2021 -D warnings -C opt-level=3 -C debuginfo=0 --out-dir /tmp tests/load/load_origin.rs
+          cargo clean -p cwl-pingora-gateway --release
+          cargo build --release --locked --bin cwl-pingora-pg-erd-migration
+          target/release/cwl-pingora-pg-erd-migration --config /tmp/pg-erd-load.yaml >/tmp/pingora-pg-erd-load.log 2>&1 &
+"#;
+    assert!(
+        !routed_point_of_use_is_bound(source),
+        "working-tree-to-index diff can miss a staged mutation and must not substitute for HEAD binding"
+    );
+}
+
+#[test]
+fn clean_source_without_fresh_candidate_rebuild_is_not_enough() {
+    let source = r#"
+jobs:
+  load-contract:
+    steps:
+      - name: Run routed pg-erd loopback traffic
+        run: |
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          git diff --exit-code HEAD -- Cargo.toml Cargo.lock src tests/load/load_origin.rs tests/load/pg_erd_gateway_smoke.js
           rustc --edition 2021 -D warnings -C opt-level=3 -C debuginfo=0 --out-dir /tmp tests/load/load_origin.rs
           target/release/cwl-pingora-pg-erd-migration --config /tmp/pg-erd-load.yaml >/tmp/pingora-pg-erd-load.log 2>&1 &
 "#;
@@ -137,7 +159,7 @@ jobs:
       - name: Run routed pg-erd loopback traffic
         run: |
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
-          git diff --exit-code -- Cargo.toml Cargo.lock src tests/load/load_origin.rs tests/load/pg_erd_gateway_smoke.js
+          git diff --exit-code HEAD -- Cargo.toml Cargo.lock src tests/load/load_origin.rs tests/load/pg_erd_gateway_smoke.js
           cargo clean -p cwl-pingora-gateway --release
           cargo build --release --locked --bin cwl-pingora-pg-erd-migration
           target/release/cwl-pingora-pg-erd-migration --config /tmp/pg-erd-load.yaml >/tmp/pingora-pg-erd-load.log 2>&1 &
