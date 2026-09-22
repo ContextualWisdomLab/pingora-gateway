@@ -125,6 +125,28 @@ jobs:
 }
 
 #[test]
+fn same_shell_k6_function_shadow_must_not_claim_routed_release_evidence() {
+    let source = r#"
+jobs:
+  load-contract:
+    steps:
+      - name: Run routed pg-erd loopback traffic
+        shell: bash
+        run: |
+          k6() {
+            printf '{}' > k6-pg-erd-summary.json
+          }
+          PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
+            k6 run --quiet tests/load/pg_erd_gateway_smoke.js
+"#;
+
+    assert!(
+        !routed_command_resolution_is_stable(source),
+        "a same-shell k6 function shadows the installed executable while preserving canonical command text"
+    );
+}
+
+#[test]
 fn comments_that_name_path_do_not_mutate_command_resolution() {
     let source = r#"
 jobs:
