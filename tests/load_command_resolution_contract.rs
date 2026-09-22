@@ -4,9 +4,10 @@
 //! step invokes that installed path directly. A bare `k6` name is subject to Bash function, alias,
 //! hash-table, and `PATH` resolution inside the same multi-line `run` shell. Bash also permits a
 //! function name containing `/`, so even an absolute command token can be shadowed when that same
-//! path is bound as a shell function first. The evidence lane therefore requires exactly one active
-//! `/usr/local/bin/k6` token (the measurement invocation) and rejects executable `PATH` references
-//! in the routed shell so adjacent readiness commands cannot be silently retargeted.
+//! path is bound as a shell function first. Dynamic `eval` can reconstruct the same binding without
+//! repeating the literal path in source. The evidence lane therefore requires exactly one active
+//! `/usr/local/bin/k6` token (the measurement invocation), rejects executable `PATH` references,
+//! and rejects dynamic evaluation in the routed shell.
 
 use serde_yaml::Value;
 use std::fs;
@@ -43,6 +44,10 @@ fn active_shell_lines(run: &str) -> impl Iterator<Item = &str> {
 
 fn routed_shell_references_path(run: &str) -> bool {
     active_shell_lines(run).any(|line| contains_shell_identifier(line, "PATH"))
+}
+
+fn routed_shell_uses_dynamic_evaluation(run: &str) -> bool {
+    active_shell_lines(run).any(|line| contains_shell_identifier(line, "eval"))
 }
 
 fn routed_shell_has_single_k6_path(run: &str) -> bool {
@@ -89,6 +94,7 @@ fn routed_command_resolution_is_stable(source: &str) -> bool {
         run.contains(ROUTED_K6)
             && routed_shell_has_single_k6_path(run)
             && !routed_shell_references_path(run)
+            && !routed_shell_uses_dynamic_evaluation(run)
     })
 }
 
