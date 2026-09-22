@@ -184,6 +184,30 @@ jobs:
 }
 
 #[test]
+fn imported_bash_function_must_not_claim_routed_release_evidence() {
+    let source = format!(
+        r#"
+jobs:
+  load-contract:
+    steps:
+      - name: Run routed pg-erd loopback traffic
+        shell: bash
+        env:
+          "BASH_FUNC_cmp%%": "() {{ return 0; }}"
+        run: |
+          set -euo pipefail
+          {tail}
+"#,
+        tail = ROUTED_PROVENANCE_TAIL.replace('\n', "\n          ")
+    );
+
+    assert!(
+        !routed_binary_provenance_is_fresh(&source),
+        "Bash can import functions from BASH_FUNC_*%% environment entries before the run script starts"
+    );
+}
+
+#[test]
 fn canonical_provenance_tail_is_admitted() {
     let source = format!(
         r#"
