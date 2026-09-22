@@ -14,12 +14,15 @@ const CI_WORKFLOW: &str = ".github/workflows/ci.yml";
 const LOAD_JOB: &str = "load-contract";
 const ROUTED_STEP: &str = "Run routed pg-erd loopback traffic";
 const VERIFY_HEAD: &str = "test \"$(git rev-parse HEAD)\" = \"$EXPECTED_SHA\"";
-const VERIFY_SOURCE: &str = "git diff --exit-code HEAD -- Cargo.toml Cargo.lock src tests/load/load_origin.rs tests/load/pg_erd_gateway_smoke.js";
-const REBUILD_ORIGIN: &str = "rustc --edition 2021 -D warnings -C opt-level=3 -C debuginfo=0 --out-dir /tmp tests/load/load_origin.rs";
+const VERIFY_SOURCE: &str =
+    "git diff --exit-code HEAD -- Cargo.toml Cargo.lock src tests/load/load_origin.rs tests/load/pg_erd_gateway_smoke.js";
+const REBUILD_ORIGIN: &str =
+    "rustc --edition 2021 -D warnings -C opt-level=3 -C debuginfo=0 --out-dir /tmp tests/load/load_origin.rs";
 const CLEAN_RELEASE: &str = "cargo clean -p cwl-pingora-gateway --release";
 const REBUILD_CANDIDATE: &str =
     "cargo build --release --locked --bin cwl-pingora-pg-erd-migration";
-const START_CANDIDATE: &str = "target/release/cwl-pingora-pg-erd-migration --config /tmp/pg-erd-load.yaml >/tmp/pingora-pg-erd-load.log 2>&1 &";
+const START_CANDIDATE: &str =
+    "target/release/cwl-pingora-pg-erd-migration --config /tmp/pg-erd-load.yaml >/tmp/pingora-pg-erd-load.log 2>&1 &";
 
 fn unique_named_step<'a>(steps: &'a [Value], name: &str) -> Option<&'a Value> {
     let mut matches = steps
