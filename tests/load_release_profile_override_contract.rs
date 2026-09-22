@@ -110,6 +110,20 @@ jobs:
 }
 
 #[test]
+fn process_local_release_profile_override_is_rejected() {
+    let source = r#"
+jobs:
+  load-contract:
+    steps:
+      - name: Run routed pg-erd loopback traffic
+        shell: bash
+        run: |
+          CARGO_PROFILE_RELEASE_LTO=fat cargo build --release --locked --bin cwl-pingora-pg-erd-migration
+"#;
+    assert!(!routed_release_profile_is_canonical(source));
+}
+
+#[test]
 fn unrelated_cargo_environment_is_not_a_profile_override() {
     let source = r#"
 env:
