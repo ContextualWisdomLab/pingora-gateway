@@ -1,9 +1,9 @@
 //! Fail-closed contract for `load-contract` shell selection.
 //!
-//! Run-line privilege review is insufficient when a step can replace GitHub's normal shell with an
-//! arbitrary command template such as `sudo bash {0}`. The load job therefore permits explicit
-//! `shell:` only on the three reviewed traffic/tool steps, and each must be exactly `bash`; all
-//! other steps stay on the GitHub-hosted runner's default shell contract.
+//! Run-line privilege review is insufficient when a step or `defaults.run.shell` can replace
+//! GitHub's normal shell with an arbitrary command template such as `sudo bash {0}`. The load job
+//! therefore forbids workflow/job default-shell overrides and permits explicit `shell:` only on the
+//! three reviewed traffic/tool steps, each exactly `bash`.
 
 use serde_yaml::Value;
 use std::fs;
@@ -14,16 +14,29 @@ const K6_INSTALL_STEP: &str = "Install checksum-pinned k6 2.2.0";
 const LOOPBACK_STEP: &str = "Exercise concurrent loopback traffic contract";
 const ROUTED_STEP: &str = "Run routed pg-erd loopback traffic";
 
+fn overrides_default_run_shell(node: &Value) -> bool {
+    node.get("defaults")
+        .and_then(|defaults| defaults.get("run"))
+        .and_then(|run| run.get("shell"))
+        .is_some()
+}
+
 fn load_shell_surface_is_canonical(source: &str) -> bool {
     let Ok(document) = serde_yaml::from_str::<Value>(source) else {
         return false;
     };
-    let Some(steps) = document
-        .get("jobs")
-        .and_then(|jobs| jobs.get(LOAD_JOB))
-        .and_then(|job| job.get("steps"))
-        .and_then(Value::as_sequence)
-    else {
+    if overrides_default_run_shell(&document) {
+        return false;
+    }
+
+    let Some(job) = document.get("jobs").and_then(|jobs| jobs.get(LOAD_JOB)) else {
+        return false;
+    };
+    if overrides_default_run_shell(job) {
+        return false;
+    }
+
+    let Some(steps) = job.get("steps").and_then(Value::as_sequence) else {
         return false;
     };
 
@@ -49,7 +62,7 @@ fn live_load_job_shell_surface_is_canonical() {
     let source = fs::read_to_string(CI_WORKFLOW).expect("CI workflow should be readable UTF-8");
     assert!(
         load_shell_surface_is_canonical(&source),
-        "load-contract must use explicit shell selection only for the three reviewed Bash steps"
+        "load-contract must keep runner default shells and use explicit shell selection only for the three reviewed Bash steps"
     );
 }
 
@@ -119,6 +132,26 @@ jobs:
         !load_shell_surface_is_canonical(source),
         "job-level defaults.run.shell can privilege unannotated run steps while the explicit shell surface remains canonical"
     );
+}
+
+#[test]
+fn privileged_workflow_default_shell_must_not_claim_release_evidence() {
+    let source = r#"
+defaults:
+  run:
+    shell: sudo bash {0}
+jobs:
+  load-contract:
+    steps:
+      - name: Install checksum-pinned k6 2.2.0
+        shell: bash
+      - name: Exercise concurrent loopback traffic contract
+        shell: bash
+      - name: Run routed pg-erd loopback traffic
+        shell: bash
+"#;
+
+    assert!(!load_shell_surface_is_canonical(source));
 }
 
 #[test]
