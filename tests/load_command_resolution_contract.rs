@@ -2,8 +2,9 @@
 //!
 //! The load receipt is only meaningful when the routed step cannot retarget the `k6` lookup
 //! through runner-local command-search state. GitHub Actions YAML `env.PATH` overrides are already
-//! rejected elsewhere, while Bash also resolves bare command names through the current shell's
-//! `PATH`. The evidence step therefore must not reference or mutate `PATH` inside its own shell.
+//! rejected elsewhere. Within the routed Bash shell, the evidence path also rejects executable
+//! `PATH` references and any executable `k6` reference other than the canonical terminal command,
+//! covering shell-function, alias, and command-hash shadowing without trying to interpret them.
 
 use serde_yaml::Value;
 use std::fs;
@@ -31,11 +32,14 @@ fn contains_shell_identifier(line: &str, identifier: &str) -> bool {
     })
 }
 
-fn routed_shell_references_path(run: &str) -> bool {
+fn routed_shell_rebinds_command_resolution(run: &str) -> bool {
     run.lines()
         .map(str::trim_start)
         .filter(|line| !line.starts_with('#'))
-        .any(|line| contains_shell_identifier(line, "PATH"))
+        .any(|line| {
+            contains_shell_identifier(line, "PATH")
+                || (contains_shell_identifier(line, "k6") && line.trim() != ROUTED_K6)
+        })
 }
 
 fn unique_named_step<'a>(steps: &'a [Value], name: &str) -> Option<&'a Value> {
@@ -72,7 +76,7 @@ fn routed_command_resolution_is_stable(source: &str) -> bool {
     }
 
     routed.get("run").and_then(Value::as_str).is_some_and(|run| {
-        run.contains(ROUTED_K6) && !routed_shell_references_path(run)
+        run.contains(ROUTED_K6) && !routed_shell_rebinds_command_resolution(run)
     })
 }
 
@@ -147,14 +151,49 @@ jobs:
 }
 
 #[test]
-fn comments_that_name_path_do_not_mutate_command_resolution() {
+fn same_shell_k6_alias_must_not_claim_routed_release_evidence() {
+    let source = r#"
+jobs:
+  load-contract:
+    steps:
+      - name: Run routed pg-erd loopback traffic
+        shell: bash
+        run: |
+          shopt -s expand_aliases
+          alias k6='/tmp/evidence-k6'
+          PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
+            k6 run --quiet tests/load/pg_erd_gateway_smoke.js
+"#;
+
+    assert!(!routed_command_resolution_is_stable(source));
+}
+
+#[test]
+fn same_shell_k6_hash_override_must_not_claim_routed_release_evidence() {
+    let source = r#"
+jobs:
+  load-contract:
+    steps:
+      - name: Run routed pg-erd loopback traffic
+        shell: bash
+        run: |
+          hash -p /tmp/evidence-k6 k6
+          PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
+            k6 run --quiet tests/load/pg_erd_gateway_smoke.js
+"#;
+
+    assert!(!routed_command_resolution_is_stable(source));
+}
+
+#[test]
+fn comments_that_name_path_or_k6_do_not_mutate_command_resolution() {
     let source = r#"
 jobs:
   load-contract:
     steps:
       - name: Run routed pg-erd loopback traffic
         run: |
-          # PATH remains runner-owned; this comment must not be treated as an override.
+          # PATH remains runner-owned and k6 remains the installed binary.
           PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
             k6 run --quiet tests/load/pg_erd_gateway_smoke.js
 "#;
