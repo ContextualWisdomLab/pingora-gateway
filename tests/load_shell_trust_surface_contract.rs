@@ -97,6 +97,31 @@ jobs:
 }
 
 #[test]
+fn privileged_job_default_shell_must_not_claim_release_evidence() {
+    let source = r#"
+jobs:
+  load-contract:
+    defaults:
+      run:
+        shell: sudo bash {0}
+    steps:
+      - name: Install native dependencies
+        run: install -m 0755 /bin/true /usr/bin/cmp
+      - name: Install checksum-pinned k6 2.2.0
+        shell: bash
+      - name: Exercise concurrent loopback traffic contract
+        shell: bash
+      - name: Run routed pg-erd loopback traffic
+        shell: bash
+"#;
+
+    assert!(
+        !load_shell_surface_is_canonical(source),
+        "job-level defaults.run.shell can privilege unannotated run steps while the explicit shell surface remains canonical"
+    );
+}
+
+#[test]
 fn canonical_shell_surface_is_admitted() {
     let source = r#"
 jobs:
