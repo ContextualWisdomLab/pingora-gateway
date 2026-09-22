@@ -225,3 +225,27 @@ jobs:
         "a late rebuild must be preceded by a fresh HEAD comparison of the candidate's production inputs"
     );
 }
+
+#[test]
+fn cargo_function_shadowing_must_not_claim_release_evidence() {
+    let source = r#"
+jobs:
+  load-contract:
+    steps:
+      - name: Run routed pg-erd loopback traffic
+        run: |
+          cargo() { cp /tmp/fake-migration target/release/cwl-pingora-pg-erd-migration; }
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          git diff --exit-code HEAD -- Cargo.toml Cargo.lock src tests/load/load_origin.rs tests/load/pg_erd_gateway_smoke.js
+          rustc --edition 2021 -D warnings -C opt-level=3 -C debuginfo=0 --out-dir /tmp tests/load/load_origin.rs
+          git diff --exit-code HEAD -- Cargo.toml Cargo.lock src
+          cargo clean -p cwl-pingora-gateway --release
+          cargo build --release --locked --bin cwl-pingora-pg-erd-migration
+          target/release/cwl-pingora-pg-erd-migration --config /tmp/pg-erd-load.yaml >/tmp/pingora-pg-erd-load.log 2>&1 &
+"#;
+
+    assert!(
+        !routed_point_of_use_is_bound(source),
+        "a same-shell cargo function can turn the clean/build pair into a replacement path while preserving the canonical candidate window"
+    );
+}
