@@ -40,11 +40,16 @@ fn unique_named_step<'a>(steps: &'a [Value], name: &str) -> Option<&'a Value> {
     matches.next().is_none().then_some(step)
 }
 
+fn is_forbidden_env_key(key: &str) -> bool {
+    FORBIDDEN_ENV_KEYS.contains(&key)
+}
+
 fn mapping_has_forbidden_env(mapping: Option<&Mapping>) -> bool {
     mapping.is_some_and(|mapping| {
-        FORBIDDEN_ENV_KEYS.iter().any(|key| {
-            mapping.contains_key(Value::String((*key).to_owned()))
-        })
+        mapping
+            .keys()
+            .filter_map(Value::as_str)
+            .any(is_forbidden_env_key)
     })
 }
 
@@ -57,6 +62,18 @@ fn active_lines(run: &str) -> Vec<&str> {
         .map(str::trim)
         .filter(|line| !line.is_empty() && !line.starts_with('#'))
         .collect()
+}
+
+fn line_has_inline_forbidden_env(line: &str) -> bool {
+    if matches!(
+        line,
+        CANONICAL_CARGO_HOME | CANONICAL_RUSTUP_HOME | CANONICAL_RUSTUP_TOOLCHAIN | CANONICAL_PATH
+    ) {
+        return false;
+    }
+    line.split_whitespace()
+        .filter_map(|token| token.split_once('=').map(|(key, _)| key))
+        .any(is_forbidden_env_key)
 }
 
 fn routed_rust_toolchain_is_root_owned(source: &str) -> bool {
@@ -110,6 +127,7 @@ fn routed_rust_toolchain_is_root_owned(source: &str) -> bool {
             .filter(|line| line.contains("RUSTUP_TOOLCHAIN"))
             .copied()
             .eq([CANONICAL_RUSTUP_TOOLCHAIN])
+        && lines.iter().all(|line| !line_has_inline_forbidden_env(line))
 }
 
 #[test]
