@@ -334,3 +334,90 @@ jobs:
         "job-local PATH overrides can replace git or k6 without persisted path writes"
     );
 }
+
+#[test]
+fn routed_git_work_tree_override_must_not_claim_exact_head_evidence() {
+    let source = format!(
+        r#"
+env:
+  EXPECTED_SHA: {EXPECTED_SHA_EXPR}
+jobs:
+  load-contract:
+    steps:
+      - name: Checkout exact revision
+        uses: {CHECKOUT_ACTION}
+        with:
+          ref: ${{{{ env.EXPECTED_SHA }}}}
+          persist-credentials: false
+      - name: Verify checkout identity
+        run: test \"$(git rev-parse HEAD)\" = \"$EXPECTED_SHA\"
+      - name: Run routed pg-erd loopback traffic
+        env:
+          GIT_WORK_TREE: /tmp/alternate-worktree
+        run: echo measured
+      - name: Require routed pg-erd latency summary
+        run: test -s k6-pg-erd-summary.json
+"#
+    );
+
+    assert!(
+        !load_evidence_claims_exact_head(&source),
+        "GIT_WORK_TREE can redirect point-of-use git checks away from the workspace Cargo builds"
+    );
+}
+
+#[test]
+fn routed_git_dir_override_must_not_claim_exact_head_evidence() {
+    let source = format!(
+        r#"
+env:
+  EXPECTED_SHA: {EXPECTED_SHA_EXPR}
+jobs:
+  load-contract:
+    steps:
+      - name: Checkout exact revision
+        uses: {CHECKOUT_ACTION}
+        with:
+          ref: ${{{{ env.EXPECTED_SHA }}}}
+          persist-credentials: false
+      - name: Verify checkout identity
+        run: test \"$(git rev-parse HEAD)\" = \"$EXPECTED_SHA\"
+      - name: Run routed pg-erd loopback traffic
+        env:
+          GIT_DIR: /tmp/alternate-worktree/.git
+        run: echo measured
+      - name: Require routed pg-erd latency summary
+        run: test -s k6-pg-erd-summary.json
+"#
+    );
+
+    assert!(!load_evidence_claims_exact_head(&source));
+}
+
+#[test]
+fn routed_git_index_override_must_not_claim_exact_head_evidence() {
+    let source = format!(
+        r#"
+env:
+  EXPECTED_SHA: {EXPECTED_SHA_EXPR}
+jobs:
+  load-contract:
+    steps:
+      - name: Checkout exact revision
+        uses: {CHECKOUT_ACTION}
+        with:
+          ref: ${{{{ env.EXPECTED_SHA }}}}
+          persist-credentials: false
+      - name: Verify checkout identity
+        run: test \"$(git rev-parse HEAD)\" = \"$EXPECTED_SHA\"
+      - name: Run routed pg-erd loopback traffic
+        env:
+          GIT_INDEX_FILE: /tmp/alternate-index
+        run: echo measured
+      - name: Require routed pg-erd latency summary
+        run: test -s k6-pg-erd-summary.json
+"#
+    );
+
+    assert!(!load_evidence_claims_exact_head(&source));
+}
