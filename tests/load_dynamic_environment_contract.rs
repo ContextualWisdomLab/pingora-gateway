@@ -2,9 +2,9 @@
 //!
 //! Literal `K6_*` scans are insufficient when Bash reconstructs an option name at runtime and
 //! exports it before invoking k6. A process-local wrapper can do the same without mutating the
-//! shell environment. This contract therefore admits only the exact routed k6 launch pair, the one
-//! canonical readonly PATH hardening line, and keeps the evidence shell free of other generic
-//! export/declaration, allexport, and environment-wrapper primitives.
+//! shell environment. This contract therefore admits only the exact routed k6 launch pair, the
+//! canonical readonly command/toolchain trust-root bindings, and keeps the evidence shell free of
+//! other generic export/declaration, allexport, and environment-wrapper primitives.
 
 use serde_yaml::Value;
 use std::fs;
@@ -15,6 +15,9 @@ const ROUTED_STEP: &str = "Run routed pg-erd loopback traffic";
 const CANONICAL_SET: &str = "set -euo pipefail";
 const CANONICAL_PATH: &str =
     "readonly PATH=/etc/skel/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+const CANONICAL_RUSTUP_HOME: &str = "readonly RUSTUP_HOME=/etc/skel/.rustup";
+const CANONICAL_RUSTUP_TOOLCHAIN: &str =
+    "readonly RUSTUP_TOOLCHAIN=stable-x86_64-unknown-linux-gnu";
 const ROUTED_URL_ASSIGNMENT: &str = "PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \\";
 const ROUTED_K6: &str = "/usr/local/bin/k6 run --quiet tests/load/pg_erd_gateway_smoke.js";
 const K6_PATH: &str = "/usr/local/bin/k6";
@@ -39,7 +42,10 @@ fn mutates_exported_environment(line: &str) -> bool {
     line.starts_with("export ")
         || line.starts_with("declare ")
         || line.starts_with("typeset ")
-        || (line.starts_with("readonly ") && line != CANONICAL_PATH)
+        || (line.starts_with("readonly ")
+            && line != CANONICAL_PATH
+            && line != CANONICAL_RUSTUP_HOME
+            && line != CANONICAL_RUSTUP_TOOLCHAIN)
         || (line.starts_with("set ") && line != CANONICAL_SET)
 }
 
@@ -200,10 +206,12 @@ time /usr/local/bin/k6 run --quiet tests/load/pg_erd_gateway_smoke.js
 }
 
 #[test]
-fn canonical_readonly_path_remains_admitted() {
+fn canonical_readonly_trust_root_remains_admitted() {
     let run = r#"
 set -euo pipefail
 readonly PATH=/etc/skel/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+readonly RUSTUP_HOME=/etc/skel/.rustup
+readonly RUSTUP_TOOLCHAIN=stable-x86_64-unknown-linux-gnu
 PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
   /usr/local/bin/k6 run --quiet tests/load/pg_erd_gateway_smoke.js
 "#;
