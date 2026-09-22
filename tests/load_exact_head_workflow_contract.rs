@@ -3,9 +3,9 @@
 //! A routed latency receipt is only attributable to the pull-request head when checkout and the
 //! checkout-identity gate consume the workflow-owned `EXPECTED_SHA` without job-, step-, or
 //! persisted runtime rebinding. Because shell code can reconstruct protected assignments or
-//! replace executable resolution without leaving a reliable static trace, the evidence-bearing
-//! path forbids persisted environment/path mutation and explicit `PATH` overrides at critical
-//! checkout, identity, measurement, and summary boundaries.
+//! replace executable/repository resolution without leaving a reliable static trace, the
+//! evidence-bearing path forbids persisted environment/path mutation plus explicit `PATH` and
+//! `GIT_*` overrides at the checkout, identity, and measurement boundaries.
 
 use serde_yaml::Value;
 use std::fs;
@@ -40,6 +40,16 @@ fn execution_path_overridden(node: &Value) -> bool {
         .is_some()
 }
 
+fn git_repository_environment_overridden(node: &Value) -> bool {
+    node.get("env")
+        .and_then(Value::as_mapping)
+        .is_some_and(|env| {
+            env.keys()
+                .filter_map(Value::as_str)
+                .any(|key| key.starts_with("GIT_"))
+        })
+}
+
 fn persists_runtime_environment(step: &Value) -> bool {
     step.get("run")
         .and_then(Value::as_str)
@@ -59,6 +69,7 @@ fn checkout_contract(step: &Value) -> bool {
         || !failure_propagates(step)
         || expected_sha_overridden(step)
         || execution_path_overridden(step)
+        || git_repository_environment_overridden(step)
     {
         return false;
     }
@@ -77,6 +88,7 @@ fn verify_contract(step: &Value) -> bool {
         && failure_propagates(step)
         && !expected_sha_overridden(step)
         && !execution_path_overridden(step)
+        && !git_repository_environment_overridden(step)
         && step.get("run").and_then(Value::as_str) == Some(VERIFY_RUN)
 }
 
@@ -90,6 +102,7 @@ fn load_evidence_claims_exact_head(source: &str) -> bool {
         .and_then(Value::as_str)
         != Some(EXPECTED_SHA_EXPR)
         || execution_path_overridden(&document)
+        || git_repository_environment_overridden(&document)
     {
         return false;
     }
@@ -97,7 +110,10 @@ fn load_evidence_claims_exact_head(source: &str) -> bool {
     let Some(job) = document.get("jobs").and_then(|jobs| jobs.get(LOAD_JOB)) else {
         return false;
     };
-    if expected_sha_overridden(job) || execution_path_overridden(job) {
+    if expected_sha_overridden(job)
+        || execution_path_overridden(job)
+        || git_repository_environment_overridden(job)
+    {
         return false;
     }
     let Some(steps) = job.get("steps").and_then(Value::as_sequence) else {
@@ -132,6 +148,7 @@ fn load_evidence_claims_exact_head(source: &str) -> bool {
         && verify_contract(verify)
         && !expected_sha_overridden(routed)
         && !execution_path_overridden(routed)
+        && !git_repository_environment_overridden(routed)
         && !expected_sha_overridden(summary)
         && !execution_path_overridden(summary)
 }
