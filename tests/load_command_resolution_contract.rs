@@ -1,0 +1,88 @@
+//! Regression contract for routed-load executable resolution.
+//!
+//! The load receipt is only meaningful when the routed step cannot retarget the `k6` lookup
+//! through runner-local command-search state. GitHub Actions YAML `env.PATH` overrides are already
+//! rejected elsewhere; this contract exercises the distinct same-shell mutation boundary.
+
+use serde_yaml::Value;
+use std::fs;
+
+const CI_WORKFLOW: &str = ".github/workflows/ci.yml";
+const LOAD_JOB: &str = "load-contract";
+const ROUTED_STEP: &str = "Run routed pg-erd loopback traffic";
+const ROUTED_K6: &str = "k6 run --quiet tests/load/pg_erd_gateway_smoke.js";
+
+fn env_overrides_path(node: &Value) -> bool {
+    node.get("env").and_then(|env| env.get("PATH")).is_some()
+}
+
+fn unique_named_step<'a>(steps: &'a [Value], name: &str) -> Option<&'a Value> {
+    let mut matches = steps
+        .iter()
+        .filter(|step| step.get("name").and_then(Value::as_str) == Some(name));
+    let step = matches.next()?;
+    matches.next().is_none().then_some(step)
+}
+
+fn routed_command_resolution_is_stable(source: &str) -> bool {
+    let Ok(document) = serde_yaml::from_str::<Value>(source) else {
+        return false;
+    };
+    if env_overrides_path(&document) {
+        return false;
+    }
+
+    let Some(job) = document.get("jobs").and_then(|jobs| jobs.get(LOAD_JOB)) else {
+        return false;
+    };
+    if env_overrides_path(job) {
+        return false;
+    }
+
+    let Some(steps) = job.get("steps").and_then(Value::as_sequence) else {
+        return false;
+    };
+    let Some(routed) = unique_named_step(steps, ROUTED_STEP) else {
+        return false;
+    };
+    if env_overrides_path(routed) {
+        return false;
+    }
+
+    routed
+        .get("run")
+        .and_then(Value::as_str)
+        .is_some_and(|run| run.contains(ROUTED_K6))
+}
+
+#[test]
+fn live_routed_load_keeps_command_resolution_stable() {
+    let source = fs::read_to_string(CI_WORKFLOW).expect("CI workflow should be readable UTF-8");
+    assert!(
+        routed_command_resolution_is_stable(&source),
+        "routed load evidence must not retarget k6 executable resolution"
+    );
+}
+
+#[test]
+fn same_shell_path_override_must_not_claim_routed_release_evidence() {
+    let source = r#"
+jobs:
+  load-contract:
+    steps:
+      - name: Run routed pg-erd loopback traffic
+        shell: bash
+        run: |
+          mkdir -p /tmp/evidence-shims
+          printf '#!/bin/sh\nprintf "{}" > k6-pg-erd-summary.json\n' > /tmp/evidence-shims/k6
+          chmod +x /tmp/evidence-shims/k6
+          PATH=/tmp/evidence-shims:$PATH
+          PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
+            k6 run --quiet tests/load/pg_erd_gateway_smoke.js
+"#;
+
+    assert!(
+        !routed_command_resolution_is_stable(source),
+        "a same-shell PATH override can redirect the canonical k6 command to a shim while preserving command text"
+    );
+}
