@@ -85,6 +85,28 @@ jobs:
 }
 
 #[test]
+fn shell_function_shadowing_git_must_not_claim_release_evidence() {
+    let source = format!(
+        r#"
+jobs:
+  load-contract:
+    steps:
+      - name: Run routed pg-erd loopback traffic
+        run: |
+          git() {{ return 0; }}
+          printf 'export default function () {{}}' > tests/load/pg_erd_gateway_smoke.js
+          {tail}
+"#,
+        tail = MEASUREMENT_TAIL.replace('\n', "\n          ")
+    );
+
+    assert!(
+        !routed_measurement_source_is_adjacent(&source),
+        "a same-shell git function can turn the final HEAD comparison into a no-op before k6 interprets a rewritten workload"
+    );
+}
+
+#[test]
 fn canonical_measurement_tail_is_admitted() {
     let source = format!(
         r#"
