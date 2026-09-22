@@ -7,13 +7,15 @@
 //! the installed executable is byte-identical to that derivation, and then invokes it without an
 //! intervening command. The provenance utilities themselves must also retain their normal shell
 //! and runner resolution; function/alias/source mutations, imported Bash functions, dynamic-loader
-//! injection, or a substituted job container can otherwise turn the textual proof into a no-op.
+//! injection, a substituted job container, or a changed runner selector can otherwise turn the
+//! textual proof into a no-op.
 
 use serde_yaml::Value;
 use std::fs;
 
 const CI_WORKFLOW: &str = ".github/workflows/ci.yml";
 const LOAD_JOB: &str = "load-contract";
+const LOAD_RUNNER: &str = "ubuntu-24.04";
 const ROUTED_STEP: &str = "Run routed pg-erd loopback traffic";
 const PROVENANCE_COMMANDS: [&str; 5] = ["rm", "mkdir", "sha256sum", "tar", "cmp"];
 const ROUTED_PROVENANCE_TAIL: &str = r#"rm -rf /tmp/cwl-k6-routed
@@ -90,7 +92,8 @@ fn routed_binary_provenance_is_fresh(source: &str) -> bool {
     let Some(job) = document.get("jobs").and_then(|jobs| jobs.get(LOAD_JOB)) else {
         return false;
     };
-    if job.get("container").is_some()
+    if job.get("runs-on").and_then(Value::as_str) != Some(LOAD_RUNNER)
+        || job.get("container").is_some()
         || env_imports_bash_function(job)
         || env_mutates_dynamic_loader(job)
     {
@@ -127,6 +130,7 @@ fn mutable_global_install_must_not_claim_routed_release_evidence() {
     let source = r#"
 jobs:
   load-contract:
+    runs-on: ubuntu-24.04
     steps:
       - name: Install checksum-pinned k6 2.2.0
         run: |
@@ -152,6 +156,7 @@ fn provenance_check_must_be_adjacent_to_measurement() {
     let source = r#"
 jobs:
   load-contract:
+    runs-on: ubuntu-24.04
     steps:
       - name: Run routed pg-erd loopback traffic
         shell: bash
@@ -178,6 +183,7 @@ fn shell_function_shadowing_cmp_must_not_claim_routed_release_evidence() {
         r#"
 jobs:
   load-contract:
+    runs-on: ubuntu-24.04
     steps:
       - name: Run routed pg-erd loopback traffic
         shell: bash
@@ -203,6 +209,7 @@ fn sourced_shell_namespace_must_not_claim_routed_release_evidence() {
         r#"
 jobs:
   load-contract:
+    runs-on: ubuntu-24.04
     steps:
       - name: Run routed pg-erd loopback traffic
         shell: bash
@@ -226,6 +233,7 @@ fn imported_bash_function_must_not_claim_routed_release_evidence() {
         r#"
 jobs:
   load-contract:
+    runs-on: ubuntu-24.04
     steps:
       - name: Run routed pg-erd loopback traffic
         shell: bash
@@ -250,6 +258,7 @@ fn job_level_imported_bash_function_must_not_claim_routed_release_evidence() {
         r#"
 jobs:
   load-contract:
+    runs-on: ubuntu-24.04
     env:
       "BASH_FUNC_cmp%%": "() {{ return 0; }}"
     steps:
@@ -273,6 +282,7 @@ env:
   LD_PRELOAD: /tmp/evidence-preload.so
 jobs:
   load-contract:
+    runs-on: ubuntu-24.04
     steps:
       - name: Run routed pg-erd loopback traffic
         shell: bash
@@ -295,6 +305,7 @@ fn job_level_dynamic_loader_injection_must_not_claim_routed_release_evidence() {
         r#"
 jobs:
   load-contract:
+    runs-on: ubuntu-24.04
     env:
       LD_LIBRARY_PATH: /tmp/evidence-libs
     steps:
@@ -316,6 +327,7 @@ fn step_level_dynamic_loader_injection_must_not_claim_routed_release_evidence() 
         r#"
 jobs:
   load-contract:
+    runs-on: ubuntu-24.04
     steps:
       - name: Run routed pg-erd loopback traffic
         shell: bash
@@ -337,6 +349,7 @@ fn same_shell_dynamic_loader_injection_must_not_claim_routed_release_evidence() 
         r#"
 jobs:
   load-contract:
+    runs-on: ubuntu-24.04
     steps:
       - name: Run routed pg-erd loopback traffic
         shell: bash
@@ -357,6 +370,7 @@ fn custom_job_container_must_not_claim_routed_release_evidence() {
         r#"
 jobs:
   load-contract:
+    runs-on: ubuntu-24.04
     container: ghcr.io/example/untrusted-evidence-runtime:latest
     steps:
       - name: Run routed pg-erd loopback traffic
@@ -403,6 +417,7 @@ fn canonical_provenance_tail_is_admitted() {
         r#"
 jobs:
   load-contract:
+    runs-on: ubuntu-24.04
     steps:
       - name: Run routed pg-erd loopback traffic
         shell: bash
