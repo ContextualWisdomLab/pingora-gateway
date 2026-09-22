@@ -1,11 +1,10 @@
-//! Fail-closed contract for sourced shell-code injection in routed load evidence.
+//! Fail-closed contract for qualified shell-code sourcing in routed load evidence.
 //!
-//! The routed evidence shell already rejects direct `export`, `declare`, `env`, `eval`, PATH
-//! mutation, Bash startup hooks, and shell-function shadowing. Bash `source`/`.` can still execute
-//! a generated helper in the current shell, letting dynamically reconstructed environment names or
-//! slash-named functions mutate k6/candidate resolution while the canonical measurement lines stay
-//! unchanged. The routed evidence step therefore admits no active `source`/`.` invocation, including
-//! `builtin`, `command`, and backslash-qualified forms.
+//! The existing provenance guard rejects unqualified `source file` and `. file`, but Bash also
+//! executes the same builtins through `builtin source`, `command source`, backslash-qualified
+//! `\source`, and their dot-command equivalents. Those forms evade a prefix-only source scan and
+//! can load generated helper code into the current shell, reconstructing environment names or
+//! shell functions while the canonical provenance and measurement lines remain unchanged.
 
 use serde_yaml::Value;
 use std::fs;
@@ -63,12 +62,12 @@ fn live_routed_evidence_does_not_source_external_shell_code() {
     let source = fs::read_to_string(CI_WORKFLOW).expect("CI workflow should be readable UTF-8");
     assert!(
         routed_shell_does_not_source_external_code(&source),
-        "routed evidence must not execute sourced helper code in the measurement shell"
+        "routed evidence must not load mutable helper code into the measurement shell"
     );
 }
 
 #[test]
-fn source_can_reconstruct_a_threshold_bypass_without_literal_k6_option() {
+fn builtin_source_can_reconstruct_a_threshold_bypass_without_literal_k6_option() {
     let source = r#"
 jobs:
   load-contract:
@@ -81,7 +80,7 @@ jobs:
           name="${prefix}_NO_THRESHOLDS"
           helper=/tmp/routed-env
           printf 'export %s=true\n' "$name" > "$helper"
-          source "$helper"
+          builtin source "$helper"
           PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
             /usr/local/bin/k6 run --quiet tests/load/pg_erd_gateway_smoke.js
 "#;
@@ -89,7 +88,7 @@ jobs:
 }
 
 #[test]
-fn dot_builtin_can_load_the_same_mutation() {
+fn command_dot_can_load_the_same_mutation() {
     let source = r#"
 jobs:
   load-contract:
@@ -98,7 +97,7 @@ jobs:
         shell: bash
         run: |
           helper=/tmp/routed-env
-          . "$helper"
+          command . "$helper"
           PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
             /usr/local/bin/k6 run --quiet tests/load/pg_erd_gateway_smoke.js
 "#;
@@ -106,8 +105,10 @@ jobs:
 }
 
 #[test]
-fn builtin_and_command_qualified_source_are_rejected() {
+fn direct_and_qualified_source_forms_are_rejected() {
     for invocation in [
+        "source /tmp/routed-env",
+        ". /tmp/routed-env",
         "builtin source /tmp/routed-env",
         "builtin . /tmp/routed-env",
         "command source /tmp/routed-env",
@@ -120,7 +121,7 @@ fn builtin_and_command_qualified_source_are_rejected() {
         );
         assert!(
             !routed_shell_does_not_source_external_code(&source),
-            "qualified source form must remain outside routed evidence: {invocation}"
+            "source form must remain outside routed evidence: {invocation}"
         );
     }
 }
