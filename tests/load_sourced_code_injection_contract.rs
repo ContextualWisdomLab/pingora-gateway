@@ -29,15 +29,10 @@ fn active_lines(run: &str) -> impl Iterator<Item = &str> {
 }
 
 fn invokes_source_builtin(line: &str) -> bool {
-    let tokens = line.split_whitespace().collect::<Vec<_>>();
-    match tokens.as_slice() {
-        [command, ..] if matches!(*command, "source" | "." | "\\source" | "\\.") => true,
-        [qualifier, command, ..]
-            if matches!(*qualifier, "builtin" | "command")
-                && matches!(*command, "source" | ".") =>
-        {
-            true
-        }
+    let mut tokens = line.split_whitespace();
+    match tokens.next() {
+        Some("source" | "." | "\\source" | "\\.") => true,
+        Some("builtin" | "command") => matches!(tokens.next(), Some("source" | ".")),
         _ => false,
     }
 }
