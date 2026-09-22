@@ -224,8 +224,6 @@ jobs:
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
           git diff --exit-code HEAD -- Cargo.toml Cargo.lock src tests/load/load_origin.rs tests/load/pg_erd_gateway_smoke.js
           rustc --edition 2021 -D warnings -C opt-level=3 -C debuginfo=0 --out-dir /tmp tests/load/load_origin.rs
-          cargo clean -p cwl-pingora-gateway --release
-          cargo build --release --locked --bin cwl-pingora-pg-erd-migration
 
           UPSTREAM_PORT=18181 UPSTREAM_PAYLOAD=backend-ok \
             /tmp/load_origin >/tmp/pg-erd-backend.log 2>&1 &
@@ -285,6 +283,9 @@ jobs:
             fi
           done
 
+          git diff --exit-code HEAD -- Cargo.toml Cargo.lock src
+          cargo clean -p cwl-pingora-gateway --release
+          cargo build --release --locked --bin cwl-pingora-pg-erd-migration
           target/release/cwl-pingora-pg-erd-migration --config /tmp/pg-erd-load.yaml >/tmp/pingora-pg-erd-load.log 2>&1 &
           pg_erd_pid=$!
           ready=0
