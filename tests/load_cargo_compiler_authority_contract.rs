@@ -1,8 +1,8 @@
-//! Test-first contract for Cargo compiler-argument authority in routed-load evidence.
+//! Fail-closed contract for Cargo compiler-argument authority in routed-load evidence.
 //!
 //! `RUSTFLAGS` and `CARGO_ENCODED_RUSTFLAGS` are not the only declarative paths that can alter the
 //! point-of-use release build. Cargo also maps `build.rustflags` and target-specific linker/rustflags
-//! configuration from environment variables. The routed benchmark must reject those authorities so
+//! configuration from environment variables. The routed benchmark rejects those authorities so
 //! performance evidence cannot be produced by a differently compiled or linked binary than the
 //! source-controlled build contract describes.
 
@@ -13,12 +13,19 @@ const CI_WORKFLOW: &str = ".github/workflows/ci.yml";
 const LOAD_JOB: &str = "load-contract";
 const ROUTED_STEP: &str = "Run routed pg-erd loopback traffic";
 
+fn is_cargo_compiler_override(key: &str) -> bool {
+    key == "CARGO_BUILD_RUSTFLAGS"
+        || key.strip_prefix("CARGO_TARGET_").is_some_and(|target_key| {
+            target_key.ends_with("_RUSTFLAGS") || target_key.ends_with("_LINKER")
+        })
+}
+
 fn mapping_has_compiler_override(mapping: Option<&Mapping>) -> bool {
     mapping.is_some_and(|mapping| {
         mapping
             .keys()
             .filter_map(Value::as_str)
-            .any(|key| key == "CARGO_BUILD_RUSTFLAGS")
+            .any(is_cargo_compiler_override)
     })
 }
 
@@ -106,6 +113,20 @@ jobs:
         run: cargo build --release --locked --bin cwl-pingora-pg-erd-migration
 "#;
     assert!(!routed_candidate_compiler_authority_is_canonical(source));
+}
+
+#[test]
+fn target_runner_is_not_a_build_compiler_override() {
+    let source = r#"
+env:
+  CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER: /usr/bin/env
+jobs:
+  load-contract:
+    steps:
+      - name: Run routed pg-erd loopback traffic
+        run: cargo build --release --locked --bin cwl-pingora-pg-erd-migration
+"#;
+    assert!(routed_candidate_compiler_authority_is_canonical(source));
 }
 
 #[test]
