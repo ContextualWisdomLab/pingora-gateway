@@ -160,6 +160,28 @@ jobs:
 }
 
 #[test]
+fn slash_named_shell_function_must_not_replace_absolute_measurement_path() {
+    let source = r#"
+jobs:
+  load-contract:
+    steps:
+      - name: Run routed pg-erd loopback traffic
+        shell: bash
+        run: |
+          function /usr/local/bin/k6 {
+            printf '{}' > k6-pg-erd-summary.json
+          }
+          PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
+            /usr/local/bin/k6 run --quiet tests/load/pg_erd_gateway_smoke.js
+"#;
+
+    assert!(
+        !routed_command_resolution_is_stable(source),
+        "Bash permits a function name containing slashes, so an absolute command token alone does not prove external executable resolution"
+    );
+}
+
+#[test]
 fn comments_that_name_path_or_k6_do_not_mutate_command_resolution() {
     let source = r#"
 jobs:
