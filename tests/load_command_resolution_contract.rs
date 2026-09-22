@@ -2,9 +2,11 @@
 //!
 //! The routed receipt is attributable to the checksum-pinned k6 install only when the evidence
 //! step invokes that installed path directly. A bare `k6` name is subject to Bash function, alias,
-//! hash-table, and `PATH` resolution inside the same multi-line `run` shell. The evidence lane
-//! therefore requires `/usr/local/bin/k6` and also rejects executable `PATH` references in the
-//! routed shell so adjacent readiness commands cannot be silently retargeted.
+//! hash-table, and `PATH` resolution inside the same multi-line `run` shell. Bash also permits a
+//! function name containing `/`, so even an absolute command token can be shadowed when that same
+//! path is bound as a shell function first. The evidence lane therefore requires exactly one active
+//! `/usr/local/bin/k6` token (the measurement invocation) and rejects executable `PATH` references
+//! in the routed shell so adjacent readiness commands cannot be silently retargeted.
 
 use serde_yaml::Value;
 use std::fs;
@@ -12,6 +14,7 @@ use std::fs;
 const CI_WORKFLOW: &str = ".github/workflows/ci.yml";
 const LOAD_JOB: &str = "load-contract";
 const ROUTED_STEP: &str = "Run routed pg-erd loopback traffic";
+const K6_PATH: &str = "/usr/local/bin/k6";
 const ROUTED_K6: &str = "/usr/local/bin/k6 run --quiet tests/load/pg_erd_gateway_smoke.js";
 
 fn env_overrides_path(node: &Value) -> bool {
@@ -32,11 +35,21 @@ fn contains_shell_identifier(line: &str, identifier: &str) -> bool {
     })
 }
 
-fn routed_shell_references_path(run: &str) -> bool {
+fn active_shell_lines(run: &str) -> impl Iterator<Item = &str> {
     run.lines()
         .map(str::trim_start)
         .filter(|line| !line.starts_with('#'))
-        .any(|line| contains_shell_identifier(line, "PATH"))
+}
+
+fn routed_shell_references_path(run: &str) -> bool {
+    active_shell_lines(run).any(|line| contains_shell_identifier(line, "PATH"))
+}
+
+fn routed_shell_has_single_k6_path(run: &str) -> bool {
+    active_shell_lines(run)
+        .map(|line| line.match_indices(K6_PATH).count())
+        .sum::<usize>()
+        == 1
 }
 
 fn unique_named_step<'a>(steps: &'a [Value], name: &str) -> Option<&'a Value> {
@@ -73,7 +86,9 @@ fn routed_command_resolution_is_stable(source: &str) -> bool {
     }
 
     routed.get("run").and_then(Value::as_str).is_some_and(|run| {
-        run.contains(ROUTED_K6) && !routed_shell_references_path(run)
+        run.contains(ROUTED_K6)
+            && routed_shell_has_single_k6_path(run)
+            && !routed_shell_references_path(run)
     })
 }
 
@@ -82,7 +97,7 @@ fn live_routed_load_uses_the_pinned_k6_path() {
     let source = fs::read_to_string(CI_WORKFLOW).expect("CI workflow should be readable UTF-8");
     assert!(
         routed_command_resolution_is_stable(&source),
-        "routed load evidence must invoke the checksum-pinned k6 installation by absolute path"
+        "routed load evidence must invoke the checksum-pinned k6 installation by one unshadowed absolute path"
     );
 }
 
