@@ -1,10 +1,10 @@
 //! Fail-closed routed-load contract for indirect environment mutation.
 //!
 //! Literal `K6_*` scans are insufficient when Bash reconstructs an option name at runtime and
-//! exports it before invoking k6. A process-local `env` wrapper can do the same without mutating
-//! the shell environment at all. This contract keeps the routed evidence shell free of generic
-//! export/declaration, allexport, and environment-wrapper primitives, so threshold and workload
-//! options cannot be injected without ever spelling a literal `K6_*` token.
+//! exports it before invoking k6. A process-local wrapper can do the same without mutating the
+//! shell environment. This contract therefore admits only the exact routed k6 launch pair and
+//! keeps the evidence shell free of generic export/declaration, allexport, and environment-wrapper
+//! primitives.
 
 use serde_yaml::Value;
 use std::fs;
@@ -13,6 +13,11 @@ const CI_WORKFLOW: &str = ".github/workflows/ci.yml";
 const LOAD_JOB: &str = "load-contract";
 const ROUTED_STEP: &str = "Run routed pg-erd loopback traffic";
 const CANONICAL_SET: &str = "set -euo pipefail";
+const ROUTED_URL_ASSIGNMENT: &str = "PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \\";
+const ROUTED_K6: &str = "/usr/local/bin/k6 run --quiet tests/load/pg_erd_gateway_smoke.js";
+const K6_PATH: &str = "/usr/local/bin/k6";
+const K6_PROVENANCE_CMP: &str =
+    "cmp --silent /tmp/cwl-k6-routed/k6-v2.2.0-linux-amd64/k6 /usr/local/bin/k6";
 
 fn unique_named_step<'a>(steps: &'a [Value], name: &str) -> Option<&'a Value> {
     let mut matches = steps
@@ -44,12 +49,25 @@ fn invokes_environment_wrapper(line: &str) -> bool {
         || line.starts_with("\\env ")
 }
 
+fn has_exact_measurement_launch(run: &str) -> bool {
+    let lines: Vec<_> = active_lines(run).collect();
+    let exact_pairs = lines
+        .windows(2)
+        .filter(|pair| pair[0] == ROUTED_URL_ASSIGNMENT && pair[1] == ROUTED_K6)
+        .count();
+    let k6_lines_are_canonical = lines.iter().all(|line| {
+        !line.contains(K6_PATH) || *line == ROUTED_K6 || *line == K6_PROVENANCE_CMP
+    });
+    exact_pairs == 1 && k6_lines_are_canonical
+}
+
 fn routed_shell_environment_is_stable(run: &str) -> bool {
-    active_lines(run).all(|line| {
-        !line.contains("K6_")
-            && !mutates_exported_environment(line)
-            && !invokes_environment_wrapper(line)
-    })
+    has_exact_measurement_launch(run)
+        && active_lines(run).all(|line| {
+            !line.contains("K6_")
+                && !mutates_exported_environment(line)
+                && !invokes_environment_wrapper(line)
+        })
 }
 
 fn live_routed_shell_environment_is_stable(source: &str) -> bool {
@@ -76,7 +94,7 @@ fn live_routed_shell_does_not_mutate_k6_environment_indirectly() {
     let source = fs::read_to_string(CI_WORKFLOW).expect("CI workflow should be readable UTF-8");
     assert!(
         live_routed_shell_environment_is_stable(&source),
-        "routed evidence must not reconstruct or process-locally inject k6 option names at runtime"
+        "routed evidence must use the exact unwrapped k6 launch and reject indirect option injection"
     );
 }
 
@@ -90,11 +108,7 @@ declare -x "${option_name}=true"
 PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
   /usr/local/bin/k6 run --quiet tests/load/pg_erd_gateway_smoke.js
 "#;
-
-    assert!(
-        !routed_shell_environment_is_stable(run),
-        "a runtime-reconstructed K6_NO_THRESHOLDS export disables threshold evaluation without any literal K6_* token"
-    );
+    assert!(!routed_shell_environment_is_stable(run));
 }
 
 #[test]
@@ -107,11 +121,7 @@ export "${name}=1"
 PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
   /usr/local/bin/k6 run --quiet tests/load/pg_erd_gateway_smoke.js
 "#;
-
-    assert!(
-        !routed_shell_environment_is_stable(run),
-        "runtime reconstruction must not override the checked-in 400-iteration workload"
-    );
+    assert!(!routed_shell_environment_is_stable(run));
 }
 
 #[test]
@@ -124,11 +134,7 @@ ${prefix}_VUS=1
 PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
   /usr/local/bin/k6 run --quiet tests/load/pg_erd_gateway_smoke.js
 "#;
-
-    assert!(
-        !routed_shell_environment_is_stable(run),
-        "Bash allexport can export reconstructed k6 options without an explicit export builtin"
-    );
+    assert!(!routed_shell_environment_is_stable(run));
 }
 
 #[test]
@@ -140,11 +146,7 @@ name="${prefix}_NO_THRESHOLDS"
 env "${name}=true" PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
   /usr/local/bin/k6 run --quiet tests/load/pg_erd_gateway_smoke.js
 "#;
-
-    assert!(
-        !routed_shell_environment_is_stable(run),
-        "a process-local env wrapper can inject a reconstructed k6 option without export, declare, or a literal K6_* token"
-    );
+    assert!(!routed_shell_environment_is_stable(run));
 }
 
 #[test]
@@ -156,7 +158,6 @@ name="${prefix}_ITERATIONS"
 /usr/bin/env "${name}=1" PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
   /usr/local/bin/k6 run --quiet tests/load/pg_erd_gateway_smoke.js
 "#;
-
     assert!(!routed_shell_environment_is_stable(run));
 }
 
@@ -169,7 +170,6 @@ name="${prefix}_VUS"
 command env "${name}=1" PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
   /usr/local/bin/k6 run --quiet tests/load/pg_erd_gateway_smoke.js
 "#;
-
     assert!(!routed_shell_environment_is_stable(run));
 }
 
@@ -184,11 +184,17 @@ launcher="${launcher}v"
 "${launcher}" "${name}=true" PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
   /usr/local/bin/k6 run --quiet tests/load/pg_erd_gateway_smoke.js
 "#;
+    assert!(!routed_shell_environment_is_stable(run));
+}
 
-    assert!(
-        !routed_shell_environment_is_stable(run),
-        "reconstructing the env command name must not bypass the process-local option-injection guard"
-    );
+#[test]
+fn generic_process_wrapper_must_not_claim_routed_release_evidence() {
+    let run = r#"
+set -euo pipefail
+PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
+time /usr/local/bin/k6 run --quiet tests/load/pg_erd_gateway_smoke.js
+"#;
+    assert!(!routed_shell_environment_is_stable(run));
 }
 
 #[test]
@@ -198,6 +204,5 @@ set -euo pipefail
 PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
   /usr/local/bin/k6 run --quiet tests/load/pg_erd_gateway_smoke.js
 "#;
-
     assert!(routed_shell_environment_is_stable(run));
 }
