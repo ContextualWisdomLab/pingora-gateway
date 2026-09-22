@@ -110,3 +110,19 @@ jobs:
 "#;
     assert!(!routed_candidate_output_location_is_canonical(source));
 }
+
+#[test]
+fn process_local_target_dir_redirect_is_rejected() {
+    let source = r#"
+jobs:
+  load-contract:
+    steps:
+      - name: Run routed pg-erd loopback traffic
+        shell: bash
+        run: |
+          CARGO_TARGET_DIR=/tmp/redirected-target cargo clean -p cwl-pingora-gateway --release
+          CARGO_TARGET_DIR=/tmp/redirected-target cargo build --release --locked --bin cwl-pingora-pg-erd-migration
+          target/release/cwl-pingora-pg-erd-migration --config /tmp/pg-erd-load.yaml
+"#;
+    assert!(!routed_candidate_output_location_is_canonical(source));
+}
