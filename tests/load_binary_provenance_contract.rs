@@ -6,8 +6,8 @@
 //! pinned supplier archive immediately before measurement, extracts a fresh private copy, proves
 //! the installed executable is byte-identical to that derivation, and then invokes it without an
 //! intervening command. The provenance utilities themselves must also retain their normal shell
-//! resolution; function/alias/source mutations, imported Bash functions, or dynamic-loader
-//! injection can otherwise turn the textual proof into a no-op.
+//! and runner resolution; function/alias/source mutations, imported Bash functions, dynamic-loader
+//! injection, or a substituted job container can otherwise turn the textual proof into a no-op.
 
 use serde_yaml::Value;
 use std::fs;
@@ -90,7 +90,10 @@ fn routed_binary_provenance_is_fresh(source: &str) -> bool {
     let Some(job) = document.get("jobs").and_then(|jobs| jobs.get(LOAD_JOB)) else {
         return false;
     };
-    if env_imports_bash_function(job) || env_mutates_dynamic_loader(job) {
+    if job.get("container").is_some()
+        || env_imports_bash_function(job)
+        || env_mutates_dynamic_loader(job)
+    {
         return false;
     }
 
