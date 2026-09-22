@@ -287,7 +287,6 @@ jobs:
             fi
           done
 
-          git diff --exit-code HEAD -- Cargo.toml Cargo.lock src
           cargo_config_dir="$PWD"
           while :; do
             [[ ! -e "${cargo_config_dir}/.cargo/config" ]]
@@ -297,6 +296,7 @@ jobs:
             [[ -n "${cargo_config_dir}" ]] || cargo_config_dir="/"
           done
           [[ ! -e "${CARGO_HOME}/config" && ! -e "${CARGO_HOME}/config.toml" ]]
+          git diff --exit-code HEAD -- Cargo.toml Cargo.lock src
           cargo clean -p cwl-pingora-gateway --release
           cargo build --release --locked --bin cwl-pingora-pg-erd-migration
           target/release/cwl-pingora-pg-erd-migration --config /tmp/pg-erd-load.yaml >/tmp/pingora-pg-erd-load.log 2>&1 &
