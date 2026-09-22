@@ -12,12 +12,14 @@ use std::fs;
 const CI_WORKFLOW: &str = ".github/workflows/ci.yml";
 const LOAD_JOB: &str = "load-contract";
 const ROUTED_STEP: &str = "Run routed pg-erd loopback traffic";
+const RELEASE_PROFILE_ENV_PREFIX: &str = "CARGO_PROFILE_RELEASE_";
 
 fn mapping_has_release_profile_override(mapping: Option<&Mapping>) -> bool {
     mapping.is_some_and(|mapping| {
-        mapping.contains_key(Value::String(
-            "CARGO_PROFILE_RELEASE_OPT_LEVEL".to_owned(),
-        ))
+        mapping.keys().any(|key| {
+            key.as_str()
+                .is_some_and(|key| key.starts_with(RELEASE_PROFILE_ENV_PREFIX))
+        })
     })
 }
 
@@ -105,4 +107,18 @@ jobs:
         run: cargo build --release --locked --bin cwl-pingora-pg-erd-migration
 "#;
     assert!(!routed_release_profile_is_canonical(source));
+}
+
+#[test]
+fn unrelated_cargo_environment_is_not_a_profile_override() {
+    let source = r#"
+env:
+  CARGO_TERM_COLOR: always
+jobs:
+  load-contract:
+    steps:
+      - name: Run routed pg-erd loopback traffic
+        run: cargo build --release --locked --bin cwl-pingora-pg-erd-migration
+"#;
+    assert!(routed_release_profile_is_canonical(source));
 }
