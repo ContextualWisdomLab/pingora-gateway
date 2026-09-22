@@ -2,7 +2,7 @@
 //!
 //! The routed candidate is started from the canonical host path `target/release/...`. Cargo also
 //! accepts environment configuration that can redirect either the target directory or target
-//! triple. The evidence contract must reject declarative redirection so a successful point-of-use
+//! triple. The evidence contract rejects those declarative redirects so a successful point-of-use
 //! build cannot silently land somewhere else while an older canonical-path binary is measured.
 
 use serde_yaml::{Mapping, Value};
@@ -11,11 +11,11 @@ use std::fs;
 const CI_WORKFLOW: &str = ".github/workflows/ci.yml";
 const LOAD_JOB: &str = "load-contract";
 const ROUTED_STEP: &str = "Run routed pg-erd loopback traffic";
-
-// Test-first: this deliberately captures only the legacy alias. The regression cases below prove
-// that Cargo's build.* environment aliases are a separate authority that the current contract
-// still needs to reject.
-const FORBIDDEN_OUTPUT_ENV_KEYS: &[&str] = &["CARGO_TARGET_DIR"];
+const FORBIDDEN_OUTPUT_ENV_KEYS: &[&str] = &[
+    "CARGO_TARGET_DIR",
+    "CARGO_BUILD_TARGET_DIR",
+    "CARGO_BUILD_TARGET",
+];
 
 fn mapping_has_output_redirect(mapping: Option<&Mapping>) -> bool {
     mapping.is_some_and(|mapping| {
