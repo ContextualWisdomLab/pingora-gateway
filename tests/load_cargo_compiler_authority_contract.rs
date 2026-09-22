@@ -116,6 +116,35 @@ jobs:
 }
 
 #[test]
+fn process_local_build_rustflags_assignment_is_rejected() {
+    let source = r#"
+jobs:
+  load-contract:
+    steps:
+      - name: Run routed pg-erd loopback traffic
+        shell: bash
+        run: |
+          CARGO_BUILD_RUSTFLAGS="-C target-cpu=native" cargo build --release --locked --bin cwl-pingora-pg-erd-migration
+"#;
+    assert!(!routed_candidate_compiler_authority_is_canonical(source));
+}
+
+#[test]
+fn process_local_target_linker_assignment_is_rejected() {
+    let source = r#"
+jobs:
+  load-contract:
+    steps:
+      - name: Run routed pg-erd loopback traffic
+        shell: bash
+        run: |
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=/tmp/wrapper-linker \
+            cargo build --release --locked --bin cwl-pingora-pg-erd-migration
+"#;
+    assert!(!routed_candidate_compiler_authority_is_canonical(source));
+}
+
+#[test]
 fn target_runner_is_not_a_build_compiler_override() {
     let source = r#"
 env:
