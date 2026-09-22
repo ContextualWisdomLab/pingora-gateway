@@ -200,6 +200,7 @@ jobs:
         run: |
           set -euo pipefail
           readonly PATH=/etc/skel/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+          declare -rx CARGO_HOME=/etc/skel/.cargo
           declare -rx RUSTUP_HOME=/etc/skel/.rustup
           declare -rx RUSTUP_TOOLCHAIN=stable-x86_64-unknown-linux-gnu
           backend_pid=""
@@ -287,6 +288,15 @@ jobs:
           done
 
           git diff --exit-code HEAD -- Cargo.toml Cargo.lock src
+          cargo_config_dir="$PWD"
+          while :; do
+            [[ ! -e "${cargo_config_dir}/.cargo/config" ]]
+            [[ ! -e "${cargo_config_dir}/.cargo/config.toml" ]]
+            [[ "${cargo_config_dir}" = "/" ]] && break
+            cargo_config_dir="${cargo_config_dir%/*}"
+            [[ -n "${cargo_config_dir}" ]] || cargo_config_dir="/"
+          done
+          [[ ! -e "${CARGO_HOME}/config" && ! -e "${CARGO_HOME}/config.toml" ]]
           cargo clean -p cwl-pingora-gateway --release
           cargo build --release --locked --bin cwl-pingora-pg-erd-migration
           target/release/cwl-pingora-pg-erd-migration --config /tmp/pg-erd-load.yaml >/tmp/pingora-pg-erd-load.log 2>&1 &
