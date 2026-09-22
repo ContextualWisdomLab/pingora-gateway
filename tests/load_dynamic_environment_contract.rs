@@ -3,8 +3,8 @@
 //! Literal `K6_*` scans are insufficient when Bash reconstructs an option name at runtime and
 //! exports it before invoking k6. A process-local wrapper can do the same without mutating the
 //! shell environment. This contract therefore admits only the exact routed k6 launch pair, the
-//! canonical readonly command/toolchain trust-root bindings, and keeps the evidence shell free of
-//! other generic export/declaration, allexport, and environment-wrapper primitives.
+//! canonical readonly command/toolchain/build trust-root bindings, and keeps the evidence shell
+//! free of other generic export/declaration, allexport, and environment-wrapper primitives.
 
 use serde_yaml::Value;
 use std::fs;
@@ -15,6 +15,7 @@ const ROUTED_STEP: &str = "Run routed pg-erd loopback traffic";
 const CANONICAL_SET: &str = "set -euo pipefail";
 const CANONICAL_PATH: &str =
     "readonly PATH=/etc/skel/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+const CANONICAL_CARGO_HOME: &str = "declare -rx CARGO_HOME=/etc/skel/.cargo";
 const CANONICAL_RUSTUP_HOME: &str = "declare -rx RUSTUP_HOME=/etc/skel/.rustup";
 const CANONICAL_RUSTUP_TOOLCHAIN: &str =
     "declare -rx RUSTUP_TOOLCHAIN=stable-x86_64-unknown-linux-gnu";
@@ -41,6 +42,7 @@ fn active_lines(run: &str) -> impl Iterator<Item = &str> {
 fn mutates_exported_environment(line: &str) -> bool {
     line.starts_with("export ")
         || (line.starts_with("declare ")
+            && line != CANONICAL_CARGO_HOME
             && line != CANONICAL_RUSTUP_HOME
             && line != CANONICAL_RUSTUP_TOOLCHAIN)
         || line.starts_with("typeset ")
@@ -209,6 +211,7 @@ fn canonical_readonly_trust_root_remains_admitted() {
     let run = r#"
 set -euo pipefail
 readonly PATH=/etc/skel/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+declare -rx CARGO_HOME=/etc/skel/.cargo
 declare -rx RUSTUP_HOME=/etc/skel/.rustup
 declare -rx RUSTUP_TOOLCHAIN=stable-x86_64-unknown-linux-gnu
 PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
