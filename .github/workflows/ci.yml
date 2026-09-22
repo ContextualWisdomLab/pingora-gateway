@@ -304,6 +304,7 @@ jobs:
             exit 1
           fi
 
+          git diff --exit-code HEAD -- tests/load/pg_erd_gateway_smoke.js
           rm -rf /tmp/cwl-k6-routed
           mkdir -p /tmp/cwl-k6-routed
           echo "b5a8003c86f35f5cd5ceef1490312c48e587696c94d998cefc6d7b3b4cb1597d  /tmp/k6-v2.2.0-linux-amd64.tar.gz" | sha256sum --check --strict
