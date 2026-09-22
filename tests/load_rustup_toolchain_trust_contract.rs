@@ -182,6 +182,28 @@ jobs:
 }
 
 #[test]
+fn declarative_workspace_rustc_wrapper_alias_is_rejected() {
+    let source = r#"
+env:
+  EXPECTED_SHA: deadbeef
+jobs:
+  load-contract:
+    steps:
+      - name: Run routed pg-erd loopback traffic
+        shell: bash
+        env:
+          CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER: /tmp/fake-workspace-wrapper
+        run: |
+          set -euo pipefail
+          readonly PATH=/etc/skel/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+          declare -rx CARGO_HOME=/etc/skel/.cargo
+          declare -rx RUSTUP_HOME=/etc/skel/.rustup
+          declare -rx RUSTUP_TOOLCHAIN=stable-x86_64-unknown-linux-gnu
+"#;
+    assert!(!routed_rust_toolchain_is_root_owned(source));
+}
+
+#[test]
 fn canonical_exported_root_owned_rustup_binding_is_admitted() {
     let source = r#"
 env:
