@@ -17,6 +17,13 @@ fn env_overrides_path(node: &Value) -> bool {
         .is_some_and(|env| env.keys().filter_map(Value::as_str).any(|key| key == "PATH"))
 }
 
+fn active_run_mentions_github_path(run: &str) -> bool {
+    run.lines()
+        .map(str::trim_start)
+        .filter(|line| !line.starts_with('#'))
+        .any(|line| line.contains("GITHUB_PATH"))
+}
+
 fn load_job_has_closed_persisted_path(source: &str) -> bool {
     let Ok(document) = serde_yaml::from_str::<Value>(source) else {
         return false;
@@ -36,7 +43,13 @@ fn load_job_has_closed_persisted_path(source: &str) -> bool {
         return false;
     };
 
-    !steps.iter().any(env_overrides_path)
+    !steps.iter().any(|step| {
+        env_overrides_path(step)
+            || step
+                .get("run")
+                .and_then(Value::as_str)
+                .is_some_and(active_run_mentions_github_path)
+    })
 }
 
 #[test]
@@ -94,4 +107,17 @@ jobs:
         run: echo measured
 "#;
     assert!(!load_job_has_closed_persisted_path(source));
+}
+
+#[test]
+fn comment_only_github_path_reference_is_not_execution() {
+    let source = r#"
+jobs:
+  load-contract:
+    steps:
+      - run: |
+          # GITHUB_PATH persistence is forbidden in load evidence.
+          echo measured
+"#;
+    assert!(load_job_has_closed_persisted_path(source));
 }
