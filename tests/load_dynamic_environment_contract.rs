@@ -1,9 +1,10 @@
 //! Fail-closed routed-load contract for indirect environment mutation.
 //!
 //! Literal `K6_*` scans are insufficient when Bash reconstructs an option name at runtime and
-//! exports it before invoking k6. This contract keeps the routed evidence shell free of generic
-//! export/declaration and allexport primitives, so threshold and workload options cannot be
-//! injected without ever spelling a literal `K6_*` token.
+//! exports it before invoking k6. A process-local `env` wrapper can do the same without mutating
+//! the shell environment at all. This contract keeps the routed evidence shell free of generic
+//! export/declaration, allexport, and environment-wrapper primitives, so threshold and workload
+//! options cannot be injected without ever spelling a literal `K6_*` token.
 
 use serde_yaml::Value;
 use std::fs;
@@ -35,8 +36,20 @@ fn mutates_exported_environment(line: &str) -> bool {
         || (line.starts_with("set ") && line != CANONICAL_SET)
 }
 
+fn invokes_environment_wrapper(line: &str) -> bool {
+    line.starts_with("env ")
+        || line.starts_with("/usr/bin/env ")
+        || line.starts_with("command env ")
+        || line.starts_with("command /usr/bin/env ")
+        || line.starts_with("\\env ")
+}
+
 fn routed_shell_environment_is_stable(run: &str) -> bool {
-    active_lines(run).all(|line| !line.contains("K6_") && !mutates_exported_environment(line))
+    active_lines(run).all(|line| {
+        !line.contains("K6_")
+            && !mutates_exported_environment(line)
+            && !invokes_environment_wrapper(line)
+    })
 }
 
 fn live_routed_shell_environment_is_stable(source: &str) -> bool {
@@ -63,7 +76,7 @@ fn live_routed_shell_does_not_mutate_k6_environment_indirectly() {
     let source = fs::read_to_string(CI_WORKFLOW).expect("CI workflow should be readable UTF-8");
     assert!(
         live_routed_shell_environment_is_stable(&source),
-        "routed evidence must not reconstruct and export k6 option names at runtime"
+        "routed evidence must not reconstruct or process-locally inject k6 option names at runtime"
     );
 }
 
@@ -132,6 +145,32 @@ env "${name}=true" PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
         !routed_shell_environment_is_stable(run),
         "a process-local env wrapper can inject a reconstructed k6 option without export, declare, or a literal K6_* token"
     );
+}
+
+#[test]
+fn absolute_env_wrapper_must_not_claim_routed_release_evidence() {
+    let run = r#"
+set -euo pipefail
+prefix=K6
+name="${prefix}_ITERATIONS"
+/usr/bin/env "${name}=1" PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
+  /usr/local/bin/k6 run --quiet tests/load/pg_erd_gateway_smoke.js
+"#;
+
+    assert!(!routed_shell_environment_is_stable(run));
+}
+
+#[test]
+fn command_env_wrapper_must_not_claim_routed_release_evidence() {
+    let run = r#"
+set -euo pipefail
+prefix=K6
+name="${prefix}_VUS"
+command env "${name}=1" PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
+  /usr/local/bin/k6 run --quiet tests/load/pg_erd_gateway_smoke.js
+"#;
+
+    assert!(!routed_shell_environment_is_stable(run));
 }
 
 #[test]
