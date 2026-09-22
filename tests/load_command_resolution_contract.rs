@@ -7,8 +7,8 @@
 //! path is bound as a shell function first. Dynamic `eval` can reconstruct the same binding without
 //! repeating the literal path in source. The evidence lane therefore requires one active
 //! `/usr/local/bin/k6` measurement invocation, permits one exact byte-identity comparison against
-//! the freshly rederived supplier binary, rejects executable `PATH` references, and rejects dynamic
-//! evaluation in the routed shell.
+//! the freshly rederived supplier binary, permits only the canonical readonly image/system PATH,
+//! and rejects dynamic evaluation in the routed shell.
 
 use serde_yaml::Value;
 use std::fs;
@@ -20,6 +20,8 @@ const K6_PATH: &str = "/usr/local/bin/k6";
 const ROUTED_K6: &str = "/usr/local/bin/k6 run --quiet tests/load/pg_erd_gateway_smoke.js";
 const K6_PROVENANCE_CMP: &str =
     "cmp --silent /tmp/cwl-k6-routed/k6-v2.2.0-linux-amd64/k6 /usr/local/bin/k6";
+const CANONICAL_PATH: &str =
+    "readonly PATH=/etc/skel/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 
 fn env_overrides_path(node: &Value) -> bool {
     node.get("env").and_then(|env| env.get("PATH")).is_some()
@@ -45,8 +47,9 @@ fn active_shell_lines(run: &str) -> impl Iterator<Item = &str> {
         .filter(|line| !line.starts_with('#'))
 }
 
-fn routed_shell_references_path(run: &str) -> bool {
-    active_shell_lines(run).any(|line| contains_shell_identifier(line, "PATH"))
+fn routed_shell_has_noncanonical_path_reference(run: &str) -> bool {
+    active_shell_lines(run)
+        .any(|line| contains_shell_identifier(line, "PATH") && line != CANONICAL_PATH)
 }
 
 fn routed_shell_uses_dynamic_evaluation(run: &str) -> bool {
@@ -97,7 +100,7 @@ fn routed_command_resolution_is_stable(source: &str) -> bool {
     routed.get("run").and_then(Value::as_str).is_some_and(|run| {
         run.contains(ROUTED_K6)
             && routed_shell_has_single_k6_invocation_path(run)
-            && !routed_shell_references_path(run)
+            && !routed_shell_has_noncanonical_path_reference(run)
             && !routed_shell_uses_dynamic_evaluation(run)
     })
 }
@@ -163,6 +166,22 @@ jobs:
 "#;
 
     assert!(!routed_command_resolution_is_stable(source));
+}
+
+#[test]
+fn canonical_readonly_system_path_is_admitted() {
+    let source = r#"
+jobs:
+  load-contract:
+    steps:
+      - name: Run routed pg-erd loopback traffic
+        shell: bash
+        run: |
+          readonly PATH=/etc/skel/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+          PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
+            /usr/local/bin/k6 run --quiet tests/load/pg_erd_gateway_smoke.js
+"#;
+    assert!(routed_command_resolution_is_stable(source));
 }
 
 #[test]
