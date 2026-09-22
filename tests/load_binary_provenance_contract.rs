@@ -349,6 +349,29 @@ jobs:
 }
 
 #[test]
+fn custom_job_container_must_not_claim_routed_release_evidence() {
+    let source = format!(
+        r#"
+jobs:
+  load-contract:
+    container: ghcr.io/example/untrusted-evidence-runtime:latest
+    steps:
+      - name: Run routed pg-erd loopback traffic
+        shell: bash
+        run: |
+          set -euo pipefail
+          {tail}
+"#,
+        tail = ROUTED_PROVENANCE_TAIL.replace('\n', "\n          ")
+    );
+
+    assert!(
+        !routed_binary_provenance_is_fresh(&source),
+        "a job container can replace the process environment and provenance utilities while preserving canonical run text"
+    );
+}
+
+#[test]
 fn canonical_provenance_tail_is_admitted() {
     let source = format!(
         r#"
