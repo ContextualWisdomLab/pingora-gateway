@@ -14,17 +14,30 @@ const LOAD_JOB: &str = "load-contract";
 const ROUTED_STEP: &str = "Run routed pg-erd loopback traffic";
 const RELEASE_PROFILE_ENV_PREFIX: &str = "CARGO_PROFILE_RELEASE_";
 
+fn is_release_profile_override(key: &str) -> bool {
+    key.starts_with(RELEASE_PROFILE_ENV_PREFIX)
+}
+
 fn mapping_has_release_profile_override(mapping: Option<&Mapping>) -> bool {
     mapping.is_some_and(|mapping| {
-        mapping.keys().any(|key| {
-            key.as_str()
-                .is_some_and(|key| key.starts_with(RELEASE_PROFILE_ENV_PREFIX))
-        })
+        mapping
+            .keys()
+            .filter_map(Value::as_str)
+            .any(is_release_profile_override)
     })
 }
 
 fn node_has_release_profile_override(node: &Value) -> bool {
     mapping_has_release_profile_override(node.get("env").and_then(Value::as_mapping))
+}
+
+fn run_has_inline_release_profile_override(run: &str) -> bool {
+    run.lines()
+        .map(str::trim_start)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .flat_map(str::split_whitespace)
+        .filter_map(|token| token.split_once('=').map(|(key, _)| key))
+        .any(is_release_profile_override)
 }
 
 fn routed_release_profile_is_canonical(source: &str) -> bool {
@@ -55,7 +68,10 @@ fn routed_release_profile_is_canonical(source: &str) -> bool {
         return false;
     }
 
-    true
+    routed
+        .get("run")
+        .and_then(Value::as_str)
+        .is_some_and(|run| !run_has_inline_release_profile_override(run))
 }
 
 #[test]
