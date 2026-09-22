@@ -4,6 +4,9 @@ import { check } from 'k6';
 export const options = {
   vus: 4,
   iterations: 400,
+  rps: 0,
+  minIterationDuration: '0s',
+  hosts: {},
   thresholds: {
     checks: ['rate==1'],
     http_req_failed: ['rate==0'],
