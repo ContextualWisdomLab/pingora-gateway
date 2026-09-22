@@ -3,7 +3,8 @@
 //! The routed k6 script is interpreted only when k6 starts, so an earlier exact-HEAD check does
 //! not bind the actual workload if the script can be rewritten later in the same shell. The final
 //! source check therefore forms one exact suffix with supplier provenance and the k6 invocation:
-//! no executable line may intervene between script verification and measurement.
+//! no executable line may intervene between script verification and measurement. The `git`
+//! executable that performs that final comparison must also retain normal shell resolution.
 
 use serde_yaml::Value;
 use std::fs;
@@ -28,6 +29,15 @@ fn unique_named_step<'a>(steps: &'a [Value], name: &str) -> Option<&'a Value> {
     matches.next().is_none().then_some(step)
 }
 
+fn shell_function_defines_git(line: &str) -> bool {
+    let line = line.trim_start();
+    line.starts_with("git()")
+        || line.starts_with("git ()")
+        || line.strip_prefix("function ").is_some_and(|rest| {
+            rest == "git" || rest.starts_with("git ") || rest.starts_with("git(")
+        })
+}
+
 fn routed_measurement_source_is_adjacent(source: &str) -> bool {
     let Ok(document) = serde_yaml::from_str::<Value>(source) else {
         return false;
@@ -44,10 +54,13 @@ fn routed_measurement_source_is_adjacent(source: &str) -> bool {
         return false;
     };
 
-    routed
-        .get("run")
-        .and_then(Value::as_str)
-        .is_some_and(|run| run.trim_end().ends_with(MEASUREMENT_TAIL))
+    routed.get("run").and_then(Value::as_str).is_some_and(|run| {
+        run.trim_end().ends_with(MEASUREMENT_TAIL)
+            && !run
+                .lines()
+                .filter(|line| !line.trim_start().starts_with('#'))
+                .any(shell_function_defines_git)
+    })
 }
 
 #[test]
