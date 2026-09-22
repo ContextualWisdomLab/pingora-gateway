@@ -199,6 +199,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          readonly PATH=/etc/skel/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
           backend_pid=""
           frontend_pid=""
           pg_erd_pid=""
