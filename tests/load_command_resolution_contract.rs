@@ -1,8 +1,9 @@
-//! Regression contract for routed-load executable resolution.
+//! Fail-closed contract for routed-load executable resolution.
 //!
 //! The load receipt is only meaningful when the routed step cannot retarget the `k6` lookup
 //! through runner-local command-search state. GitHub Actions YAML `env.PATH` overrides are already
-//! rejected elsewhere; this contract exercises the distinct same-shell mutation boundary.
+//! rejected elsewhere, while Bash also resolves bare command names through the current shell's
+//! `PATH`. The evidence step therefore must not reference or mutate `PATH` inside its own shell.
 
 use serde_yaml::Value;
 use std::fs;
@@ -14,6 +15,27 @@ const ROUTED_K6: &str = "k6 run --quiet tests/load/pg_erd_gateway_smoke.js";
 
 fn env_overrides_path(node: &Value) -> bool {
     node.get("env").and_then(|env| env.get("PATH")).is_some()
+}
+
+fn is_shell_identifier_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_'
+}
+
+fn contains_shell_identifier(line: &str, identifier: &str) -> bool {
+    line.match_indices(identifier).any(|(index, _)| {
+        let bytes = line.as_bytes();
+        let start_boundary = index == 0 || !is_shell_identifier_byte(bytes[index - 1]);
+        let end = index + identifier.len();
+        let end_boundary = end == bytes.len() || !is_shell_identifier_byte(bytes[end]);
+        start_boundary && end_boundary
+    })
+}
+
+fn routed_shell_references_path(run: &str) -> bool {
+    run.lines()
+        .map(str::trim_start)
+        .filter(|line| !line.starts_with('#'))
+        .any(|line| contains_shell_identifier(line, "PATH"))
 }
 
 fn unique_named_step<'a>(steps: &'a [Value], name: &str) -> Option<&'a Value> {
@@ -49,10 +71,9 @@ fn routed_command_resolution_is_stable(source: &str) -> bool {
         return false;
     }
 
-    routed
-        .get("run")
-        .and_then(Value::as_str)
-        .is_some_and(|run| run.contains(ROUTED_K6))
+    routed.get("run").and_then(Value::as_str).is_some_and(|run| {
+        run.contains(ROUTED_K6) && !routed_shell_references_path(run)
+    })
 }
 
 #[test]
@@ -85,4 +106,36 @@ jobs:
         !routed_command_resolution_is_stable(source),
         "a same-shell PATH override can redirect the canonical k6 command to a shim while preserving command text"
     );
+}
+
+#[test]
+fn exported_same_shell_path_override_must_not_claim_routed_release_evidence() {
+    let source = r#"
+jobs:
+  load-contract:
+    steps:
+      - name: Run routed pg-erd loopback traffic
+        run: |
+          export PATH=/tmp/evidence-shims:$PATH
+          PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
+            k6 run --quiet tests/load/pg_erd_gateway_smoke.js
+"#;
+
+    assert!(!routed_command_resolution_is_stable(source));
+}
+
+#[test]
+fn comments_that_name_path_do_not_mutate_command_resolution() {
+    let source = r#"
+jobs:
+  load-contract:
+    steps:
+      - name: Run routed pg-erd loopback traffic
+        run: |
+          # PATH remains runner-owned; this comment must not be treated as an override.
+          PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
+            k6 run --quiet tests/load/pg_erd_gateway_smoke.js
+"#;
+
+    assert!(routed_command_resolution_is_stable(source));
 }
