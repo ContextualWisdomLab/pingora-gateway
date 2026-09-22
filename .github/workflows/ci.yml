@@ -298,6 +298,11 @@ jobs:
             exit 1
           fi
 
+          rm -rf /tmp/cwl-k6-routed
+          mkdir -p /tmp/cwl-k6-routed
+          echo "b5a8003c86f35f5cd5ceef1490312c48e587696c94d998cefc6d7b3b4cb1597d  /tmp/k6-v2.2.0-linux-amd64.tar.gz" | sha256sum --check --strict
+          tar -xzf /tmp/k6-v2.2.0-linux-amd64.tar.gz -C /tmp/cwl-k6-routed
+          cmp --silent /tmp/cwl-k6-routed/k6-v2.2.0-linux-amd64/k6 /usr/local/bin/k6
           PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
             /usr/local/bin/k6 run --quiet tests/load/pg_erd_gateway_smoke.js
       - name: Require routed pg-erd latency summary
