@@ -5,9 +5,10 @@
 //! hash-table, and `PATH` resolution inside the same multi-line `run` shell. Bash also permits a
 //! function name containing `/`, so even an absolute command token can be shadowed when that same
 //! path is bound as a shell function first. Dynamic `eval` can reconstruct the same binding without
-//! repeating the literal path in source. The evidence lane therefore requires exactly one active
-//! `/usr/local/bin/k6` token (the measurement invocation), rejects executable `PATH` references,
-//! and rejects dynamic evaluation in the routed shell.
+//! repeating the literal path in source. The evidence lane therefore requires one active
+//! `/usr/local/bin/k6` measurement invocation, permits one exact byte-identity comparison against
+//! the freshly rederived supplier binary, rejects executable `PATH` references, and rejects dynamic
+//! evaluation in the routed shell.
 
 use serde_yaml::Value;
 use std::fs;
@@ -17,6 +18,8 @@ const LOAD_JOB: &str = "load-contract";
 const ROUTED_STEP: &str = "Run routed pg-erd loopback traffic";
 const K6_PATH: &str = "/usr/local/bin/k6";
 const ROUTED_K6: &str = "/usr/local/bin/k6 run --quiet tests/load/pg_erd_gateway_smoke.js";
+const K6_PROVENANCE_CMP: &str =
+    "cmp --silent /tmp/cwl-k6-routed/k6-v2.2.0-linux-amd64/k6 /usr/local/bin/k6";
 
 fn env_overrides_path(node: &Value) -> bool {
     node.get("env").and_then(|env| env.get("PATH")).is_some()
@@ -50,8 +53,9 @@ fn routed_shell_uses_dynamic_evaluation(run: &str) -> bool {
     active_shell_lines(run).any(|line| contains_shell_identifier(line, "eval"))
 }
 
-fn routed_shell_has_single_k6_path(run: &str) -> bool {
+fn routed_shell_has_single_k6_invocation_path(run: &str) -> bool {
     active_shell_lines(run)
+        .filter(|line| *line != K6_PROVENANCE_CMP)
         .map(|line| line.match_indices(K6_PATH).count())
         .sum::<usize>()
         == 1
@@ -92,7 +96,7 @@ fn routed_command_resolution_is_stable(source: &str) -> bool {
 
     routed.get("run").and_then(Value::as_str).is_some_and(|run| {
         run.contains(ROUTED_K6)
-            && routed_shell_has_single_k6_path(run)
+            && routed_shell_has_single_k6_invocation_path(run)
             && !routed_shell_references_path(run)
             && !routed_shell_uses_dynamic_evaluation(run)
     })
@@ -103,7 +107,7 @@ fn live_routed_load_uses_the_pinned_k6_path() {
     let source = fs::read_to_string(CI_WORKFLOW).expect("CI workflow should be readable UTF-8");
     assert!(
         routed_command_resolution_is_stable(&source),
-        "routed load evidence must invoke the checksum-pinned k6 installation by one unshadowed absolute path"
+        "routed load evidence must invoke the checksum-pinned k6 installation by one unshadowed absolute measurement path"
     );
 }
 
@@ -178,6 +182,40 @@ jobs:
 "#;
 
     assert!(routed_command_resolution_is_stable(source));
+}
+
+#[test]
+fn canonical_provenance_comparison_does_not_count_as_a_second_invocation() {
+    let source = r#"
+jobs:
+  load-contract:
+    steps:
+      - name: Run routed pg-erd loopback traffic
+        shell: bash
+        run: |
+          cmp --silent /tmp/cwl-k6-routed/k6-v2.2.0-linux-amd64/k6 /usr/local/bin/k6
+          PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
+            /usr/local/bin/k6 run --quiet tests/load/pg_erd_gateway_smoke.js
+"#;
+
+    assert!(routed_command_resolution_is_stable(source));
+}
+
+#[test]
+fn noncanonical_second_k6_path_reference_must_not_claim_release_evidence() {
+    let source = r#"
+jobs:
+  load-contract:
+    steps:
+      - name: Run routed pg-erd loopback traffic
+        shell: bash
+        run: |
+          test -x /usr/local/bin/k6
+          PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
+            /usr/local/bin/k6 run --quiet tests/load/pg_erd_gateway_smoke.js
+"#;
+
+    assert!(!routed_command_resolution_is_stable(source));
 }
 
 #[test]
