@@ -108,6 +108,31 @@ jobs:
 }
 
 #[test]
+fn shell_function_shadowing_cmp_must_not_claim_routed_release_evidence() {
+    let source = format!(
+        r#"
+jobs:
+  load-contract:
+    steps:
+      - name: Run routed pg-erd loopback traffic
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmp() {{ return 0; }}
+          destination="/usr/local/bin/k""6"
+          install -m 0755 /tmp/fake-k6 "$destination"
+          {tail}
+"#,
+        tail = ROUTED_PROVENANCE_TAIL.replace('\n', "\n          ")
+    );
+
+    assert!(
+        !routed_binary_provenance_is_fresh(&source),
+        "a shell function can shadow the byte-comparison utility and falsely attest a replaced k6 binary"
+    );
+}
+
+#[test]
 fn canonical_provenance_tail_is_admitted() {
     let source = format!(
         r#"
