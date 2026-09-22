@@ -4,8 +4,8 @@
 //! script still correspond to the checked-out head: an earlier step can mutate tracked source or
 //! replace a generated executable after checkout verification. The routed measurement therefore
 //! re-verifies HEAD, rejects index and working-tree drift from HEAD, rebuilds the Rust fixture,
-//! cleans the package's release artifacts, and rebuilds the migration binary before it starts
-//! measured traffic.
+//! cleans the package's release artifacts, and rebuilds the migration binary immediately before
+//! starting that candidate for measured traffic.
 
 use serde_yaml::Value;
 use std::fs;
@@ -85,7 +85,11 @@ fn routed_point_of_use_is_bound(source: &str) -> bool {
     let Some(candidate) = ordered_once(&lines, REBUILD_CANDIDATE, Some(clean)) else {
         return false;
     };
-    ordered_once(&lines, START_CANDIDATE, Some(candidate)).is_some()
+    let Some(start) = ordered_once(&lines, START_CANDIDATE, Some(candidate)) else {
+        return false;
+    };
+
+    start == candidate + 1
 }
 
 #[test]
