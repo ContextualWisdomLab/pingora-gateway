@@ -205,6 +205,27 @@ jobs:
 }
 
 #[test]
+fn process_local_rustflags_override_is_rejected() {
+    let source = r#"
+env:
+  EXPECTED_SHA: deadbeef
+jobs:
+  load-contract:
+    steps:
+      - name: Run routed pg-erd loopback traffic
+        shell: bash
+        run: |
+          set -euo pipefail
+          readonly PATH=/etc/skel/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+          declare -rx CARGO_HOME=/etc/skel/.cargo
+          declare -rx RUSTUP_HOME=/etc/skel/.rustup
+          declare -rx RUSTUP_TOOLCHAIN=stable-x86_64-unknown-linux-gnu
+          RUSTFLAGS="-C target-cpu=native" cargo build --release --locked --bin cwl-pingora-pg-erd-migration
+"#;
+    assert!(!routed_rust_toolchain_is_root_owned(source));
+}
+
+#[test]
 fn canonical_exported_root_owned_rustup_binding_is_admitted() {
     let source = r#"
 env:
