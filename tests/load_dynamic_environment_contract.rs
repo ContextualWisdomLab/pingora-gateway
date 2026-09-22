@@ -119,6 +119,22 @@ PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
 }
 
 #[test]
+fn process_local_env_wrapper_must_not_claim_routed_release_evidence() {
+    let run = r#"
+set -euo pipefail
+prefix=K6
+name="${prefix}_NO_THRESHOLDS"
+env "${name}=true" PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
+  /usr/local/bin/k6 run --quiet tests/load/pg_erd_gateway_smoke.js
+"#;
+
+    assert!(
+        !routed_shell_environment_is_stable(run),
+        "a process-local env wrapper can inject a reconstructed k6 option without export, declare, or a literal K6_* token"
+    );
+}
+
+#[test]
 fn canonical_shell_options_remain_admitted() {
     let run = r#"
 set -euo pipefail
