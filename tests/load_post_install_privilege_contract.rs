@@ -1,16 +1,21 @@
-//! Guard the routed k6 provenance lane against privileged post-install mutation.
+//! Guard routed k6 provenance against privileged mutation of its trust boundary.
 //!
-//! Point-of-use checksum and byte-identity checks only mean what they claim when the commands
-//! performing those checks have not been replaced after the pinned k6 install. This contract is
-//! test-first: the initial predicate only inspects the routed step, so an intervening privileged
-//! step that replaces `/usr/bin/cmp` remains an intentional counterexample until the causal repair.
+//! The point-of-use archive checksum and byte-identity comparison are only meaningful when earlier
+//! workflow steps cannot replace `/usr/bin/sha256sum`, `/usr/bin/tar`, `/usr/bin/cmp`, or the
+//! installed `/usr/local/bin/k6`. On the canonical GitHub-hosted runner those paths require root to
+//! mutate. The load job therefore admits only the two reviewed `sudo` lines needed for native
+//! dependencies and the pinned k6 install; any additional privileged command is evidence drift.
 
 use serde_yaml::Value;
 use std::fs;
 
 const CI_WORKFLOW: &str = ".github/workflows/ci.yml";
 const LOAD_JOB: &str = "load-contract";
-const ROUTED_STEP: &str = "Run routed pg-erd loopback traffic";
+const NATIVE_DEPENDENCIES_STEP: &str = "Install native dependencies";
+const K6_INSTALL_STEP: &str = "Install checksum-pinned k6 2.2.0";
+const NATIVE_DEPENDENCIES_SUDO: &str = "sudo apt-get update && sudo apt-get install -y --no-install-recommends ca-certificates cmake curl libssl-dev pkg-config";
+const K6_INSTALL_SUDO: &str =
+    "sudo install -m 0755 /tmp/k6-v2.2.0-linux-amd64/k6 /usr/local/bin/k6";
 
 fn is_shell_identifier_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_'
@@ -26,18 +31,17 @@ fn contains_shell_identifier(line: &str, identifier: &str) -> bool {
     })
 }
 
-fn active_run_uses_sudo(step: &Value) -> bool {
+fn privileged_lines(step: &Value) -> impl Iterator<Item = &str> {
     step.get("run")
         .and_then(Value::as_str)
-        .is_some_and(|run| {
-            run.lines()
-                .map(str::trim_start)
-                .filter(|line| !line.starts_with('#'))
-                .any(|line| contains_shell_identifier(line, "sudo"))
-        })
+        .into_iter()
+        .flat_map(str::lines)
+        .map(str::trim)
+        .filter(|line| !line.starts_with('#'))
+        .filter(|line| contains_shell_identifier(line, "sudo"))
 }
 
-fn post_install_privilege_boundary_is_stable(source: &str) -> bool {
+fn load_privilege_surface_is_canonical(source: &str) -> bool {
     let Ok(document) = serde_yaml::from_str::<Value>(source) else {
         return false;
     };
@@ -50,23 +54,28 @@ fn post_install_privilege_boundary_is_stable(source: &str) -> bool {
         return false;
     };
 
-    let mut routed = steps
+    let observed = steps
         .iter()
-        .filter(|step| step.get("name").and_then(Value::as_str) == Some(ROUTED_STEP));
-    let Some(routed) = routed.next() else {
-        return false;
-    };
-    if routed.next().is_some() {
-        return false;
-    }
+        .flat_map(|step| {
+            let name = step.get("name").and_then(Value::as_str).unwrap_or("");
+            privileged_lines(step).map(move |line| (name, line))
+        })
+        .collect::<Vec<_>>();
 
-    !active_run_uses_sudo(routed)
+    observed
+        == [
+            (NATIVE_DEPENDENCIES_STEP, NATIVE_DEPENDENCIES_SUDO),
+            (K6_INSTALL_STEP, K6_INSTALL_SUDO),
+        ]
 }
 
 #[test]
-fn live_routed_lane_does_not_use_privileged_mutation_in_measurement_step() {
+fn live_routed_load_privilege_surface_is_canonical() {
     let source = fs::read_to_string(CI_WORKFLOW).expect("CI workflow should be readable UTF-8");
-    assert!(post_install_privilege_boundary_is_stable(&source));
+    assert!(
+        load_privilege_surface_is_canonical(&source),
+        "load-contract must expose only the reviewed native-dependency and pinned-k6 privileged mutations"
+    );
 }
 
 #[test]
@@ -76,8 +85,11 @@ jobs:
   load-contract:
     runs-on: ubuntu-24.04
     steps:
+      - name: Install native dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ca-certificates cmake curl libssl-dev pkg-config
       - name: Install checksum-pinned k6 2.2.0
-        run: sudo install -m 0755 /tmp/k6-v2.2.0-linux-amd64/k6 /usr/local/bin/k6
+        run: |
+          sudo install -m 0755 /tmp/k6-v2.2.0-linux-amd64/k6 /usr/local/bin/k6
       - name: Replace provenance comparator
         run: sudo install -m 0755 /bin/true /usr/bin/cmp
       - name: Run routed pg-erd loopback traffic
@@ -93,7 +105,43 @@ jobs:
 "#;
 
     assert!(
-        !post_install_privilege_boundary_is_stable(source),
-        "an earlier sudo mutation can replace the provenance utilities while leaving the routed evidence text unchanged"
+        !load_privilege_surface_is_canonical(source),
+        "an extra sudo mutation can replace provenance utilities while leaving the routed evidence text unchanged"
     );
+}
+
+#[test]
+fn privileged_mutation_hidden_inside_k6_install_step_is_rejected() {
+    let source = r#"
+jobs:
+  load-contract:
+    steps:
+      - name: Install native dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ca-certificates cmake curl libssl-dev pkg-config
+      - name: Install checksum-pinned k6 2.2.0
+        run: |
+          sudo install -m 0755 /tmp/k6-v2.2.0-linux-amd64/k6 /usr/local/bin/k6
+          sudo install -m 0755 /bin/true /usr/bin/sha256sum
+"#;
+
+    assert!(!load_privilege_surface_is_canonical(source));
+}
+
+#[test]
+fn canonical_privilege_surface_is_admitted() {
+    let source = r#"
+jobs:
+  load-contract:
+    steps:
+      - name: Install native dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ca-certificates cmake curl libssl-dev pkg-config
+      - name: Install checksum-pinned k6 2.2.0
+        run: |
+          set -euo pipefail
+          sudo install -m 0755 /tmp/k6-v2.2.0-linux-amd64/k6 /usr/local/bin/k6
+      - name: Run routed pg-erd loopback traffic
+        run: echo measured
+"#;
+
+    assert!(load_privilege_surface_is_canonical(source));
 }
