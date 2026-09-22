@@ -1,9 +1,9 @@
 //! Fail-closed routed-load contract for indirect environment mutation.
 //!
 //! Literal `K6_*` scans are insufficient when Bash reconstructs an option name at runtime and
-//! exports it before invoking k6. This contract keeps the routed evidence shell free of such
-//! environment-mutation primitives so threshold and workload options cannot be injected without a
-//! literal `K6_*` token.
+//! exports it before invoking k6. This contract keeps the routed evidence shell free of generic
+//! export/declaration and allexport primitives, so threshold and workload options cannot be
+//! injected without ever spelling a literal `K6_*` token.
 
 use serde_yaml::Value;
 use std::fs;
@@ -11,6 +11,7 @@ use std::fs;
 const CI_WORKFLOW: &str = ".github/workflows/ci.yml";
 const LOAD_JOB: &str = "load-contract";
 const ROUTED_STEP: &str = "Run routed pg-erd loopback traffic";
+const CANONICAL_SET: &str = "set -euo pipefail";
 
 fn unique_named_step<'a>(steps: &'a [Value], name: &str) -> Option<&'a Value> {
     let mut matches = steps
@@ -26,8 +27,16 @@ fn active_lines(run: &str) -> impl Iterator<Item = &str> {
         .filter(|line| !line.is_empty() && !line.starts_with('#'))
 }
 
+fn mutates_exported_environment(line: &str) -> bool {
+    line.starts_with("export ")
+        || line.starts_with("declare ")
+        || line.starts_with("typeset ")
+        || line.starts_with("readonly ")
+        || (line.starts_with("set ") && line != CANONICAL_SET)
+}
+
 fn routed_shell_environment_is_stable(run: &str) -> bool {
-    active_lines(run).all(|line| !line.contains("K6_"))
+    active_lines(run).all(|line| !line.contains("K6_") && !mutates_exported_environment(line))
 }
 
 fn live_routed_shell_environment_is_stable(source: &str) -> bool {
@@ -73,4 +82,49 @@ PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
         !routed_shell_environment_is_stable(run),
         "a runtime-reconstructed K6_NO_THRESHOLDS export disables threshold evaluation without any literal K6_* token"
     );
+}
+
+#[test]
+fn reconstructed_workload_export_must_not_claim_routed_release_evidence() {
+    let run = r#"
+set -euo pipefail
+prefix=K6
+name="${prefix}_ITERATIONS"
+export "${name}=1"
+PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
+  /usr/local/bin/k6 run --quiet tests/load/pg_erd_gateway_smoke.js
+"#;
+
+    assert!(
+        !routed_shell_environment_is_stable(run),
+        "runtime reconstruction must not override the checked-in 400-iteration workload"
+    );
+}
+
+#[test]
+fn allexport_must_not_claim_routed_release_evidence() {
+    let run = r#"
+set -euo pipefail
+set -a
+prefix=K6
+${prefix}_VUS=1
+PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
+  /usr/local/bin/k6 run --quiet tests/load/pg_erd_gateway_smoke.js
+"#;
+
+    assert!(
+        !routed_shell_environment_is_stable(run),
+        "Bash allexport can export reconstructed k6 options without an explicit export builtin"
+    );
+}
+
+#[test]
+fn canonical_shell_options_remain_admitted() {
+    let run = r#"
+set -euo pipefail
+PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
+  /usr/local/bin/k6 run --quiet tests/load/pg_erd_gateway_smoke.js
+"#;
+
+    assert!(routed_shell_environment_is_stable(run));
 }
