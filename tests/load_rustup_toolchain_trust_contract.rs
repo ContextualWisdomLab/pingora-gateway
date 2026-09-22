@@ -2,9 +2,9 @@
 //!
 //! A root-owned rustup proxy is not sufficient when `RUSTUP_HOME` still defaults to the runner
 //! user's writable `~/.rustup`: the proxy delegates to the selected toolchain under that mutable
-//! root. The routed evidence shell must bind rustup to the image-owned `/etc/skel/.rustup`, select
-//! the image-owned stable x86_64 toolchain explicitly, and reject declarative Rust/Cargo compiler
-//! overrides that could redirect the point-of-use rebuild.
+//! root. The routed evidence shell must bind rustup to the image-owned `/etc/skel/.rustup`, export
+//! that root and the image-owned stable x86_64 toolchain read-only, and reject declarative
+//! Rust/Cargo compiler overrides that could redirect the point-of-use rebuild.
 
 use serde_yaml::{Mapping, Value};
 use std::fs;
@@ -14,9 +14,9 @@ const LOAD_JOB: &str = "load-contract";
 const ROUTED_STEP: &str = "Run routed pg-erd loopback traffic";
 const CANONICAL_PATH: &str =
     "readonly PATH=/etc/skel/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
-const CANONICAL_RUSTUP_HOME: &str = "readonly RUSTUP_HOME=/etc/skel/.rustup";
+const CANONICAL_RUSTUP_HOME: &str = "declare -rx RUSTUP_HOME=/etc/skel/.rustup";
 const CANONICAL_RUSTUP_TOOLCHAIN: &str =
-    "readonly RUSTUP_TOOLCHAIN=stable-x86_64-unknown-linux-gnu";
+    "declare -rx RUSTUP_TOOLCHAIN=stable-x86_64-unknown-linux-gnu";
 
 const FORBIDDEN_ENV_KEYS: &[&str] = &[
     "RUSTC",
@@ -109,7 +109,7 @@ fn live_routed_rebuild_uses_image_owned_rustup_root() {
     let source = fs::read_to_string(CI_WORKFLOW).expect("CI workflow should be readable UTF-8");
     assert!(
         routed_rust_toolchain_is_root_owned(&source),
-        "routed candidate rebuild must bind rustup to the image-owned toolchain root before rustc/cargo resolution"
+        "routed candidate rebuild must export a read-only image-owned rustup root/toolchain before rustc/cargo resolution"
     );
 }
 
@@ -133,6 +133,26 @@ jobs:
 }
 
 #[test]
+fn unexported_readonly_rustup_bindings_are_not_sufficient() {
+    let source = r#"
+env:
+  EXPECTED_SHA: deadbeef
+jobs:
+  load-contract:
+    steps:
+      - name: Run routed pg-erd loopback traffic
+        shell: bash
+        run: |
+          set -euo pipefail
+          readonly PATH=/etc/skel/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+          readonly RUSTUP_HOME=/etc/skel/.rustup
+          readonly RUSTUP_TOOLCHAIN=stable-x86_64-unknown-linux-gnu
+          rustc --version
+"#;
+    assert!(!routed_rust_toolchain_is_root_owned(source));
+}
+
+#[test]
 fn declarative_rustc_wrapper_override_is_rejected() {
     let source = r#"
 env:
@@ -147,14 +167,14 @@ jobs:
         run: |
           set -euo pipefail
           readonly PATH=/etc/skel/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-          readonly RUSTUP_HOME=/etc/skel/.rustup
-          readonly RUSTUP_TOOLCHAIN=stable-x86_64-unknown-linux-gnu
+          declare -rx RUSTUP_HOME=/etc/skel/.rustup
+          declare -rx RUSTUP_TOOLCHAIN=stable-x86_64-unknown-linux-gnu
 "#;
     assert!(!routed_rust_toolchain_is_root_owned(source));
 }
 
 #[test]
-fn canonical_root_owned_rustup_binding_is_admitted() {
+fn canonical_exported_root_owned_rustup_binding_is_admitted() {
     let source = r#"
 env:
   EXPECTED_SHA: deadbeef
@@ -166,8 +186,8 @@ jobs:
         run: |
           set -euo pipefail
           readonly PATH=/etc/skel/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-          readonly RUSTUP_HOME=/etc/skel/.rustup
-          readonly RUSTUP_TOOLCHAIN=stable-x86_64-unknown-linux-gnu
+          declare -rx RUSTUP_HOME=/etc/skel/.rustup
+          declare -rx RUSTUP_TOOLCHAIN=stable-x86_64-unknown-linux-gnu
           rustc --version
 "#;
     assert!(routed_rust_toolchain_is_root_owned(source));
