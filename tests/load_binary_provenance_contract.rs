@@ -5,7 +5,8 @@
 //! invocation and every workload/threshold check. Routed evidence therefore revalidates the
 //! pinned supplier archive immediately before measurement, extracts a fresh private copy, proves
 //! the installed executable is byte-identical to that derivation, and then invokes it without an
-//! intervening command.
+//! intervening command. The provenance utilities themselves must also retain their normal shell
+//! resolution; function/alias/source mutations can otherwise turn the textual proof into a no-op.
 
 use serde_yaml::Value;
 use std::fs;
@@ -13,6 +14,7 @@ use std::fs;
 const CI_WORKFLOW: &str = ".github/workflows/ci.yml";
 const LOAD_JOB: &str = "load-contract";
 const ROUTED_STEP: &str = "Run routed pg-erd loopback traffic";
+const PROVENANCE_COMMANDS: [&str; 5] = ["rm", "mkdir", "sha256sum", "tar", "cmp"];
 const ROUTED_PROVENANCE_TAIL: &str = r#"rm -rf /tmp/cwl-k6-routed
 mkdir -p /tmp/cwl-k6-routed
 echo "b5a8003c86f35f5cd5ceef1490312c48e587696c94d998cefc6d7b3b4cb1597d  /tmp/k6-v2.2.0-linux-amd64.tar.gz" | sha256sum --check --strict
@@ -29,6 +31,30 @@ fn unique_named_step<'a>(steps: &'a [Value], name: &str) -> Option<&'a Value> {
     matches.next().is_none().then_some(step)
 }
 
+fn shell_function_defines(line: &str, command: &str) -> bool {
+    let line = line.trim_start();
+    line.starts_with(&format!("{command}()"))
+        || line.starts_with(&format!("{command} ()"))
+        || line
+            .strip_prefix("function ")
+            .is_some_and(|rest| rest == command || rest.starts_with(&format!("{command} ")) || rest.starts_with(&format!("{command}(")))
+}
+
+fn shell_namespace_can_subvert_provenance(run: &str) -> bool {
+    run.lines()
+        .map(str::trim_start)
+        .filter(|line| !line.starts_with('#'))
+        .any(|line| {
+            line.starts_with("source ")
+                || line.starts_with(". ")
+                || line.starts_with("alias ")
+                || line.starts_with("shopt ")
+                || PROVENANCE_COMMANDS
+                    .iter()
+                    .any(|command| shell_function_defines(line, command))
+        })
+}
+
 fn routed_binary_provenance_is_fresh(source: &str) -> bool {
     let Ok(document) = serde_yaml::from_str::<Value>(source) else {
         return false;
@@ -42,10 +68,10 @@ fn routed_binary_provenance_is_fresh(source: &str) -> bool {
     let Some(routed) = unique_named_step(steps, ROUTED_STEP) else {
         return false;
     };
-    routed
-        .get("run")
-        .and_then(Value::as_str)
-        .is_some_and(|run| run.trim_end().ends_with(ROUTED_PROVENANCE_TAIL))
+    routed.get("run").and_then(Value::as_str).is_some_and(|run| {
+        run.trim_end().ends_with(ROUTED_PROVENANCE_TAIL)
+            && !shell_namespace_can_subvert_provenance(run)
+    })
 }
 
 #[test]
@@ -129,6 +155,29 @@ jobs:
     assert!(
         !routed_binary_provenance_is_fresh(&source),
         "a shell function can shadow the byte-comparison utility and falsely attest a replaced k6 binary"
+    );
+}
+
+#[test]
+fn sourced_shell_namespace_must_not_claim_routed_release_evidence() {
+    let source = format!(
+        r#"
+jobs:
+  load-contract:
+    steps:
+      - name: Run routed pg-erd loopback traffic
+        shell: bash
+        run: |
+          set -euo pipefail
+          source /tmp/provenance-command-shims.sh
+          {tail}
+"#,
+        tail = ROUTED_PROVENANCE_TAIL.replace('\n', "\n          ")
+    );
+
+    assert!(
+        !routed_binary_provenance_is_fresh(&source),
+        "sourcing mutable shell state before the provenance tail can replace the utilities that produce the evidence"
     );
 }
 
