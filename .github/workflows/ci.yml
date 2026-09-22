@@ -222,7 +222,7 @@ jobs:
           trap cleanup EXIT
 
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
-          git diff --exit-code -- Cargo.toml Cargo.lock src tests/load/load_origin.rs tests/load/pg_erd_gateway_smoke.js
+          git diff --exit-code HEAD -- Cargo.toml Cargo.lock src tests/load/load_origin.rs tests/load/pg_erd_gateway_smoke.js
           rustc --edition 2021 -D warnings -C opt-level=3 -C debuginfo=0 --out-dir /tmp tests/load/load_origin.rs
           cargo clean -p cwl-pingora-gateway --release
           cargo build --release --locked --bin cwl-pingora-pg-erd-migration
