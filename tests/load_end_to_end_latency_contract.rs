@@ -16,7 +16,8 @@ const BACKEND_THRESHOLD: &str =
 const FRONTEND_THRESHOLD: &str =
     "'pg_erd_end_to_end_duration{route:frontend}': ['p(95)<20']";
 const START_TIMER: &str = "const startedAt = Date.now();";
-const HTTP_CALL: &str = "const response = http.get(`${gatewayUrl}${path}`, { tags: { route } });";
+const HTTP_CALL: &str =
+    "const response = http.get(`${gatewayUrl}${path}`, { tags: { route } });";
 const RECORD_TIMER: &str = "endToEndDuration.add(Date.now() - startedAt, { route });";
 
 fn exactly_once(source: &str, needle: &str) -> Option<usize> {
