@@ -124,8 +124,33 @@ fn default_function_matches_canonical_body(script: &str) -> bool {
         && function_lines[EXPECTED.len()] == "}"
 }
 
+fn options_binding_is_not_reused_after_declaration(script: &str) -> bool {
+    let lines = active_lines(script);
+    let Some(start) = lines
+        .iter()
+        .position(|line| *line == "export const options = {")
+    else {
+        return false;
+    };
+    let Some(end_offset) = lines
+        .iter()
+        .skip(start)
+        .position(|line| *line == "};")
+    else {
+        return false;
+    };
+    let end = start + end_offset;
+
+    !lines
+        .iter()
+        .skip(end + 1)
+        .any(|line| line.contains("options"))
+}
+
 fn routed_evidence_contract_accepts(script: &str) -> bool {
-    options_block_matches_canonical_contract(script) && default_function_matches_canonical_body(script)
+    options_block_matches_canonical_contract(script)
+        && default_function_matches_canonical_body(script)
+        && options_binding_is_not_reused_after_declaration(script)
 }
 
 #[test]
