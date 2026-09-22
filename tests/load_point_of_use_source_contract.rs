@@ -5,6 +5,8 @@
 //! replace a generated executable after checkout verification. The routed measurement therefore
 //! re-verifies HEAD, rejects index and working-tree drift from HEAD, rebuilds the Rust fixture,
 //! then re-verifies production source and performs clean/build/start as one exact candidate window.
+//! Same-shell functions must not shadow the materialization or startup commands that give that
+//! textual window its meaning.
 
 use serde_yaml::Value;
 use std::fs;
@@ -21,8 +23,10 @@ const VERIFY_CANDIDATE_SOURCE: &str = "git diff --exit-code HEAD -- Cargo.toml C
 const CLEAN_RELEASE: &str = "cargo clean -p cwl-pingora-gateway --release";
 const REBUILD_CANDIDATE: &str =
     "cargo build --release --locked --bin cwl-pingora-pg-erd-migration";
+const CANDIDATE_PATH: &str = "target/release/cwl-pingora-pg-erd-migration";
 const START_CANDIDATE: &str =
     "target/release/cwl-pingora-pg-erd-migration --config /tmp/pg-erd-load.yaml >/tmp/pingora-pg-erd-load.log 2>&1 &";
+const CANDIDATE_COMMANDS: [&str; 3] = ["rustc", "cargo", CANDIDATE_PATH];
 
 fn unique_named_step<'a>(steps: &'a [Value], name: &str) -> Option<&'a Value> {
     let mut matches = steps
@@ -52,6 +56,25 @@ fn ordered_once(lines: &[&str], needle: &str, after: Option<usize>) -> Option<us
     after.is_none_or(|previous| previous < index).then_some(index)
 }
 
+fn shell_function_defines(line: &str, command: &str) -> bool {
+    let line = line.trim_start();
+    line.starts_with(&format!("{command}()"))
+        || line.starts_with(&format!("{command} ()"))
+        || line.strip_prefix("function ").is_some_and(|rest| {
+            rest == command
+                || rest.starts_with(&format!("{command} "))
+                || rest.starts_with(&format!("{command}("))
+        })
+}
+
+fn candidate_tool_namespace_is_stable(lines: &[&str]) -> bool {
+    !lines.iter().any(|line| {
+        CANDIDATE_COMMANDS
+            .iter()
+            .any(|command| shell_function_defines(line, command))
+    })
+}
+
 fn routed_point_of_use_is_bound(source: &str) -> bool {
     let Ok(document) = serde_yaml::from_str::<Value>(source) else {
         return false;
@@ -69,6 +92,9 @@ fn routed_point_of_use_is_bound(source: &str) -> bool {
         return false;
     };
     let lines = active_lines(run);
+    if !candidate_tool_namespace_is_stable(&lines) {
+        return false;
+    }
 
     let Some(head) = ordered_once(&lines, VERIFY_HEAD, None) else {
         return false;
@@ -247,5 +273,50 @@ jobs:
     assert!(
         !routed_point_of_use_is_bound(source),
         "a same-shell cargo function can turn the clean/build pair into a replacement path while preserving the canonical candidate window"
+    );
+}
+
+#[test]
+fn rustc_function_shadowing_must_not_claim_release_evidence() {
+    let source = r#"
+jobs:
+  load-contract:
+    steps:
+      - name: Run routed pg-erd loopback traffic
+        run: |
+          rustc() { cp /tmp/fake-origin /tmp/load_origin; }
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          git diff --exit-code HEAD -- Cargo.toml Cargo.lock src tests/load/load_origin.rs tests/load/pg_erd_gateway_smoke.js
+          rustc --edition 2021 -D warnings -C opt-level=3 -C debuginfo=0 --out-dir /tmp tests/load/load_origin.rs
+          git diff --exit-code HEAD -- Cargo.toml Cargo.lock src
+          cargo clean -p cwl-pingora-gateway --release
+          cargo build --release --locked --bin cwl-pingora-pg-erd-migration
+          target/release/cwl-pingora-pg-erd-migration --config /tmp/pg-erd-load.yaml >/tmp/pingora-pg-erd-load.log 2>&1 &
+"#;
+
+    assert!(!routed_point_of_use_is_bound(source));
+}
+
+#[test]
+fn slash_named_candidate_function_must_not_claim_release_evidence() {
+    let source = r#"
+jobs:
+  load-contract:
+    steps:
+      - name: Run routed pg-erd loopback traffic
+        run: |
+          function target/release/cwl-pingora-pg-erd-migration { /tmp/fake-migration "$@"; }
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          git diff --exit-code HEAD -- Cargo.toml Cargo.lock src tests/load/load_origin.rs tests/load/pg_erd_gateway_smoke.js
+          rustc --edition 2021 -D warnings -C opt-level=3 -C debuginfo=0 --out-dir /tmp tests/load/load_origin.rs
+          git diff --exit-code HEAD -- Cargo.toml Cargo.lock src
+          cargo clean -p cwl-pingora-gateway --release
+          cargo build --release --locked --bin cwl-pingora-pg-erd-migration
+          target/release/cwl-pingora-pg-erd-migration --config /tmp/pg-erd-load.yaml >/tmp/pingora-pg-erd-load.log 2>&1 &
+"#;
+
+    assert!(
+        !routed_point_of_use_is_bound(source),
+        "Bash permits slash-named functions, so the startup token alone does not prove execution of the freshly rebuilt candidate file"
     );
 }
