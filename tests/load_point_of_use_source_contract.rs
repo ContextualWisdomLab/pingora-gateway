@@ -4,8 +4,7 @@
 //! script still correspond to the checked-out head: an earlier step can mutate tracked source or
 //! replace a generated executable after checkout verification. The routed measurement therefore
 //! re-verifies HEAD, rejects index and working-tree drift from HEAD, rebuilds the Rust fixture,
-//! cleans the package's release artifacts, and rebuilds the migration binary immediately before
-//! starting that candidate for measured traffic.
+//! then re-verifies production source and performs clean/build/start as one exact candidate window.
 
 use serde_yaml::Value;
 use std::fs;
@@ -18,6 +17,7 @@ const VERIFY_SOURCE: &str =
     "git diff --exit-code HEAD -- Cargo.toml Cargo.lock src tests/load/load_origin.rs tests/load/pg_erd_gateway_smoke.js";
 const REBUILD_ORIGIN: &str =
     "rustc --edition 2021 -D warnings -C opt-level=3 -C debuginfo=0 --out-dir /tmp tests/load/load_origin.rs";
+const VERIFY_CANDIDATE_SOURCE: &str = "git diff --exit-code HEAD -- Cargo.toml Cargo.lock src";
 const CLEAN_RELEASE: &str = "cargo clean -p cwl-pingora-gateway --release";
 const REBUILD_CANDIDATE: &str =
     "cargo build --release --locked --bin cwl-pingora-pg-erd-migration";
@@ -79,7 +79,10 @@ fn routed_point_of_use_is_bound(source: &str) -> bool {
     let Some(origin) = ordered_once(&lines, REBUILD_ORIGIN, Some(source)) else {
         return false;
     };
-    let Some(clean) = ordered_once(&lines, CLEAN_RELEASE, Some(origin)) else {
+    let Some(candidate_source) = ordered_once(&lines, VERIFY_CANDIDATE_SOURCE, Some(origin)) else {
+        return false;
+    };
+    let Some(clean) = ordered_once(&lines, CLEAN_RELEASE, Some(candidate_source)) else {
         return false;
     };
     let Some(candidate) = ordered_once(&lines, REBUILD_CANDIDATE, Some(clean)) else {
@@ -89,7 +92,7 @@ fn routed_point_of_use_is_bound(source: &str) -> bool {
         return false;
     };
 
-    start == candidate + 1
+    clean == candidate_source + 1 && candidate == clean + 1 && start == candidate + 1
 }
 
 #[test]
@@ -97,7 +100,7 @@ fn live_routed_measurement_rebuilds_from_clean_exact_head() {
     let source = fs::read_to_string(CI_WORKFLOW).expect("CI workflow should be readable UTF-8");
     assert!(
         routed_point_of_use_is_bound(&source),
-        "routed evidence must re-check tracked source and freshly rebuild its Rust fixture and candidate before measured traffic"
+        "routed evidence must re-check production source and clean/build/start its candidate as one point-of-use window"
     );
 }
 
@@ -131,6 +134,7 @@ jobs:
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
           git diff --exit-code -- Cargo.toml Cargo.lock src tests/load/load_origin.rs tests/load/pg_erd_gateway_smoke.js
           rustc --edition 2021 -D warnings -C opt-level=3 -C debuginfo=0 --out-dir /tmp tests/load/load_origin.rs
+          git diff --exit-code HEAD -- Cargo.toml Cargo.lock src
           cargo clean -p cwl-pingora-gateway --release
           cargo build --release --locked --bin cwl-pingora-pg-erd-migration
           target/release/cwl-pingora-pg-erd-migration --config /tmp/pg-erd-load.yaml >/tmp/pingora-pg-erd-load.log 2>&1 &
@@ -167,6 +171,7 @@ jobs:
         run: |
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
           git diff --exit-code HEAD -- Cargo.toml Cargo.lock src tests/load/load_origin.rs tests/load/pg_erd_gateway_smoke.js
+          git diff --exit-code HEAD -- Cargo.toml Cargo.lock src
           cargo clean -p cwl-pingora-gateway --release
           cargo build --release --locked --bin cwl-pingora-pg-erd-migration
           target/release/cwl-pingora-pg-erd-migration --config /tmp/pg-erd-load.yaml >/tmp/pingora-pg-erd-load.log 2>&1 &
@@ -185,6 +190,7 @@ jobs:
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
           git diff --exit-code HEAD -- Cargo.toml Cargo.lock src tests/load/load_origin.rs tests/load/pg_erd_gateway_smoke.js
           rustc --edition 2021 -D warnings -C opt-level=3 -C debuginfo=0 --out-dir /tmp tests/load/load_origin.rs
+          git diff --exit-code HEAD -- Cargo.toml Cargo.lock src
           cargo clean -p cwl-pingora-gateway --release
           cargo build --release --locked --bin cwl-pingora-pg-erd-migration
           cp /tmp/fake-migration target/release/cwl-pingora-pg-erd-migration
@@ -194,5 +200,28 @@ jobs:
     assert!(
         !routed_point_of_use_is_bound(source),
         "a freshly rebuilt candidate can still be replaced before startup when build and invocation are not adjacent"
+    );
+}
+
+#[test]
+fn late_candidate_rebuild_without_source_recheck_is_not_enough() {
+    let source = r#"
+jobs:
+  load-contract:
+    steps:
+      - name: Run routed pg-erd loopback traffic
+        run: |
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          git diff --exit-code HEAD -- Cargo.toml Cargo.lock src tests/load/load_origin.rs tests/load/pg_erd_gateway_smoke.js
+          rustc --edition 2021 -D warnings -C opt-level=3 -C debuginfo=0 --out-dir /tmp tests/load/load_origin.rs
+          printf 'tampered' >> src/main.rs
+          cargo clean -p cwl-pingora-gateway --release
+          cargo build --release --locked --bin cwl-pingora-pg-erd-migration
+          target/release/cwl-pingora-pg-erd-migration --config /tmp/pg-erd-load.yaml >/tmp/pingora-pg-erd-load.log 2>&1 &
+"#;
+
+    assert!(
+        !routed_point_of_use_is_bound(source),
+        "a late rebuild must be preceded by a fresh HEAD comparison of the candidate's production inputs"
     );
 }
