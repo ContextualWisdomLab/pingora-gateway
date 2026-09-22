@@ -54,16 +54,21 @@ fn active_lines(script: &str) -> Vec<&str> {
 }
 
 fn options_block_matches_canonical_contract(script: &str) -> bool {
-    const EXPECTED: [&str; 13] = [
+    const EXPECTED: [&str; 18] = [
         "export const options = {",
         "vus: 4,",
         "iterations: 400,",
+        "rps: 0,",
+        "minIterationDuration: '0s',",
         "thresholds: {",
         "checks: ['rate==1'],",
         "http_req_failed: ['rate==0'],",
         "http_req_duration: ['p(95)<20'],",
         "'http_req_duration{route:backend}': ['p(95)<20'],",
         "'http_req_duration{route:frontend}': ['p(95)<20'],",
+        "pg_erd_end_to_end_duration: ['p(95)<20'],",
+        "'pg_erd_end_to_end_duration{route:backend}': ['p(95)<20'],",
+        "'pg_erd_end_to_end_duration{route:frontend}': ['p(95)<20'],",
         "'http_reqs{route:backend}': ['count>=198'],",
         "'http_reqs{route:frontend}': ['count>=198'],",
         "},",
@@ -89,13 +94,15 @@ fn contains_active_binding_line(script: &str, expected: &str) -> bool {
 }
 
 fn default_function_matches_canonical_body(script: &str) -> bool {
-    const EXPECTED: [&str; 10] = [
+    const EXPECTED: [&str; 12] = [
         "export default function () {",
         "const backendRoute = (__VU + __ITER) % 2 === 0;",
         "const route = backendRoute ? 'backend' : 'frontend';",
         "const path = backendRoute ? '/api/load-contract' : '/load-contract';",
         "const expectedBody = backendRoute ? 'backend-ok' : 'frontend-ok';",
+        "const startedAt = Date.now();",
         "const response = http.get(`${gatewayUrl}${path}`, { tags: { route } });",
+        "endToEndDuration.add(Date.now() - startedAt, { route });",
         "check(response, {",
         "'pg-erd gateway returns 200': (result) => result.status === 200,",
         "'pg-erd gateway preserves characterized route body': (result) => result.body === expectedBody,",
@@ -160,7 +167,7 @@ fn routed_latency_is_gated_for_each_characterized_route() {
 
     assert!(
         routed_evidence_contract_accepts(&script),
-        "routed load contract must bind workload shape, failure gates, latency thresholds, route sample floors, and the exact executable request/check body"
+        "routed load contract must bind workload shape, pacing, failure gates, server and end-to-end latency thresholds, route sample floors, and the exact executable request/check body"
     );
 }
 
