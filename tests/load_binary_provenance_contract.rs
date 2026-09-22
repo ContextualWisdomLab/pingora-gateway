@@ -6,7 +6,8 @@
 //! pinned supplier archive immediately before measurement, extracts a fresh private copy, proves
 //! the installed executable is byte-identical to that derivation, and then invokes it without an
 //! intervening command. The provenance utilities themselves must also retain their normal shell
-//! resolution; function/alias/source mutations can otherwise turn the textual proof into a no-op.
+//! resolution; function/alias/source mutations or imported Bash functions can otherwise turn the
+//! textual proof into a no-op.
 
 use serde_yaml::Value;
 use std::fs;
@@ -29,6 +30,16 @@ fn unique_named_step<'a>(steps: &'a [Value], name: &str) -> Option<&'a Value> {
         .filter(|step| step.get("name").and_then(Value::as_str) == Some(name));
     let step = matches.next()?;
     matches.next().is_none().then_some(step)
+}
+
+fn env_imports_bash_function(node: &Value) -> bool {
+    node.get("env")
+        .and_then(Value::as_mapping)
+        .is_some_and(|env| {
+            env.keys().filter_map(Value::as_str).any(|key| {
+                key.starts_with("BASH_FUNC_") && key.ends_with("%%")
+            })
+        })
 }
 
 fn shell_function_defines(line: &str, command: &str) -> bool {
@@ -61,15 +72,27 @@ fn routed_binary_provenance_is_fresh(source: &str) -> bool {
     let Ok(document) = serde_yaml::from_str::<Value>(source) else {
         return false;
     };
+    if env_imports_bash_function(&document) {
+        return false;
+    }
+
     let Some(job) = document.get("jobs").and_then(|jobs| jobs.get(LOAD_JOB)) else {
         return false;
     };
+    if env_imports_bash_function(job) {
+        return false;
+    }
+
     let Some(steps) = job.get("steps").and_then(Value::as_sequence) else {
         return false;
     };
     let Some(routed) = unique_named_step(steps, ROUTED_STEP) else {
         return false;
     };
+    if env_imports_bash_function(routed) {
+        return false;
+    }
+
     routed.get("run").and_then(Value::as_str).is_some_and(|run| {
         run.trim_end().ends_with(ROUTED_PROVENANCE_TAIL)
             && !shell_namespace_can_subvert_provenance(run)
@@ -205,6 +228,27 @@ jobs:
         !routed_binary_provenance_is_fresh(&source),
         "Bash can import functions from BASH_FUNC_*%% environment entries before the run script starts"
     );
+}
+
+#[test]
+fn job_level_imported_bash_function_must_not_claim_routed_release_evidence() {
+    let source = format!(
+        r#"
+jobs:
+  load-contract:
+    env:
+      "BASH_FUNC_cmp%%": "() {{ return 0; }}"
+    steps:
+      - name: Run routed pg-erd loopback traffic
+        shell: bash
+        run: |
+          set -euo pipefail
+          {tail}
+"#,
+        tail = ROUTED_PROVENANCE_TAIL.replace('\n', "\n          ")
+    );
+
+    assert!(!routed_binary_provenance_is_fresh(&source));
 }
 
 #[test]
