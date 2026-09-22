@@ -17,16 +17,30 @@ const FORBIDDEN_OUTPUT_ENV_KEYS: &[&str] = &[
     "CARGO_BUILD_TARGET",
 ];
 
+fn is_output_redirect(key: &str) -> bool {
+    FORBIDDEN_OUTPUT_ENV_KEYS.contains(&key)
+}
+
 fn mapping_has_output_redirect(mapping: Option<&Mapping>) -> bool {
     mapping.is_some_and(|mapping| {
-        FORBIDDEN_OUTPUT_ENV_KEYS
-            .iter()
-            .any(|key| mapping.contains_key(Value::String((*key).to_owned())))
+        mapping
+            .keys()
+            .filter_map(Value::as_str)
+            .any(is_output_redirect)
     })
 }
 
 fn node_has_output_redirect(node: &Value) -> bool {
     mapping_has_output_redirect(node.get("env").and_then(Value::as_mapping))
+}
+
+fn run_has_inline_output_redirect(run: &str) -> bool {
+    run.lines()
+        .map(str::trim_start)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .flat_map(str::split_whitespace)
+        .filter_map(|token| token.split_once('=').map(|(key, _)| key))
+        .any(is_output_redirect)
 }
 
 fn routed_candidate_output_location_is_canonical(source: &str) -> bool {
@@ -57,7 +71,10 @@ fn routed_candidate_output_location_is_canonical(source: &str) -> bool {
         return false;
     }
 
-    true
+    routed
+        .get("run")
+        .and_then(Value::as_str)
+        .is_some_and(|run| !run_has_inline_output_redirect(run))
 }
 
 #[test]
