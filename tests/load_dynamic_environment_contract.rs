@@ -174,6 +174,24 @@ command env "${name}=1" PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
 }
 
 #[test]
+fn reconstructed_environment_command_must_not_claim_routed_release_evidence() {
+    let run = r#"
+set -euo pipefail
+prefix=K6
+name="${prefix}_NO_THRESHOLDS"
+launcher=en
+launcher="${launcher}v"
+"${launcher}" "${name}=true" PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
+  /usr/local/bin/k6 run --quiet tests/load/pg_erd_gateway_smoke.js
+"#;
+
+    assert!(
+        !routed_shell_environment_is_stable(run),
+        "reconstructing the env command name must not bypass the process-local option-injection guard"
+    );
+}
+
+#[test]
 fn canonical_shell_options_remain_admitted() {
     let run = r#"
 set -euo pipefail
