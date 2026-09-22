@@ -1,5 +1,8 @@
 import http from 'k6/http';
 import { check } from 'k6';
+import { Trend } from 'k6/metrics';
+
+const endToEndDuration = new Trend('pg_erd_end_to_end_duration', true);
 
 export const options = {
   vus: 4,
@@ -12,6 +15,9 @@ export const options = {
     http_req_duration: ['p(95)<20'],
     'http_req_duration{route:backend}': ['p(95)<20'],
     'http_req_duration{route:frontend}': ['p(95)<20'],
+    pg_erd_end_to_end_duration: ['p(95)<20'],
+    'pg_erd_end_to_end_duration{route:backend}': ['p(95)<20'],
+    'pg_erd_end_to_end_duration{route:frontend}': ['p(95)<20'],
     'http_reqs{route:backend}': ['count>=198'],
     'http_reqs{route:frontend}': ['count>=198'],
   },
@@ -24,7 +30,9 @@ export default function () {
   const route = backendRoute ? 'backend' : 'frontend';
   const path = backendRoute ? '/api/load-contract' : '/load-contract';
   const expectedBody = backendRoute ? 'backend-ok' : 'frontend-ok';
+  const startedAt = Date.now();
   const response = http.get(`${gatewayUrl}${path}`, { tags: { route } });
+  endToEndDuration.add(Date.now() - startedAt, { route });
 
   check(response, {
     'pg-erd gateway returns 200': (result) => result.status === 200,
