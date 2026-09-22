@@ -84,6 +84,28 @@ jobs:
 }
 
 #[test]
+fn github_env_path_persistence_must_not_claim_release_evidence() {
+    let source = r#"
+jobs:
+  load-contract:
+    steps:
+      - name: Persist poisoned PATH for later steps
+        run: echo "PATH=/tmp/evidence-shims:/usr/bin" >> "$GITHUB_ENV"
+      - name: Run routed pg-erd loopback traffic
+        shell: bash
+        run: |
+          cmp --silent /tmp/cwl-k6-routed/k6-v2.2.0-linux-amd64/k6 /usr/local/bin/k6
+          PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
+            /usr/local/bin/k6 run --quiet tests/load/pg_erd_gateway_smoke.js
+"#;
+
+    assert!(
+        !load_job_has_closed_persisted_path(source),
+        "GITHUB_ENV can persist a PATH override into later steps without an env.PATH key or GITHUB_PATH write"
+    );
+}
+
+#[test]
 fn workflow_level_path_override_must_not_claim_release_evidence() {
     let source = r#"
 env:
