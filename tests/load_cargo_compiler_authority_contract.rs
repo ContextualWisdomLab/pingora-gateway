@@ -33,6 +33,15 @@ fn node_has_compiler_override(node: &Value) -> bool {
     mapping_has_compiler_override(node.get("env").and_then(Value::as_mapping))
 }
 
+fn run_has_inline_compiler_override(run: &str) -> bool {
+    run.lines()
+        .map(str::trim_start)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .flat_map(str::split_whitespace)
+        .filter_map(|token| token.split_once('=').map(|(key, _)| key))
+        .any(is_cargo_compiler_override)
+}
+
 fn routed_candidate_compiler_authority_is_canonical(source: &str) -> bool {
     let Ok(document) = serde_yaml::from_str::<Value>(source) else {
         return false;
@@ -61,7 +70,10 @@ fn routed_candidate_compiler_authority_is_canonical(source: &str) -> bool {
         return false;
     }
 
-    true
+    routed
+        .get("run")
+        .and_then(Value::as_str)
+        .is_some_and(|run| !run_has_inline_compiler_override(run))
 }
 
 #[test]
