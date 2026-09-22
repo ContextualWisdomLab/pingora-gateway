@@ -6,8 +6,8 @@
 //! pinned supplier archive immediately before measurement, extracts a fresh private copy, proves
 //! the installed executable is byte-identical to that derivation, and then invokes it without an
 //! intervening command. The provenance utilities themselves must also retain their normal shell
-//! resolution; function/alias/source mutations or imported Bash functions can otherwise turn the
-//! textual proof into a no-op.
+//! resolution; function/alias/source mutations, imported Bash functions, or dynamic-loader
+//! injection can otherwise turn the textual proof into a no-op.
 
 use serde_yaml::Value;
 use std::fs;
@@ -36,9 +36,19 @@ fn env_imports_bash_function(node: &Value) -> bool {
     node.get("env")
         .and_then(Value::as_mapping)
         .is_some_and(|env| {
-            env.keys().filter_map(Value::as_str).any(|key| {
-                key.starts_with("BASH_FUNC_") && key.ends_with("%%")
-            })
+            env.keys()
+                .filter_map(Value::as_str)
+                .any(|key| key.starts_with("BASH_FUNC_") && key.ends_with("%%"))
+        })
+}
+
+fn env_mutates_dynamic_loader(node: &Value) -> bool {
+    node.get("env")
+        .and_then(Value::as_mapping)
+        .is_some_and(|env| {
+            env.keys()
+                .filter_map(Value::as_str)
+                .any(|key| key.starts_with("LD_"))
         })
 }
 
@@ -58,7 +68,8 @@ fn shell_namespace_can_subvert_provenance(run: &str) -> bool {
         .map(str::trim_start)
         .filter(|line| !line.starts_with('#'))
         .any(|line| {
-            line.starts_with("source ")
+            line.contains("LD_")
+                || line.starts_with("source ")
                 || line.starts_with(". ")
                 || line.starts_with("alias ")
                 || line.starts_with("shopt ")
@@ -72,14 +83,14 @@ fn routed_binary_provenance_is_fresh(source: &str) -> bool {
     let Ok(document) = serde_yaml::from_str::<Value>(source) else {
         return false;
     };
-    if env_imports_bash_function(&document) {
+    if env_imports_bash_function(&document) || env_mutates_dynamic_loader(&document) {
         return false;
     }
 
     let Some(job) = document.get("jobs").and_then(|jobs| jobs.get(LOAD_JOB)) else {
         return false;
     };
-    if env_imports_bash_function(job) {
+    if env_imports_bash_function(job) || env_mutates_dynamic_loader(job) {
         return false;
     }
 
@@ -89,7 +100,7 @@ fn routed_binary_provenance_is_fresh(source: &str) -> bool {
     let Some(routed) = unique_named_step(steps, ROUTED_STEP) else {
         return false;
     };
-    if env_imports_bash_function(routed) {
+    if env_imports_bash_function(routed) || env_mutates_dynamic_loader(routed) {
         return false;
     }
 
@@ -273,6 +284,68 @@ jobs:
         !routed_binary_provenance_is_fresh(&source),
         "dynamic-loader environment can alter provenance utilities before the routed evidence command executes"
     );
+}
+
+#[test]
+fn job_level_dynamic_loader_injection_must_not_claim_routed_release_evidence() {
+    let source = format!(
+        r#"
+jobs:
+  load-contract:
+    env:
+      LD_LIBRARY_PATH: /tmp/evidence-libs
+    steps:
+      - name: Run routed pg-erd loopback traffic
+        shell: bash
+        run: |
+          set -euo pipefail
+          {tail}
+"#,
+        tail = ROUTED_PROVENANCE_TAIL.replace('\n', "\n          ")
+    );
+
+    assert!(!routed_binary_provenance_is_fresh(&source));
+}
+
+#[test]
+fn step_level_dynamic_loader_injection_must_not_claim_routed_release_evidence() {
+    let source = format!(
+        r#"
+jobs:
+  load-contract:
+    steps:
+      - name: Run routed pg-erd loopback traffic
+        shell: bash
+        env:
+          LD_AUDIT: /tmp/evidence-audit.so
+        run: |
+          set -euo pipefail
+          {tail}
+"#,
+        tail = ROUTED_PROVENANCE_TAIL.replace('\n', "\n          ")
+    );
+
+    assert!(!routed_binary_provenance_is_fresh(&source));
+}
+
+#[test]
+fn same_shell_dynamic_loader_injection_must_not_claim_routed_release_evidence() {
+    let source = format!(
+        r#"
+jobs:
+  load-contract:
+    steps:
+      - name: Run routed pg-erd loopback traffic
+        shell: bash
+        run: |
+          set -euo pipefail
+          export LD_PRELOAD=/tmp/evidence-preload.so
+          {tail}
+"#,
+        tail = ROUTED_PROVENANCE_TAIL.replace('\n', "\n          ")
+    );
+
+    assert!(!routed_binary_provenance_is_fresh(&source));
 }
 
 #[test]
