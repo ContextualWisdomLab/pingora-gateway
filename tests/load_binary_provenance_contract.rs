@@ -252,6 +252,30 @@ jobs:
 }
 
 #[test]
+fn dynamic_loader_injection_must_not_claim_routed_release_evidence() {
+    let source = format!(
+        r#"
+env:
+  LD_PRELOAD: /tmp/evidence-preload.so
+jobs:
+  load-contract:
+    steps:
+      - name: Run routed pg-erd loopback traffic
+        shell: bash
+        run: |
+          set -euo pipefail
+          {tail}
+"#,
+        tail = ROUTED_PROVENANCE_TAIL.replace('\n', "\n          ")
+    );
+
+    assert!(
+        !routed_binary_provenance_is_fresh(&source),
+        "dynamic-loader environment can alter provenance utilities before the routed evidence command executes"
+    );
+}
+
+#[test]
 fn canonical_provenance_tail_is_admitted() {
     let source = format!(
         r#"
