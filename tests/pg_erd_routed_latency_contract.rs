@@ -365,3 +365,19 @@ fn commented_route_binding_bait_does_not_satisfy_the_contract() {
         "commented route/body binding text must not manufacture routed parity evidence"
     );
 }
+
+#[test]
+fn post_declaration_options_mutation_must_not_retain_commercial_latency_evidence() {
+    let script = fs::read_to_string("tests/load/pg_erd_gateway_smoke.js")
+        .expect("pg-erd routed load script must be readable");
+    let mutated = script.replace(
+        "};\n\nconst gatewayUrl",
+        "};\n\noptions.thresholds = {};\noptions.vus = 1;\noptions.iterations = 1;\n\nconst gatewayUrl",
+    );
+
+    assert_ne!(mutated, script, "post-declaration mutation must apply");
+    assert!(
+        !routed_evidence_contract_accepts(&mutated),
+        "canonical option text must not retain commercial evidence if executable code mutates thresholds or workload after the declaration"
+    );
+}
