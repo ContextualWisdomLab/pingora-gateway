@@ -12,7 +12,7 @@ const CI_WORKFLOW: &str = ".github/workflows/ci.yml";
 const LOAD_JOB: &str = "load-contract";
 const LOAD_JOB_IF: &str = "github.event_name != 'pull_request' || github.event.pull_request.draft == false";
 const ROUTED_STEP: &str = "Run routed pg-erd loopback traffic";
-const ROUTED_K6_TAIL: &str = "PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \\\n  k6 run --quiet tests/load/pg_erd_gateway_smoke.js";
+const ROUTED_K6_TAIL: &str = "PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \\\n  /usr/local/bin/k6 run --quiet tests/load/pg_erd_gateway_smoke.js";
 const SUMMARY_STEP: &str = "Require routed pg-erd latency summary";
 const SUMMARY_RUN: &str = "test -s k6-pg-erd-summary.json";
 
@@ -138,7 +138,7 @@ jobs:
         continue-on-error: true
         run: |
           PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
-            k6 run --quiet tests/load/pg_erd_gateway_smoke.js
+            /usr/local/bin/k6 run --quiet tests/load/pg_erd_gateway_smoke.js
       - name: Require routed pg-erd latency summary
         run: test -s k6-pg-erd-summary.json
 "#
@@ -162,7 +162,7 @@ jobs:
       - name: Run routed pg-erd loopback traffic
         run: |
           PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
-            k6 run --quiet tests/load/pg_erd_gateway_smoke.js
+            /usr/local/bin/k6 run --quiet tests/load/pg_erd_gateway_smoke.js
       - name: Require routed pg-erd latency summary
         run: test -s k6-pg-erd-summary.json
 "#
@@ -186,7 +186,7 @@ jobs:
         if: ${{{{ false }}}}
         run: |
           PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
-            k6 run --quiet tests/load/pg_erd_gateway_smoke.js
+            /usr/local/bin/k6 run --quiet tests/load/pg_erd_gateway_smoke.js
       - name: Require routed pg-erd latency summary
         run: test -s k6-pg-erd-summary.json
 "#
@@ -208,7 +208,7 @@ jobs:
       - name: Run routed pg-erd loopback traffic
         run: |
           PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
-            k6 run --quiet tests/load/pg_erd_gateway_smoke.js
+            /usr/local/bin/k6 run --quiet tests/load/pg_erd_gateway_smoke.js
       - name: Require routed pg-erd latency summary
         run: test -s k6-pg-erd-summary.json
 "#;
@@ -230,7 +230,7 @@ jobs:
       - name: Run routed pg-erd loopback traffic
         run: |
           PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
-            k6 run --quiet tests/load/pg_erd_gateway_smoke.js
+            /usr/local/bin/k6 run --quiet tests/load/pg_erd_gateway_smoke.js
       - name: Require routed pg-erd latency summary
         continue-on-error: true
         run: test -s k6-pg-erd-summary.json
@@ -255,7 +255,7 @@ jobs:
         shell: bash
         run: |
           PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
-            k6 run --quiet tests/load/pg_erd_gateway_smoke.js
+            /usr/local/bin/k6 run --quiet tests/load/pg_erd_gateway_smoke.js
       - name: Require routed pg-erd latency summary
         shell: bash -n {{0}}
         run: test -s k6-pg-erd-summary.json
@@ -283,7 +283,7 @@ jobs:
         shell: bash
         run: |
           PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
-            k6 run --quiet tests/load/pg_erd_gateway_smoke.js
+            /usr/local/bin/k6 run --quiet tests/load/pg_erd_gateway_smoke.js
       - name: Require routed pg-erd latency summary
         run: test -s k6-pg-erd-summary.json
 "#
@@ -309,7 +309,7 @@ jobs:
           set -euo pipefail
           if false; then
             PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
-              k6 run --quiet tests/load/pg_erd_gateway_smoke.js
+              /usr/local/bin/k6 run --quiet tests/load/pg_erd_gateway_smoke.js
           fi
           printf '{{}}' > k6-pg-erd-summary.json
       - name: Require routed pg-erd latency summary
@@ -336,7 +336,7 @@ jobs:
         run: |
           set -euo pipefail
           PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
-            k6 run --quiet tests/load/pg_erd_gateway_smoke.js
+            /usr/local/bin/k6 run --quiet tests/load/pg_erd_gateway_smoke.js
       - name: Require routed pg-erd latency summary
         run: test -s k6-pg-erd-summary.json
 "#
@@ -363,7 +363,7 @@ jobs:
         shell: bash
         run: |
           PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
-            k6 run --quiet tests/load/pg_erd_gateway_smoke.js
+            /usr/local/bin/k6 run --quiet tests/load/pg_erd_gateway_smoke.js
       - name: Require routed pg-erd latency summary
         run: test -s k6-pg-erd-summary.json
 "#
@@ -388,7 +388,7 @@ jobs:
         working-directory: /tmp/decoy-worktree
         run: |
           PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
-            k6 run --quiet tests/load/pg_erd_gateway_smoke.js
+            /usr/local/bin/k6 run --quiet tests/load/pg_erd_gateway_smoke.js
       - name: Require routed pg-erd latency summary
         run: test -s k6-pg-erd-summary.json
 "#
