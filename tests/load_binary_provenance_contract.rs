@@ -35,9 +35,11 @@ fn shell_function_defines(line: &str, command: &str) -> bool {
     let line = line.trim_start();
     line.starts_with(&format!("{command}()"))
         || line.starts_with(&format!("{command} ()"))
-        || line
-            .strip_prefix("function ")
-            .is_some_and(|rest| rest == command || rest.starts_with(&format!("{command} ")) || rest.starts_with(&format!("{command}(")))
+        || line.strip_prefix("function ").is_some_and(|rest| {
+            rest == command
+                || rest.starts_with(&format!("{command} "))
+                || rest.starts_with(&format!("{command}("))
+        })
 }
 
 fn shell_namespace_can_subvert_provenance(run: &str) -> bool {
