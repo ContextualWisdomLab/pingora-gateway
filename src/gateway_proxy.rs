@@ -23,11 +23,13 @@ pub const LIVENESS_PATH: &str = "/livez";
 /// Stable readiness endpoint reached through the production Pingora serving path.
 pub const READINESS_PATH: &str = "/readyz";
 
+/// Registers one process-global counter and fails closed if its stable metric name is duplicated.
 fn register_counter(name: &'static str, help: &'static str) -> IntCounter {
     register_int_counter!(name, help)
         .unwrap_or_else(|error| panic!("gateway metric {name} must register exactly once: {error}"))
 }
 
+/// Counts completed downstream requests across success and error outcomes.
 static REQUESTS_TOTAL: LazyLock<IntCounter> = LazyLock::new(|| {
     register_counter(
         "cwl_pingora_gateway_requests_total",
@@ -35,6 +37,7 @@ static REQUESTS_TOTAL: LazyLock<IntCounter> = LazyLock::new(|| {
     )
 });
 
+/// Counts downstream requests whose Pingora lifecycle completes with an error.
 static REQUEST_ERRORS_TOTAL: LazyLock<IntCounter> = LazyLock::new(|| {
     register_counter(
         "cwl_pingora_gateway_request_errors_total",
@@ -42,6 +45,7 @@ static REQUEST_ERRORS_TOTAL: LazyLock<IntCounter> = LazyLock::new(|| {
     )
 });
 
+/// Accumulates downstream request-body bytes observed before completion or rejection.
 static REQUEST_BODY_BYTES_TOTAL: LazyLock<IntCounter> = LazyLock::new(|| {
     register_counter(
         "cwl_pingora_gateway_request_body_bytes_total",
@@ -49,6 +53,7 @@ static REQUEST_BODY_BYTES_TOTAL: LazyLock<IntCounter> = LazyLock::new(|| {
     )
 });
 
+/// Counts requests rejected because the configured process admission budget is exhausted.
 static BACKPRESSURE_REJECTIONS_TOTAL: LazyLock<IntCounter> = LazyLock::new(|| {
     register_counter(
         "cwl_pingora_gateway_backpressure_rejections_total",
@@ -56,13 +61,17 @@ static BACKPRESSURE_REJECTIONS_TOTAL: LazyLock<IntCounter> = LazyLock::new(|| {
     )
 });
 
+/// Process-local admission controller for non-health downstream request lifecycles.
 #[derive(Debug, Clone)]
 struct RequestAdmissionBudget {
+    /// Shared count of currently admitted non-health requests.
     in_flight: Arc<AtomicUsize>,
+    /// Maximum simultaneous admissions allowed by the validated edge contract.
     limit: usize,
 }
 
 impl RequestAdmissionBudget {
+    /// Creates an empty admission budget with the already-validated positive process limit.
     fn new(limit: usize) -> Self {
         Self {
             in_flight: Arc::new(AtomicUsize::new(0)),
@@ -70,6 +79,7 @@ impl RequestAdmissionBudget {
         }
     }
 
+    /// Atomically acquires one request lease or returns HTTP 503 when capacity is exhausted.
     fn acquire_or_reject(&self) -> pingora::Result<RequestAdmission> {
         let admitted =
             self.in_flight
@@ -95,10 +105,12 @@ impl RequestAdmissionBudget {
 /// RAII admission lease held for the complete non-health request lifecycle.
 #[derive(Debug)]
 pub struct RequestAdmission {
+    /// Shared counter decremented exactly once when this request lifecycle releases its lease.
     in_flight: Arc<AtomicUsize>,
 }
 
 impl Drop for RequestAdmission {
+    /// Releases one previously acquired admission slot at request-context teardown.
     fn drop(&mut self) {
         self.in_flight.fetch_sub(1, Ordering::AcqRel);
     }
@@ -107,7 +119,9 @@ impl Drop for RequestAdmission {
 /// Per-request delivery state. Product domain state does not belong here.
 #[derive(Debug, Default)]
 pub struct RequestContext {
+    /// Saturating count of downstream request-body bytes observed by streaming filters.
     request_body_bytes: u64,
+    /// Admission lease retained until the complete non-health request lifecycle ends.
     admission: Option<RequestAdmission>,
 }
 
@@ -125,8 +139,11 @@ pub enum GatewayProxyError {
 /// Pingora HTTP application backed by one explicitly configured upstream.
 #[derive(Debug, Clone)]
 pub struct GatewayProxy {
+    /// Prevalidated immutable upstream transport authority cloned per connection attempt.
     upstream_peer: HttpPeer,
+    /// Maximum cumulative downstream request-body bytes admitted for one request lifecycle.
     max_request_body_bytes: u64,
+    /// Process-local concurrent request admission controller.
     admission_budget: RequestAdmissionBudget,
 }
 
@@ -152,6 +169,7 @@ impl GatewayProxy {
         self.upstream_peer.clone()
     }
 
+    /// Serves an empty non-cacheable HTTP 200 response for process health endpoints.
     async fn respond_healthy(session: &mut Session) -> pingora::Result<()> {
         // These literals are compile-time gateway invariants, not runtime inputs. Treat failure to
         // construct them as a programmer defect while preserving the real downstream write result.
@@ -168,6 +186,7 @@ impl GatewayProxy {
             .await
     }
 
+    /// Rejects an already-framed body whose declared length exceeds the configured byte budget.
     fn reject_oversize_declared_body(&self, session: &Session) -> pingora::Result<()> {
         // Pingora's HTTP admission reconciles Content-Length framing and rejects invalid values
         // before ProxyHttp filters run. Keep this layer focused on the gateway's size policy while
@@ -192,10 +211,12 @@ impl GatewayProxy {
 impl ProxyHttp for GatewayProxy {
     type CTX = RequestContext;
 
+    /// Starts each request with no body bytes observed and no admission lease acquired.
     fn new_ctx(&self) -> Self::CTX {
         RequestContext::default()
     }
 
+    /// Handles health requests locally and acquires admission before proxying all other requests.
     async fn request_filter(
         &self,
         session: &mut Session,
@@ -217,6 +238,7 @@ impl ProxyHttp for GatewayProxy {
         }
     }
 
+    /// Accumulates streamed body bytes and rejects the request as soon as the limit is exceeded.
     async fn request_body_filter(
         &self,
         _session: &mut Session,
@@ -238,6 +260,7 @@ impl ProxyHttp for GatewayProxy {
         Ok(())
     }
 
+    /// Supplies the single prevalidated transport peer admitted by the version-1 contract.
     async fn upstream_peer(
         &self,
         _session: &mut Session,
@@ -246,6 +269,7 @@ impl ProxyHttp for GatewayProxy {
         Ok(Box::new(self.build_upstream_peer()))
     }
 
+    /// Removes client-controlled forwarding identity before adding the gateway-owned protocol fact.
     async fn upstream_request_filter(
         &self,
         _session: &mut Session,
@@ -268,6 +292,7 @@ impl ProxyHttp for GatewayProxy {
         Ok(())
     }
 
+    /// Emits bounded low-cardinality completion metrics and one coarse access-log record.
     async fn logging(&self, session: &mut Session, error: Option<&Error>, ctx: &mut Self::CTX)
     where
         Self::CTX: Send + Sync,
