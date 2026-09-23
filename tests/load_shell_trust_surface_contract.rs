@@ -191,3 +191,27 @@ fn qualified_alias_builtins_are_rejected() {
         assert!(!load_shell_surface_is_canonical(&source));
     }
 }
+
+#[test]
+fn routed_function_rebinding_must_not_claim_release_evidence() {
+    let source = r#"
+jobs:
+  load-contract:
+    steps:
+      - name: Install checksum-pinned k6 2.2.0
+        shell: bash
+      - name: Exercise concurrent loopback traffic contract
+        shell: bash
+      - name: Run routed pg-erd loopback traffic
+        shell: bash
+        run: |
+          cargo() { :; }
+          cargo clean --release
+          cargo build --release --locked --bin cwl-pingora-pg-erd-migration
+"#;
+
+    assert!(
+        !load_shell_surface_is_canonical(source),
+        "Bash resolves shell functions before PATH, so a same-shell cargo function can bypass the reviewed executable authority"
+    );
+}
