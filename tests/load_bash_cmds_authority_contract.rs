@@ -23,7 +23,7 @@ fn active_lines(run: &str) -> Vec<&str> {
         .collect()
 }
 
-fn routed_run(source: &str) -> Option<&str> {
+fn routed_run(source: &str) -> Option<String> {
     let document = serde_yaml::from_str::<Value>(source).ok()?;
     let steps = document
         .get("jobs")?
@@ -37,14 +37,14 @@ fn routed_run(source: &str) -> Option<&str> {
     if routed.next().is_some() {
         return None;
     }
-    step.get("run")?.as_str()
+    step.get("run")?.as_str().map(str::to_owned)
 }
 
 fn routed_shell_locks_bash_command_hash_authority(source: &str) -> bool {
     let Some(run) = routed_run(source) else {
         return false;
     };
-    let lines = active_lines(run);
+    let lines = active_lines(&run);
     if lines.len() < 3
         || lines[0] != CANONICAL_SET
         || lines[1] != CANONICAL_EXPECTED_SHA
