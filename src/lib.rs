@@ -7,6 +7,7 @@
 
 pub mod edge_contract;
 pub mod gateway_proxy;
+pub mod logging_policy;
 pub mod pingora_delivery;
 pub mod runtime_policy;
 pub mod startup;
