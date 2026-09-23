@@ -15,17 +15,17 @@ const ROUTED_STEP: &str = "Run routed pg-erd loopback traffic";
 const CARGO_CLEAN: &str = "cargo clean --release";
 const CARGO_BUILD: &str = "cargo build --release --locked --bin cwl-pingora-pg-erd-migration";
 const CANONICAL_SANITIZE: &str = r#"while IFS='=' read -r pkg_env _; do
-            case "$pkg_env" in
-              OPENSSL_DYNAMIC|OPENSSL_NO_PKG_CONFIG|PKG_CONFIG|PKG_CONFIG_*|HOST_PKG_CONFIG_*|TARGET_PKG_CONFIG_*)
-                if [[ "$pkg_env" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
-                  unset "$pkg_env"
-                else
-                  echo "unsupported inherited pkg-config environment name: $pkg_env" >&2
-                  exit 1
-                fi
-                ;;
-            esac
-          done < <(/usr/bin/env)"#;
+  case "$pkg_env" in
+    OPENSSL_DYNAMIC|OPENSSL_NO_PKG_CONFIG|PKG_CONFIG|PKG_CONFIG_*|HOST_PKG_CONFIG_*|TARGET_PKG_CONFIG_*)
+      if [[ "$pkg_env" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+        unset "$pkg_env"
+      else
+        echo "unsupported inherited pkg-config environment name: $pkg_env" >&2
+        exit 1
+      fi
+      ;;
+  esac
+done < <(/usr/bin/env)"#;
 
 fn routed_run(source: &str) -> Option<String> {
     let document = serde_yaml::from_str::<Value>(source).ok()?;
