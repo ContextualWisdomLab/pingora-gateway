@@ -16,7 +16,7 @@ Request bodies, process-wide in-flight request concurrency, and upstream connect
 
 CWL-owned access logs emit coarse status/outcome/request-body-byte data and label-free Prometheus request/error/body-byte counters. The gateway callbacks do not intentionally log Authorization, Proxy-Authorization, Cookie, Set-Cookie, request/response bodies, access tokens, configuration credentials, arbitrary headers, route values, trust-bundle contents, or other unbounded request-derived labels.
 
-Dependency diagnostics remain a separate unresolved boundary: the current composition root uses `env_logger::init()`, so an operator-wide `RUST_LOG=trace` can enable Pingora dependency TRACE output that includes raw request-header material before CWL callbacks. The payload-safe logging policy is owned by #31 and must be integrated or fully carried by a verified successor before promotion. Distributed tracing and richer bounded operability evidence also remain release gaps.
+The whole-process dependency boundary is also fail-closed. Operator-selected `RUST_LOG` verbosity remains available, but Pingora-family dependency records pass through the shared `logging_policy` before formatting; their message bodies are replaced with a static diagnostic marker while target and level remain observable. A compiled `RUST_LOG=trace` regression must prove that URI/query, Host, Authorization, and Cookie sentinels reach the origin yet never appear in process stderr. Distributed tracing and richer bounded operability evidence remain release gaps.
 
 ## Supply chain
 
