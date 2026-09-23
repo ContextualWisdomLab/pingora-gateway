@@ -211,6 +211,18 @@ jobs:
           unset CARGO_TARGET_DIR CARGO_BUILD_TARGET_DIR CARGO_BUILD_TARGET
           unset CARGO_BUILD_INCREMENTAL CARGO_INCREMENTAL
           unset OPENSSL_DIR OPENSSL_LIB_DIR OPENSSL_INCLUDE_DIR OPENSSL_STATIC OPENSSL_LIBS OPENSSL_NO_VENDOR OPENSSL_CONFIG_DIR X86_64_UNKNOWN_LINUX_GNU_OPENSSL_DIR X86_64_UNKNOWN_LINUX_GNU_OPENSSL_LIB_DIR X86_64_UNKNOWN_LINUX_GNU_OPENSSL_INCLUDE_DIR X86_64_UNKNOWN_LINUX_GNU_OPENSSL_STATIC X86_64_UNKNOWN_LINUX_GNU_OPENSSL_LIBS X86_64_UNKNOWN_LINUX_GNU_OPENSSL_NO_VENDOR X86_64_UNKNOWN_LINUX_GNU_OPENSSL_CONFIG_DIR
+          while IFS='=' read -r pkg_env _; do
+            case "$pkg_env" in
+              OPENSSL_DYNAMIC|OPENSSL_NO_PKG_CONFIG|PKG_CONFIG|PKG_CONFIG_*|HOST_PKG_CONFIG_*|TARGET_PKG_CONFIG_*)
+                if [[ "$pkg_env" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+                  unset "$pkg_env"
+                else
+                  echo "unsupported inherited pkg-config environment name: $pkg_env" >&2
+                  exit 1
+                fi
+                ;;
+            esac
+          done < <(/usr/bin/env)
           while IFS='=' read -r profile_env _; do
             case "$profile_env" in
               CARGO_PROFILE_RELEASE_*) unset "$profile_env" ;;
