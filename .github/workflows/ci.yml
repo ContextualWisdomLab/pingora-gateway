@@ -155,8 +155,6 @@ jobs:
                 idle_ms: 5000
           EOF
 
-          # Prove the measured Rust origin has bound before gateway startup and measured traffic.
-          # This is fixture liveness, not a gateway-route warm-up.
           for _ in $(seq 1 80); do
             if curl --fail --silent --show-error --max-time 1 http://127.0.0.1:18081/fixture-ready >/dev/null; then
               break
@@ -205,6 +203,7 @@ jobs:
           declare -rx CARGO_HOME=/tmp/cwl-routed-cargo-home
           declare -rx RUSTUP_HOME=/etc/skel/.rustup
           declare -rx RUSTUP_TOOLCHAIN=stable-x86_64-unknown-linux-gnu
+          unset RUSTC RUSTC_WRAPPER RUSTC_WORKSPACE_WRAPPER RUSTFLAGS CARGO_ENCODED_RUSTFLAGS CARGO_BUILD_RUSTC CARGO_BUILD_RUSTC_WRAPPER CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER CARGO_BUILD_RUSTFLAGS CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER
           rm -rf -- "$CARGO_HOME"
           install -d -m 0700 -- "$CARGO_HOME"
           [[ -d "$CARGO_HOME" && ! -L "$CARGO_HOME" && -O "$CARGO_HOME" && -w "$CARGO_HOME" ]]
