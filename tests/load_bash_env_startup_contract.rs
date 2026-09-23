@@ -2,9 +2,10 @@
 //!
 //! GitHub Actions executes an explicit `shell: bash` step as non-interactive Bash. GNU Bash reads
 //! `BASH_ENV` before the step script, imports options from `BASHOPTS` and `SHELLOPTS` when present in
-//! its startup environment, and enters POSIX mode when `POSIXLY_CORRECT` is inherited. Those inputs
-//! can change parsing and command resolution before any reviewed run line executes, so routed
-//! evidence rejects them at workflow/job/step scope and in active scripts that could persist them.
+//! its startup environment, enters POSIX mode when `POSIXLY_CORRECT` is inherited, and imports
+//! exported shell functions from `BASH_FUNC_*` environment entries. Those inputs can change parsing
+//! or command resolution before any reviewed run line executes, so routed evidence rejects them at
+//! workflow/job/step scope and in active scripts that could persist them.
 
 use serde_yaml::Value;
 use std::fs;
@@ -18,15 +19,20 @@ const BASH_STARTUP_AUTHORITY: [&str; 4] = [
     "POSIXLY_CORRECT",
 ];
 
+fn key_sets_bash_startup_authority(key: &str) -> bool {
+    key.starts_with("BASH_FUNC_")
+        || BASH_STARTUP_AUTHORITY
+            .iter()
+            .any(|forbidden| key == *forbidden)
+}
+
 fn env_sets_bash_startup_authority(node: &Value) -> bool {
     node.get("env")
         .and_then(Value::as_mapping)
         .is_some_and(|env| {
-            env.keys().filter_map(Value::as_str).any(|key| {
-                BASH_STARTUP_AUTHORITY
-                    .iter()
-                    .any(|forbidden| key == *forbidden)
-            })
+            env.keys()
+                .filter_map(Value::as_str)
+                .any(key_sets_bash_startup_authority)
         })
 }
 
@@ -35,9 +41,10 @@ fn active_run_mentions_bash_startup_authority(run: &str) -> bool {
         .map(str::trim_start)
         .filter(|line| !line.starts_with('#'))
         .any(|line| {
-            BASH_STARTUP_AUTHORITY
-                .iter()
-                .any(|forbidden| line.contains(forbidden))
+            line.contains("BASH_FUNC_")
+                || BASH_STARTUP_AUTHORITY
+                    .iter()
+                    .any(|forbidden| line.contains(forbidden))
         })
 }
 
@@ -74,7 +81,7 @@ fn live_load_job_has_no_bash_startup_authority() {
     let source = fs::read_to_string(CI_WORKFLOW).expect("CI workflow should be readable UTF-8");
     assert!(
         load_job_has_closed_bash_startup_authority(&source),
-        "load-contract must not allow environment-controlled Bash startup code or option authority"
+        "load-contract must not allow environment-controlled Bash startup code, functions, or option authority"
     );
 }
 
@@ -228,4 +235,19 @@ jobs:
         !load_job_has_closed_bash_startup_authority(source),
         "Bash imports exported functions from its startup environment before the reviewed routed script executes"
     );
+}
+
+#[test]
+fn github_env_persistence_of_exported_function_must_not_claim_release_evidence() {
+    let source = r#"
+jobs:
+  load-contract:
+    steps:
+      - name: Poison later command namespace
+        run: echo 'BASH_FUNC_cargo%%=() { :; }' >> "$GITHUB_ENV"
+      - name: Run routed pg-erd loopback traffic
+        shell: bash
+        run: cargo build --release --locked --bin cwl-pingora-pg-erd-migration
+"#;
+    assert!(!load_job_has_closed_bash_startup_authority(source));
 }
