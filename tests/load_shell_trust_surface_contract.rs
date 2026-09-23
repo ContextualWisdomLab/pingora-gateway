@@ -109,6 +109,32 @@ jobs:
       - name: Run routed pg-erd loopback traffic
         shell: bash
 "#;
-
     assert!(load_shell_surface_is_canonical(source));
+}
+
+#[test]
+fn routed_alias_rebinding_must_not_claim_release_evidence() {
+    let source = r#"
+jobs:
+  load-contract:
+    steps:
+      - name: Install checksum-pinned k6 2.2.0
+        shell: bash
+        run: echo install
+      - name: Exercise concurrent loopback traffic contract
+        shell: bash
+        run: echo loopback
+      - name: Run routed pg-erd loopback traffic
+        shell: bash
+        run: |
+          shopt -s expand_aliases
+          alias cargo=/bin/true
+          cargo clean --release
+          cargo build --release --locked --bin cwl-pingora-pg-erd-migration
+"#;
+
+    assert!(
+        !load_shell_surface_is_canonical(source),
+        "non-interactive Bash can enable alias expansion and redirect bare cargo without changing PATH"
+    );
 }
