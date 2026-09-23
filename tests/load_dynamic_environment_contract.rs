@@ -13,6 +13,7 @@ const CI_WORKFLOW: &str = ".github/workflows/ci.yml";
 const LOAD_JOB: &str = "load-contract";
 const ROUTED_STEP: &str = "Run routed pg-erd loopback traffic";
 const CANONICAL_SET: &str = "set -euo pipefail";
+const CANONICAL_EXPECTED_SHA: &str = "readonly EXPECTED_SHA";
 const CANONICAL_PATH: &str =
     "readonly PATH=/etc/skel/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 const CANONICAL_CARGO_HOME: &str = "declare -rx CARGO_HOME=/tmp/cwl-routed-cargo-home";
@@ -46,7 +47,9 @@ fn mutates_exported_environment(line: &str) -> bool {
             && line != CANONICAL_RUSTUP_HOME
             && line != CANONICAL_RUSTUP_TOOLCHAIN)
         || line.starts_with("typeset ")
-        || (line.starts_with("readonly ") && line != CANONICAL_PATH)
+        || (line.starts_with("readonly ")
+            && line != CANONICAL_EXPECTED_SHA
+            && line != CANONICAL_PATH)
         || (line.starts_with("set ") && line != CANONICAL_SET)
 }
 
@@ -210,6 +213,7 @@ time /usr/local/bin/k6 run --quiet tests/load/pg_erd_gateway_smoke.js
 fn canonical_readonly_trust_root_remains_admitted() {
     let run = r#"
 set -euo pipefail
+readonly EXPECTED_SHA
 readonly PATH=/etc/skel/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 declare -rx CARGO_HOME=/tmp/cwl-routed-cargo-home
 declare -rx RUSTUP_HOME=/etc/skel/.rustup
