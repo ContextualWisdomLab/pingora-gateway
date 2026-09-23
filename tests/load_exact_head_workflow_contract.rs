@@ -438,3 +438,32 @@ jobs:
 
     assert!(!load_evidence_claims_exact_head(&source));
 }
+
+#[test]
+fn routed_inline_git_work_tree_override_must_not_claim_exact_head_evidence() {
+    let source = format!(
+        r#"
+env:
+  EXPECTED_SHA: {EXPECTED_SHA_EXPR}
+jobs:
+  load-contract:
+    steps:
+      - name: Checkout exact revision
+        uses: {CHECKOUT_ACTION}
+        with:
+          ref: ${{{{ env.EXPECTED_SHA }}}}
+          persist-credentials: false
+      - name: Verify checkout identity
+        run: test \"$(git rev-parse HEAD)\" = \"$EXPECTED_SHA\"
+      - name: Run routed pg-erd loopback traffic
+        run: GIT_WORK_TREE=/tmp/alternate-worktree git diff --exit-code HEAD -- Cargo.toml Cargo.lock src
+      - name: Require routed pg-erd latency summary
+        run: test -s k6-pg-erd-summary.json
+"#
+    );
+
+    assert!(
+        !load_evidence_claims_exact_head(&source),
+        "process-local GIT_* assignments can redirect point-of-use repository checks without a YAML env override"
+    );
+}
