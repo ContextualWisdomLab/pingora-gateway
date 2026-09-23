@@ -251,6 +251,30 @@ fn routed_function_rebinding_must_not_claim_release_evidence() {
 }
 
 #[test]
+fn dynamic_builtin_rebinding_must_not_claim_release_evidence() {
+    let source = r#"
+jobs:
+  load-contract:
+    steps:
+      - name: Install checksum-pinned k6 2.2.0
+        shell: bash
+      - name: Exercise concurrent loopback traffic contract
+        shell: bash
+      - name: Run routed pg-erd loopback traffic
+        shell: bash
+        run: |
+          enable -f /tmp/fake-cargo.so cargo
+          cargo clean --release
+          cargo build --release --locked --bin cwl-pingora-pg-erd-migration
+"#;
+
+    assert!(
+        !load_shell_surface_is_canonical(source),
+        "Bash enable -f can load a same-name builtin that resolves before PATH and bypasses the reviewed executable authority"
+    );
+}
+
+#[test]
 fn legitimate_cleanup_function_remains_admitted() {
     let source = r#"
 jobs:
