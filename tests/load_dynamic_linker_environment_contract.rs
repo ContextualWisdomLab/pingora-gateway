@@ -5,7 +5,8 @@
 //! glibc loader consumes `LD_*` variables such as `LD_PRELOAD`, `LD_LIBRARY_PATH`, and `LD_AUDIT`,
 //! while `GLIBC_TUNABLES` can alter runtime behavior relevant to a latency receipt. These controls
 //! must not become an unreviewed authority over exact-head source checks, candidate construction,
-//! or the measured process.
+//! or the measured process. YAML `env:` is not the only authority: Bash also permits process-local
+//! assignment words such as `LD_PRELOAD=/tmp/interpose.so cargo build ...`.
 
 use serde_yaml::Value;
 use std::fs;
@@ -25,6 +26,25 @@ fn env_sets_dynamic_loader_authority(node: &Value) -> bool {
                 key.starts_with("LD_") || key == "GLIBC_TUNABLES"
             })
         })
+}
+
+fn line_sets_process_local_dynamic_loader_authority(line: &str) -> bool {
+    for word in line.trim_start().split_whitespace() {
+        let token = word.trim_end_matches('\\');
+        let Some((key, _)) = token.split_once('=') else {
+            break;
+        };
+        if key == "GLIBC_TUNABLES" {
+            return true;
+        }
+    }
+    false
+}
+
+fn run_sets_process_local_dynamic_loader_authority(run: &str) -> bool {
+    run.lines()
+        .filter(|line| !line.trim_start().starts_with('#'))
+        .any(line_sets_process_local_dynamic_loader_authority)
 }
 
 fn unique_named_step<'a>(steps: &'a [Value], name: &str) -> Option<&'a Value> {
@@ -59,6 +79,14 @@ fn load_evidence_has_closed_dynamic_loader_environment(source: &str) -> bool {
             return false;
         };
         if env_sets_dynamic_loader_authority(step) {
+            return false;
+        }
+        if name == ROUTED_STEP
+            && step
+                .get("run")
+                .and_then(Value::as_str)
+                .is_some_and(run_sets_process_local_dynamic_loader_authority)
+        {
             return false;
         }
     }
@@ -155,6 +183,49 @@ jobs:
         env:
           GLIBC_TUNABLES: glibc.malloc.tcache_count=0
         run: echo measured
+      - name: Require routed pg-erd latency summary
+        run: echo summary
+"#;
+
+    assert!(!load_evidence_has_closed_dynamic_loader_environment(source));
+}
+
+#[test]
+fn routed_inline_ld_preload_must_not_claim_release_evidence() {
+    let source = r#"
+jobs:
+  load-contract:
+    steps:
+      - name: Checkout exact revision
+        run: echo checkout
+      - name: Verify checkout identity
+        run: echo verify
+      - name: Run routed pg-erd loopback traffic
+        run: |
+          LD_PRELOAD=/tmp/interpose.so cargo build --release --locked --bin cwl-pingora-pg-erd-migration
+      - name: Require routed pg-erd latency summary
+        run: echo summary
+"#;
+
+    assert!(
+        !load_evidence_has_closed_dynamic_loader_environment(source),
+        "process-local LD_PRELOAD can interpose the candidate build without using YAML env"
+    );
+}
+
+#[test]
+fn routed_inline_glibc_tunables_must_not_claim_release_evidence() {
+    let source = r#"
+jobs:
+  load-contract:
+    steps:
+      - name: Checkout exact revision
+        run: echo checkout
+      - name: Verify checkout identity
+        run: echo verify
+      - name: Run routed pg-erd loopback traffic
+        run: |
+          GLIBC_TUNABLES=glibc.malloc.tcache_count=0 cargo build --release --locked --bin cwl-pingora-pg-erd-migration
       - name: Require routed pg-erd latency summary
         run: echo summary
 "#;
