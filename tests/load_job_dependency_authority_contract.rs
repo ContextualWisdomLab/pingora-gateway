@@ -19,7 +19,7 @@ fn load_job_is_directly_scheduled(source: &str) -> bool {
         return false;
     };
 
-    job.get("if").and_then(Value::as_str) == Some(LOAD_JOB_IF)
+    job.get("if").and_then(Value::as_str) == Some(LOAD_JOB_IF) && job.get("needs").is_none()
 }
 
 #[test]
