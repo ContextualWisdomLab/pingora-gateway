@@ -209,3 +209,23 @@ jobs:
 "#;
     assert!(load_job_has_closed_bash_startup_authority(source));
 }
+
+#[test]
+fn inherited_exported_function_must_not_claim_release_evidence() {
+    let source = r#"
+env:
+  BASH_FUNC_cargo%%: "() { :; }"
+jobs:
+  load-contract:
+    steps:
+      - name: Run routed pg-erd loopback traffic
+        shell: bash
+        run: |
+          cargo clean --release
+          cargo build --release --locked --bin cwl-pingora-pg-erd-migration
+"#;
+    assert!(
+        !load_job_has_closed_bash_startup_authority(source),
+        "Bash imports exported functions from its startup environment before the reviewed routed script executes"
+    );
+}
