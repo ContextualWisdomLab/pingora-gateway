@@ -297,7 +297,7 @@ jobs:
           done
           [[ ! -e "${CARGO_HOME}/config" && ! -e "${CARGO_HOME}/config.toml" ]]
           git diff --exit-code HEAD -- Cargo.toml Cargo.lock src
-          cargo clean -p cwl-pingora-gateway --release
+          cargo clean --release
           cargo build --release --locked --bin cwl-pingora-pg-erd-migration
           target/release/cwl-pingora-pg-erd-migration --config /tmp/pg-erd-load.yaml >/tmp/pingora-pg-erd-load.log 2>&1 &
           pg_erd_pid=$!
