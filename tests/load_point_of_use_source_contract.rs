@@ -265,7 +265,7 @@ jobs:
           git diff --exit-code HEAD -- Cargo.toml Cargo.lock src tests/load/load_origin.rs tests/load/pg_erd_gateway_smoke.js
           rustc --edition 2021 -D warnings -C opt-level=3 -C debuginfo=0 --out-dir /tmp tests/load/load_origin.rs
           git diff --exit-code HEAD -- Cargo.toml Cargo.lock src
-          cargo clean -p cwl-pingora-gateway --release
+          cargo clean --release
           cargo build --release --locked --bin cwl-pingora-pg-erd-migration
           target/release/cwl-pingora-pg-erd-migration --config /tmp/pg-erd-load.yaml >/tmp/pingora-pg-erd-load.log 2>&1 &
 "#;
@@ -289,12 +289,36 @@ jobs:
           git diff --exit-code HEAD -- Cargo.toml Cargo.lock src tests/load/load_origin.rs tests/load/pg_erd_gateway_smoke.js
           rustc --edition 2021 -D warnings -C opt-level=3 -C debuginfo=0 --out-dir /tmp tests/load/load_origin.rs
           git diff --exit-code HEAD -- Cargo.toml Cargo.lock src
-          cargo clean -p cwl-pingora-gateway --release
+          cargo clean --release
           cargo build --release --locked --bin cwl-pingora-pg-erd-migration
           target/release/cwl-pingora-pg-erd-migration --config /tmp/pg-erd-load.yaml >/tmp/pingora-pg-erd-load.log 2>&1 &
 "#;
 
     assert!(!routed_point_of_use_is_bound(source));
+}
+
+#[test]
+fn cargo_hash_table_rebinding_must_not_claim_release_evidence() {
+    let source = r#"
+jobs:
+  load-contract:
+    steps:
+      - name: Run routed pg-erd loopback traffic
+        run: |
+          hash -p /bin/true cargo
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          git diff --exit-code HEAD -- Cargo.toml Cargo.lock src tests/load/load_origin.rs tests/load/pg_erd_gateway_smoke.js
+          rustc --edition 2021 -D warnings -C opt-level=3 -C debuginfo=0 --out-dir /tmp tests/load/load_origin.rs
+          git diff --exit-code HEAD -- Cargo.toml Cargo.lock src
+          cargo clean --release
+          cargo build --release --locked --bin cwl-pingora-pg-erd-migration
+          target/release/cwl-pingora-pg-erd-migration --config /tmp/pg-erd-load.yaml >/tmp/pingora-pg-erd-load.log 2>&1 &
+"#;
+
+    assert!(
+        !routed_point_of_use_is_bound(source),
+        "Bash hash -p can redirect bare cargo while preserving the canonical clean/build/start text"
+    );
 }
 
 #[test]
@@ -310,7 +334,7 @@ jobs:
           git diff --exit-code HEAD -- Cargo.toml Cargo.lock src tests/load/load_origin.rs tests/load/pg_erd_gateway_smoke.js
           rustc --edition 2021 -D warnings -C opt-level=3 -C debuginfo=0 --out-dir /tmp tests/load/load_origin.rs
           git diff --exit-code HEAD -- Cargo.toml Cargo.lock src
-          cargo clean -p cwl-pingora-gateway --release
+          cargo clean --release
           cargo build --release --locked --bin cwl-pingora-pg-erd-migration
           target/release/cwl-pingora-pg-erd-migration --config /tmp/pg-erd-load.yaml >/tmp/pingora-pg-erd-load.log 2>&1 &
 "#;
