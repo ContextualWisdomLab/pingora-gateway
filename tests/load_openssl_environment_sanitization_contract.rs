@@ -2,10 +2,12 @@
 //!
 //! `openssl-sys` accepts manual OpenSSL installation and linkage authority from environment
 //! variables, including target-prefixed forms. The exact Pingora graph also enables the vendored
-//! OpenSSL feature, so `openssl-src` may select the Perl executable used to run OpenSSL `Configure`
-//! from `OPENSSL_SRC_PERL` or `PERL`. Because the measured candidate links through this path, the
-//! routed release rebuild must clear both installation/linkage and vendored-configurator authority
-//! before Cargo resolves and links the candidate.
+//! OpenSSL feature, so `openssl-src` selects the Perl executable used to run OpenSSL `Configure`
+//! from `OPENSSL_SRC_PERL` or `PERL`. Perl itself also consumes `PERL5OPT`, `PERL5LIB`, `PERLLIB`,
+//! and `PERL_USE_UNSAFE_INC`; those can preload modules or alter module search before `Configure`
+//! executes. Because the measured candidate links through this path, the routed release rebuild
+//! must clear both installation/linkage and vendored-configurator/runtime authority before Cargo
+//! resolves and links the candidate.
 
 use serde_yaml::Value;
 use std::fs;
@@ -14,7 +16,8 @@ const CI_WORKFLOW: &str = ".github/workflows/ci.yml";
 const LOAD_JOB: &str = "load-contract";
 const ROUTED_STEP: &str = "Run routed pg-erd loopback traffic";
 const CANONICAL_SANITIZE: &str = "unset OPENSSL_DIR OPENSSL_LIB_DIR OPENSSL_INCLUDE_DIR OPENSSL_STATIC OPENSSL_LIBS OPENSSL_NO_VENDOR OPENSSL_CONFIG_DIR X86_64_UNKNOWN_LINUX_GNU_OPENSSL_DIR X86_64_UNKNOWN_LINUX_GNU_OPENSSL_LIB_DIR X86_64_UNKNOWN_LINUX_GNU_OPENSSL_INCLUDE_DIR X86_64_UNKNOWN_LINUX_GNU_OPENSSL_STATIC X86_64_UNKNOWN_LINUX_GNU_OPENSSL_LIBS X86_64_UNKNOWN_LINUX_GNU_OPENSSL_NO_VENDOR X86_64_UNKNOWN_LINUX_GNU_OPENSSL_CONFIG_DIR";
-const CANONICAL_VENDORED_CONFIGURE_SANITIZE: &str = "unset OPENSSL_SRC_PERL PERL";
+const CANONICAL_VENDORED_CONFIGURE_SANITIZE: &str =
+    "unset OPENSSL_SRC_PERL PERL PERL5OPT PERL5LIB PERLLIB PERL_USE_UNSAFE_INC";
 const CARGO_CLEAN: &str = "cargo clean --release";
 const CARGO_BUILD: &str = "cargo build --release --locked --bin cwl-pingora-pg-erd-migration";
 
@@ -75,7 +78,7 @@ fn live_routed_rebuild_clears_inherited_openssl_build_authority() {
     let source = fs::read_to_string(CI_WORKFLOW).expect("CI workflow should be readable UTF-8");
     assert!(
         openssl_environment_is_sanitized_before_rebuild(&source),
-        "routed evidence must clear inherited openssl-sys installation/linkage and vendored OpenSSL configurator authority before rebuilding the measured candidate"
+        "routed evidence must clear inherited openssl-sys installation/linkage plus vendored OpenSSL Perl executable/module-search authority before rebuilding the measured candidate"
     );
 }
 
@@ -108,7 +111,19 @@ fn vendored_openssl_configurator_authority_must_not_survive() {
     );
     assert!(
         !openssl_environment_is_sanitized_before_rebuild(&source),
-        "OPENSSL_SRC_PERL/PERL can redirect the vendored OpenSSL Configure executable without changing PATH or Cargo.lock"
+        "OPENSSL_SRC_PERL/PERL and Perl startup environment can redirect or preload code into vendored OpenSSL Configure without changing PATH or Cargo.lock"
+    );
+}
+
+#[test]
+fn perl_module_injection_authority_must_not_survive() {
+    let executable_only = "unset OPENSSL_SRC_PERL PERL";
+    let source = format!(
+        "jobs:\n  load-contract:\n    steps:\n      - name: {ROUTED_STEP}\n        run: |\n          {CANONICAL_SANITIZE}\n          {executable_only}\n          {CARGO_CLEAN}\n          {CARGO_BUILD}\n"
+    );
+    assert!(
+        !openssl_environment_is_sanitized_before_rebuild(&source),
+        "PERL5OPT/PERL5LIB/PERLLIB/PERL_USE_UNSAFE_INC remain code/module-search authority even when the perl executable itself is canonical"
     );
 }
 
