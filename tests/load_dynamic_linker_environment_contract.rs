@@ -34,7 +34,7 @@ fn line_sets_process_local_dynamic_loader_authority(line: &str) -> bool {
         let Some((key, _)) = token.split_once('=') else {
             break;
         };
-        if key == "GLIBC_TUNABLES" {
+        if key.starts_with("LD_") || key == "GLIBC_TUNABLES" {
             return true;
         }
     }
