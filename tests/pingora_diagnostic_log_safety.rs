@@ -5,6 +5,8 @@
 //! process stderr through Pingora dependency diagnostics. The origin must receive the sentinels so
 //! the test cannot pass by rejecting or stripping the request before proxy delivery.
 
+mod support;
+
 use std::fs;
 use std::io::{ErrorKind, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
@@ -12,6 +14,7 @@ use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use support::StartupLock;
 use tempfile::NamedTempFile;
 
 const MAX_REQUEST_HEADER_BYTES: usize = 64 * 1024;
@@ -293,6 +296,7 @@ fn broad_runtime_diagnostics_do_not_log_request_secrets() {
         .local_addr()
         .expect("metrics reservation should expose an address");
     let config = write_config(listener, metrics_listener, origin_address);
+    let startup_lock = StartupLock::acquire();
     drop(listener_reservation);
     drop(metrics_reservation);
     let stderr = NamedTempFile::new().expect("gateway stderr capture should be writable");
@@ -309,6 +313,7 @@ fn broad_runtime_diagnostics_do_not_log_request_secrets() {
         .expect("compiled gateway binary should start");
     wait_until_listening(listener, &mut child);
     wait_until_listening(metrics_listener, &mut child);
+    drop(startup_lock);
     let mut process = GatewayProcess {
         child: Some(child),
         stderr,
