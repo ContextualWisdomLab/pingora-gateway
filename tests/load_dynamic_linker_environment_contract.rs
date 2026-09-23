@@ -21,9 +21,9 @@ fn env_sets_dynamic_loader_authority(node: &Value) -> bool {
     node.get("env")
         .and_then(Value::as_mapping)
         .is_some_and(|env| {
-            env.keys()
-                .filter_map(Value::as_str)
-                .any(|key| key == "GLIBC_TUNABLES")
+            env.keys().filter_map(Value::as_str).any(|key| {
+                key.starts_with("LD_") || key == "GLIBC_TUNABLES"
+            })
         })
 }
 
