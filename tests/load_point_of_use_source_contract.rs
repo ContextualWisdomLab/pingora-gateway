@@ -20,7 +20,7 @@ const VERIFY_SOURCE: &str =
 const REBUILD_ORIGIN: &str =
     "rustc --edition 2021 -D warnings -C opt-level=3 -C debuginfo=0 --out-dir /tmp tests/load/load_origin.rs";
 const VERIFY_CANDIDATE_SOURCE: &str = "git diff --exit-code HEAD -- Cargo.toml Cargo.lock src";
-const CLEAN_RELEASE: &str = "cargo clean -p cwl-pingora-gateway --release";
+const CLEAN_RELEASE: &str = "cargo clean --release";
 const REBUILD_CANDIDATE: &str =
     "cargo build --release --locked --bin cwl-pingora-pg-erd-migration";
 const CANDIDATE_PATH: &str = "target/release/cwl-pingora-pg-erd-migration";
