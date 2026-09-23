@@ -1,9 +1,10 @@
 //! Fail-closed contract for inherited Cargo/rustc compiler authority in routed-load evidence.
 //!
-//! Cargo accepts compiler, wrapper, and flag authority from process environment variables in
-//! addition to repository configuration. A clean target directory and a pinned `PATH` do not
-//! neutralize inherited `RUSTC*`, `RUSTFLAGS`, or their `CARGO_BUILD_*` aliases. The routed load
-//! step therefore clears those inherited authorities before the point-of-use release rebuild.
+//! Cargo and rustc accept compiler, wrapper, flag, and feature-gate authority from process
+//! environment variables in addition to repository configuration. A clean target directory and a
+//! pinned `PATH` do not neutralize inherited `RUSTC*`, `RUSTFLAGS`, `RUSTC_BOOTSTRAP`, or their
+//! `CARGO_BUILD_*` aliases. The routed load step therefore clears those inherited authorities before
+//! the point-of-use release rebuild.
 
 use serde_yaml::Value;
 use std::fs;
@@ -11,7 +12,7 @@ use std::fs;
 const CI_WORKFLOW: &str = ".github/workflows/ci.yml";
 const LOAD_JOB: &str = "load-contract";
 const ROUTED_STEP: &str = "Run routed pg-erd loopback traffic";
-const CANONICAL_SANITIZE: &str = "unset RUSTC RUSTC_WRAPPER RUSTC_WORKSPACE_WRAPPER RUSTFLAGS CARGO_ENCODED_RUSTFLAGS CARGO_BUILD_RUSTC CARGO_BUILD_RUSTC_WRAPPER CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER CARGO_BUILD_RUSTFLAGS CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER";
+const CANONICAL_SANITIZE: &str = "unset RUSTC RUSTC_WRAPPER RUSTC_WORKSPACE_WRAPPER RUSTFLAGS RUSTC_BOOTSTRAP CARGO_ENCODED_RUSTFLAGS CARGO_BUILD_RUSTC CARGO_BUILD_RUSTC_WRAPPER CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER CARGO_BUILD_RUSTFLAGS CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER";
 const CARGO_CLEAN: &str = "cargo clean --release";
 const CARGO_BUILD: &str = "cargo build --release --locked --bin cwl-pingora-pg-erd-migration";
 
@@ -63,7 +64,7 @@ fn live_routed_rebuild_clears_inherited_compiler_authority() {
     let source = fs::read_to_string(CI_WORKFLOW).expect("CI workflow should be readable UTF-8");
     assert!(
         compiler_environment_is_sanitized_before_rebuild(&source),
-        "routed evidence must clear inherited Cargo/rustc compiler, wrapper, flag, and target-linker authority before rebuilding the measured candidate"
+        "routed evidence must clear inherited Cargo/rustc compiler, wrapper, flag, feature-gate, and target-linker authority before rebuilding the measured candidate"
     );
 }
 
