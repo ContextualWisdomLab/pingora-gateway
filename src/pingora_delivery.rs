@@ -83,6 +83,7 @@ pub(crate) fn build_peer_from_validated(
     Ok(peer)
 }
 
+/// Reads one operator-selected PEM trust bundle and converts it into verified X.509 objects.
 fn load_trust_bundle(path: &Path) -> Result<Box<[X509]>, PeerBuildError> {
     let source = fs::read(path).map_err(|error| PeerBuildError::ReadTrustBundle {
         path: path.to_path_buf(),
@@ -96,6 +97,7 @@ fn load_trust_bundle(path: &Path) -> Result<Box<[X509]>, PeerBuildError> {
     require_certificates(path, certificates)
 }
 
+/// Rejects syntactically parsed bundles that contain no trust anchors before peer activation.
 fn require_certificates(
     path: &Path,
     certificates: Vec<X509>,
