@@ -15,7 +15,7 @@ const ROUTED_STEP: &str = "Run routed pg-erd loopback traffic";
 const CANONICAL_SET: &str = "set -euo pipefail";
 const CANONICAL_PATH: &str =
     "readonly PATH=/etc/skel/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
-const CANONICAL_CARGO_HOME: &str = "declare -rx CARGO_HOME=/etc/skel/.cargo";
+const CANONICAL_CARGO_HOME: &str = "declare -rx CARGO_HOME=/tmp/cwl-routed-cargo-home";
 const CANONICAL_RUSTUP_HOME: &str = "declare -rx RUSTUP_HOME=/etc/skel/.rustup";
 const CANONICAL_RUSTUP_TOOLCHAIN: &str =
     "declare -rx RUSTUP_TOOLCHAIN=stable-x86_64-unknown-linux-gnu";
@@ -64,9 +64,9 @@ fn has_exact_measurement_launch(run: &str) -> bool {
         .windows(2)
         .filter(|pair| pair[0] == ROUTED_URL_ASSIGNMENT && pair[1] == ROUTED_K6)
         .count();
-    let k6_lines_are_canonical = lines.iter().all(|line| {
-        !line.contains(K6_PATH) || *line == ROUTED_K6 || *line == K6_PROVENANCE_CMP
-    });
+    let k6_lines_are_canonical = lines
+        .iter()
+        .all(|line| !line.contains(K6_PATH) || *line == ROUTED_K6 || *line == K6_PROVENANCE_CMP);
     exact_pairs == 1 && k6_lines_are_canonical
 }
 
@@ -211,7 +211,7 @@ fn canonical_readonly_trust_root_remains_admitted() {
     let run = r#"
 set -euo pipefail
 readonly PATH=/etc/skel/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-declare -rx CARGO_HOME=/etc/skel/.cargo
+declare -rx CARGO_HOME=/tmp/cwl-routed-cargo-home
 declare -rx RUSTUP_HOME=/etc/skel/.rustup
 declare -rx RUSTUP_TOOLCHAIN=stable-x86_64-unknown-linux-gnu
 PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \

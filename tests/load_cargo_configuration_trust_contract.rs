@@ -3,8 +3,8 @@
 //! Cargo merges `.cargo/config.toml` (and legacy `.cargo/config`) from the current directory and
 //! every ancestor, then `$CARGO_HOME/config.toml`. A rooted `cargo` executable therefore does not
 //! by itself prove that the measured candidate was built under repository-controlled settings.
-//! The routed evidence step pins the image-owned Cargo home and rejects every discovered config
-//! location before the point-of-use `cargo clean`/`cargo build` sequence.
+//! The routed evidence step recreates a dedicated writable Cargo cache/home, rejects configuration
+//! in both workspace ancestry and that fresh home, then performs a full release-graph rebuild.
 
 use serde_yaml::Value;
 use std::fs;
@@ -12,9 +12,15 @@ use std::fs;
 const CI_WORKFLOW: &str = ".github/workflows/ci.yml";
 const LOAD_JOB: &str = "load-contract";
 const ROUTED_STEP: &str = "Run routed pg-erd loopback traffic";
-const CANONICAL_CARGO_HOME: &str = "declare -rx CARGO_HOME=/etc/skel/.cargo";
-const CARGO_CLEAN: &str = "cargo clean -p cwl-pingora-gateway --release";
+const CANONICAL_CARGO_HOME: &str = "declare -rx CARGO_HOME=/tmp/cwl-routed-cargo-home";
+const CARGO_CLEAN: &str = "cargo clean --release";
 const CARGO_BUILD: &str = "cargo build --release --locked --bin cwl-pingora-pg-erd-migration";
+
+const CARGO_HOME_RESET: [&str; 3] = [
+    "rm -rf -- \"$CARGO_HOME\"",
+    "install -d -m 0700 -- \"$CARGO_HOME\"",
+    "[[ -d \"$CARGO_HOME\" && ! -L \"$CARGO_HOME\" && -O \"$CARGO_HOME\" && -w \"$CARGO_HOME\" ]]",
+];
 
 const CONFIG_GUARD: [&str; 9] = [
     "cargo_config_dir=\"$PWD\"",
@@ -94,6 +100,9 @@ fn routed_cargo_configuration_is_trusted(source: &str) -> bool {
         return false;
     }
 
+    let Some(reset_start) = contains_ordered_sequence(&lines, &CARGO_HOME_RESET) else {
+        return false;
+    };
     let Some(guard_start) = contains_ordered_sequence(&lines, &CONFIG_GUARD) else {
         return false;
     };
@@ -104,7 +113,8 @@ fn routed_cargo_configuration_is_trusted(source: &str) -> bool {
         return false;
     };
 
-    cargo_home_positions[0] < guard_start
+    cargo_home_positions[0] < reset_start
+        && reset_start + CARGO_HOME_RESET.len() <= guard_start
         && guard_start + CONFIG_GUARD.len() <= clean_index
         && clean_index < build_index
 }
@@ -114,7 +124,7 @@ fn live_routed_candidate_rebuild_has_no_mutable_cargo_configuration_authority() 
     let source = fs::read_to_string(CI_WORKFLOW).expect("CI workflow should be readable UTF-8");
     assert!(
         routed_cargo_configuration_is_trusted(&source),
-        "routed candidate rebuild must pin image-owned CARGO_HOME and reject Cargo configs from the workspace ancestry and Cargo home before rebuilding"
+        "routed candidate rebuild must recreate a dedicated writable CARGO_HOME, reject Cargo configs from workspace ancestry and Cargo home, and then rebuild the full release graph"
     );
 }
 
@@ -128,7 +138,7 @@ jobs:
         run: |
           declare -rx RUSTUP_HOME=/etc/skel/.rustup
           declare -rx RUSTUP_TOOLCHAIN=stable-x86_64-unknown-linux-gnu
-          cargo clean -p cwl-pingora-gateway --release
+          cargo clean --release
           cargo build --release --locked --bin cwl-pingora-pg-erd-migration
 "#;
     assert!(!routed_cargo_configuration_is_trusted(source));
@@ -147,16 +157,39 @@ jobs:
         run: |
           {CANONICAL_CARGO_HOME}
           {}
+          {}
           {CARGO_CLEAN}
           {CARGO_BUILD}
 "#,
+        CARGO_HOME_RESET.join("\n          "),
         CONFIG_GUARD.join("\n          ")
     );
     assert!(!routed_cargo_configuration_is_trusted(&source));
 }
 
 #[test]
-fn canonical_cargo_trust_root_and_ancestor_guard_are_admitted() {
+fn image_template_cargo_home_is_not_an_admitted_rebuild_cache() {
+    let source = format!(
+        r#"
+jobs:
+  load-contract:
+    steps:
+      - name: Run routed pg-erd loopback traffic
+        run: |
+          declare -rx CARGO_HOME=/etc/skel/.cargo
+          {}
+          {}
+          {CARGO_CLEAN}
+          {CARGO_BUILD}
+"#,
+        CARGO_HOME_RESET.join("\n          "),
+        CONFIG_GUARD.join("\n          ")
+    );
+    assert!(!routed_cargo_configuration_is_trusted(&source));
+}
+
+#[test]
+fn canonical_fresh_cargo_home_and_ancestor_guard_are_admitted() {
     let source = format!(
         r#"
 jobs:
@@ -166,9 +199,11 @@ jobs:
         run: |
           {CANONICAL_CARGO_HOME}
           {}
+          {}
           {CARGO_CLEAN}
           {CARGO_BUILD}
 "#,
+        CARGO_HOME_RESET.join("\n          "),
         CONFIG_GUARD.join("\n          ")
     );
     assert!(routed_cargo_configuration_is_trusted(&source));

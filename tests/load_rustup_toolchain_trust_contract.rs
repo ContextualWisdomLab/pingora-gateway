@@ -2,9 +2,9 @@
 //!
 //! A root-owned rustup proxy is not sufficient when `RUSTUP_HOME` still defaults to the runner
 //! user's writable `~/.rustup`: the proxy delegates to the selected toolchain under that mutable
-//! root. The routed evidence shell must bind Cargo and rustup to the image-owned `/etc/skel`
-//! installation roots, export those roots and the image-owned stable x86_64 toolchain read-only,
-//! and reject declarative Rust/Cargo compiler overrides that could redirect the point-of-use rebuild.
+//! root. The routed evidence shell therefore pins executable resolution and rustup to the
+//! image-owned `/etc/skel` installation, while Cargo uses a separately recreated writable cache
+//! home needed for a full locked rebuild. Declarative compiler overrides remain fail closed.
 
 use serde_yaml::{Mapping, Value};
 use std::fs;
@@ -14,7 +14,7 @@ const LOAD_JOB: &str = "load-contract";
 const ROUTED_STEP: &str = "Run routed pg-erd loopback traffic";
 const CANONICAL_PATH: &str =
     "readonly PATH=/etc/skel/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
-const CANONICAL_CARGO_HOME: &str = "declare -rx CARGO_HOME=/etc/skel/.cargo";
+const CANONICAL_CARGO_HOME: &str = "declare -rx CARGO_HOME=/tmp/cwl-routed-cargo-home";
 const CANONICAL_RUSTUP_HOME: &str = "declare -rx RUSTUP_HOME=/etc/skel/.rustup";
 const CANONICAL_RUSTUP_TOOLCHAIN: &str =
     "declare -rx RUSTUP_TOOLCHAIN=stable-x86_64-unknown-linux-gnu";
@@ -76,6 +76,14 @@ fn line_has_inline_forbidden_env(line: &str) -> bool {
         .any(is_forbidden_env_key)
 }
 
+fn exact_declaration_count(lines: &[&str], prefix: &str, canonical: &str) -> bool {
+    lines
+        .iter()
+        .filter(|line| line.starts_with(prefix))
+        .copied()
+        .eq([canonical])
+}
+
 fn routed_rust_toolchain_is_root_owned(source: &str) -> bool {
     let Ok(document) = serde_yaml::from_str::<Value>(source) else {
         return false;
@@ -112,22 +120,16 @@ fn routed_rust_toolchain_is_root_owned(source: &str) -> bool {
     lines.get(path_index + 1).copied() == Some(CANONICAL_CARGO_HOME)
         && lines.get(path_index + 2).copied() == Some(CANONICAL_RUSTUP_HOME)
         && lines.get(path_index + 3).copied() == Some(CANONICAL_RUSTUP_TOOLCHAIN)
+        && exact_declaration_count(&lines, "declare -rx CARGO_HOME=", CANONICAL_CARGO_HOME)
+        && exact_declaration_count(&lines, "declare -rx RUSTUP_HOME=", CANONICAL_RUSTUP_HOME)
+        && exact_declaration_count(
+            &lines,
+            "declare -rx RUSTUP_TOOLCHAIN=",
+            CANONICAL_RUSTUP_TOOLCHAIN,
+        )
         && lines
             .iter()
-            .filter(|line| line.contains("CARGO_HOME"))
-            .copied()
-            .eq([CANONICAL_CARGO_HOME])
-        && lines
-            .iter()
-            .filter(|line| line.contains("RUSTUP_HOME"))
-            .copied()
-            .eq([CANONICAL_RUSTUP_HOME])
-        && lines
-            .iter()
-            .filter(|line| line.contains("RUSTUP_TOOLCHAIN"))
-            .copied()
-            .eq([CANONICAL_RUSTUP_TOOLCHAIN])
-        && lines.iter().all(|line| !line_has_inline_forbidden_env(line))
+            .all(|line| !line_has_inline_forbidden_env(line))
 }
 
 #[test]
@@ -135,7 +137,7 @@ fn live_routed_rebuild_uses_image_owned_rustup_root() {
     let source = fs::read_to_string(CI_WORKFLOW).expect("CI workflow should be readable UTF-8");
     assert!(
         routed_rust_toolchain_is_root_owned(&source),
-        "routed candidate rebuild must export read-only image-owned Cargo/rustup roots and toolchain before rustc/cargo resolution"
+        "routed candidate rebuild must keep executable/rustup authority image-owned while using only the canonical isolated Cargo cache home"
     );
 }
 
@@ -193,7 +195,7 @@ jobs:
         run: |
           set -euo pipefail
           readonly PATH=/etc/skel/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-          declare -rx CARGO_HOME=/etc/skel/.cargo
+          declare -rx CARGO_HOME=/tmp/cwl-routed-cargo-home
           declare -rx RUSTUP_HOME=/etc/skel/.rustup
           declare -rx RUSTUP_TOOLCHAIN=stable-x86_64-unknown-linux-gnu
 "#;
@@ -215,7 +217,7 @@ jobs:
         run: |
           set -euo pipefail
           readonly PATH=/etc/skel/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-          declare -rx CARGO_HOME=/etc/skel/.cargo
+          declare -rx CARGO_HOME=/tmp/cwl-routed-cargo-home
           declare -rx RUSTUP_HOME=/etc/skel/.rustup
           declare -rx RUSTUP_TOOLCHAIN=stable-x86_64-unknown-linux-gnu
 "#;
@@ -235,7 +237,7 @@ jobs:
         run: |
           set -euo pipefail
           readonly PATH=/etc/skel/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-          declare -rx CARGO_HOME=/etc/skel/.cargo
+          declare -rx CARGO_HOME=/tmp/cwl-routed-cargo-home
           declare -rx RUSTUP_HOME=/etc/skel/.rustup
           declare -rx RUSTUP_TOOLCHAIN=stable-x86_64-unknown-linux-gnu
           RUSTFLAGS="-C target-cpu=native" cargo build --release --locked --bin cwl-pingora-pg-erd-migration
@@ -244,7 +246,7 @@ jobs:
 }
 
 #[test]
-fn canonical_exported_root_owned_rustup_binding_is_admitted() {
+fn canonical_exported_rustup_binding_with_isolated_cargo_home_is_admitted() {
     let source = r#"
 env:
   EXPECTED_SHA: deadbeef
@@ -256,7 +258,7 @@ jobs:
         run: |
           set -euo pipefail
           readonly PATH=/etc/skel/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-          declare -rx CARGO_HOME=/etc/skel/.cargo
+          declare -rx CARGO_HOME=/tmp/cwl-routed-cargo-home
           declare -rx RUSTUP_HOME=/etc/skel/.rustup
           declare -rx RUSTUP_TOOLCHAIN=stable-x86_64-unknown-linux-gnu
           rustc --version

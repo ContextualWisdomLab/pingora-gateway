@@ -200,9 +200,12 @@ jobs:
         run: |
           set -euo pipefail
           readonly PATH=/etc/skel/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-          declare -rx CARGO_HOME=/etc/skel/.cargo
+          declare -rx CARGO_HOME=/tmp/cwl-routed-cargo-home
           declare -rx RUSTUP_HOME=/etc/skel/.rustup
           declare -rx RUSTUP_TOOLCHAIN=stable-x86_64-unknown-linux-gnu
+          rm -rf -- "$CARGO_HOME"
+          install -d -m 0700 -- "$CARGO_HOME"
+          [[ -d "$CARGO_HOME" && ! -L "$CARGO_HOME" && -O "$CARGO_HOME" && -w "$CARGO_HOME" ]]
           backend_pid=""
           frontend_pid=""
           pg_erd_pid=""
