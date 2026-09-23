@@ -4,8 +4,8 @@
 //! arbitrary command template such as `sudo bash {0}`. The load job therefore permits explicit
 //! `shell:` only on the three reviewed traffic/tool steps, and each must be exactly `bash`; all
 //! other steps stay on the GitHub-hosted runner's default shell contract. The routed evidence shell
-//! also rejects alias mutation and shell-function rebinding of protected evidence commands because
-//! Bash resolves functions before builtins and `PATH` executables.
+//! also rejects alias, function, and dynamically loaded builtin mutations that can redirect
+//! protected evidence commands before `PATH` resolution.
 
 use serde_yaml::Value;
 use std::fs;
@@ -51,6 +51,15 @@ fn line_mutates_alias_namespace(line: &str) -> bool {
     }
 }
 
+fn line_mutates_builtin_namespace(line: &str) -> bool {
+    let mut tokens = line.split_ascii_whitespace();
+    match tokens.next() {
+        Some("enable") => true,
+        Some("builtin" | "command") => matches!(tokens.next(), Some("enable")),
+        _ => false,
+    }
+}
+
 fn function_name_from_line(line: &str) -> Option<&str> {
     let trimmed = line.trim_start();
     if let Some(rest) = trimmed.strip_prefix("function ") {
@@ -85,7 +94,9 @@ fn routed_step_preserves_command_namespace(steps: &[Value]) -> bool {
         .and_then(Value::as_str)
         .is_none_or(|run| {
             active_shell_lines(run).all(|line| {
-                !line_mutates_alias_namespace(line) && !line_rebinds_protected_command(line)
+                !line_mutates_alias_namespace(line)
+                    && !line_mutates_builtin_namespace(line)
+                    && !line_rebinds_protected_command(line)
             })
         })
 }
@@ -252,26 +263,19 @@ fn routed_function_rebinding_must_not_claim_release_evidence() {
 
 #[test]
 fn dynamic_builtin_rebinding_must_not_claim_release_evidence() {
-    let source = r#"
-jobs:
-  load-contract:
-    steps:
-      - name: Install checksum-pinned k6 2.2.0
-        shell: bash
-      - name: Exercise concurrent loopback traffic contract
-        shell: bash
-      - name: Run routed pg-erd loopback traffic
-        shell: bash
-        run: |
-          enable -f /tmp/fake-cargo.so cargo
-          cargo clean --release
-          cargo build --release --locked --bin cwl-pingora-pg-erd-migration
-"#;
-
-    assert!(
-        !load_shell_surface_is_canonical(source),
-        "Bash enable -f can load a same-name builtin that resolves before PATH and bypasses the reviewed executable authority"
-    );
+    for invocation in [
+        "enable -f /tmp/fake-cargo.so cargo",
+        "builtin enable -f /tmp/fake-cargo.so cargo",
+        "command enable -f /tmp/fake-cargo.so cargo",
+    ] {
+        let source = format!(
+            "jobs:\n  load-contract:\n    steps:\n      - name: {K6_INSTALL_STEP}\n        shell: bash\n      - name: {LOOPBACK_STEP}\n        shell: bash\n      - name: {ROUTED_STEP}\n        shell: bash\n        run: |\n          {invocation}\n          cargo clean --release\n          cargo build --release --locked --bin cwl-pingora-pg-erd-migration\n"
+        );
+        assert!(
+            !load_shell_surface_is_canonical(&source),
+            "Bash enable -f can load a same-name builtin that resolves before PATH and bypasses the reviewed executable authority"
+        );
+    }
 }
 
 #[test]
