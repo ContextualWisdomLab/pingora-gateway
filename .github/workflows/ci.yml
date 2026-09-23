@@ -155,6 +155,8 @@ jobs:
                 idle_ms: 5000
           EOF
 
+          # Prove the measured Rust origin has bound before gateway startup and measured traffic.
+          # This is fixture liveness, not a gateway-route warm-up.
           for _ in $(seq 1 80); do
             if curl --fail --silent --show-error --max-time 1 http://127.0.0.1:18081/fixture-ready >/dev/null; then
               break
