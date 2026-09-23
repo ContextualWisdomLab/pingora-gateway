@@ -235,6 +235,18 @@ jobs:
                 ;;
             esac
           done < <(/usr/bin/env)
+          while IFS='=' read -r cc_env _; do
+            case "$cc_env" in
+              CC|CC_*|HOST_CC|HOST_CC_*|TARGET_CC|TARGET_CC_*|CFLAGS|CFLAGS_*|HOST_CFLAGS|HOST_CFLAGS_*|TARGET_CFLAGS|TARGET_CFLAGS_*|CXX|CXX_*|HOST_CXX|HOST_CXX_*|TARGET_CXX|TARGET_CXX_*|CXXFLAGS|CXXFLAGS_*|HOST_CXXFLAGS|HOST_CXXFLAGS_*|TARGET_CXXFLAGS|TARGET_CXXFLAGS_*|AR|AR_*|HOST_AR|HOST_AR_*|TARGET_AR|TARGET_AR_*|ARFLAGS|ARFLAGS_*|HOST_ARFLAGS|HOST_ARFLAGS_*|TARGET_ARFLAGS|TARGET_ARFLAGS_*|CXXSTDLIB|CXXSTDLIB_*|HOST_CXXSTDLIB|HOST_CXXSTDLIB_*|TARGET_CXXSTDLIB|TARGET_CXXSTDLIB_*|CRATE_CC_NO_DEFAULTS)
+                if [[ "$cc_env" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+                  unset "$cc_env"
+                else
+                  echo "unsupported inherited cc environment name: $cc_env" >&2
+                  exit 1
+                fi
+                ;;
+            esac
+          done < <(/usr/bin/env)
           while IFS='=' read -r profile_env _; do
             case "$profile_env" in
               CARGO_PROFILE_RELEASE_*) unset "$profile_env" ;;
