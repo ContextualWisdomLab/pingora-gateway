@@ -118,6 +118,54 @@ jobs:
 }
 
 #[test]
+fn inherited_bashopts_must_not_claim_release_evidence() {
+    let source = r#"
+env:
+  BASHOPTS: expand_aliases
+jobs:
+  load-contract:
+    steps:
+      - name: Run routed pg-erd loopback traffic
+        shell: bash
+        run: echo measured
+"#;
+    assert!(
+        !load_job_has_closed_bash_startup_env(source),
+        "BASHOPTS in Bash's startup environment can enable shell options before the evidence script runs"
+    );
+}
+
+#[test]
+fn inherited_shellopts_must_not_claim_release_evidence() {
+    let source = r#"
+jobs:
+  load-contract:
+    env:
+      SHELLOPTS: posix
+    steps:
+      - name: Run routed pg-erd loopback traffic
+        shell: bash
+        run: echo measured
+"#;
+    assert!(!load_job_has_closed_bash_startup_env(source));
+}
+
+#[test]
+fn inherited_posix_mode_must_not_claim_release_evidence() {
+    let source = r#"
+jobs:
+  load-contract:
+    steps:
+      - name: Run routed pg-erd loopback traffic
+        shell: bash
+        env:
+          POSIXLY_CORRECT: "1"
+        run: echo measured
+"#;
+    assert!(!load_job_has_closed_bash_startup_env(source));
+}
+
+#[test]
 fn comment_only_bash_env_reference_is_not_execution() {
     let source = r#"
 jobs:
