@@ -5,7 +5,8 @@
 //! persisted runtime rebinding. Because shell code can reconstruct protected assignments or
 //! replace executable/repository resolution without leaving a reliable static trace, the
 //! evidence-bearing path forbids persisted environment/path mutation plus explicit `PATH` and
-//! `GIT_*` overrides at the checkout, identity, and measurement boundaries.
+//! declarative or process-local `GIT_*` overrides at the checkout, identity, and measurement
+//! boundaries.
 
 use serde_yaml::Value;
 use std::fs;
@@ -47,6 +48,17 @@ fn git_repository_environment_overridden(node: &Value) -> bool {
             env.keys()
                 .filter_map(Value::as_str)
                 .any(|key| key.starts_with("GIT_"))
+        })
+}
+
+fn process_local_git_environment_overridden(node: &Value) -> bool {
+    node.get("run")
+        .and_then(Value::as_str)
+        .is_some_and(|run| {
+            run.split_ascii_whitespace().any(|token| {
+                let token = token.trim_matches(['\'', '"', '\\']);
+                token.starts_with("GIT_") && token.contains('=')
+            })
         })
 }
 
@@ -149,6 +161,7 @@ fn load_evidence_claims_exact_head(source: &str) -> bool {
         && !expected_sha_overridden(routed)
         && !execution_path_overridden(routed)
         && !git_repository_environment_overridden(routed)
+        && !process_local_git_environment_overridden(routed)
         && !expected_sha_overridden(summary)
         && !execution_path_overridden(summary)
 }
