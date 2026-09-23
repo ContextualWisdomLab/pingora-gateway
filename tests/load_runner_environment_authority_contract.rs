@@ -1,9 +1,10 @@
 //! Fail-closed contract for the routed-load job execution substrate.
 //!
 //! Exact-head evidence is attributable to the reviewed GitHub-hosted runner only when the
-//! `load-contract` job stays on the canonical runner class. Job containers execute ordinary
-//! `run` steps inside the selected image and can therefore replace the filesystem, toolchain,
-//! command namespace, and standard paths underneath otherwise unchanged evidence scripts.
+//! `load-contract` job stays on the canonical runner class and runs directly on that host.
+//! Job containers execute ordinary `run` steps inside the selected image and can therefore
+//! replace the filesystem, toolchain, command namespace, and standard paths underneath otherwise
+//! unchanged evidence scripts.
 
 use serde_yaml::Value;
 use std::fs;
@@ -21,6 +22,7 @@ fn load_runner_environment_is_canonical(source: &str) -> bool {
     };
 
     job.get("runs-on").and_then(Value::as_str) == Some(CANONICAL_RUNNER)
+        && job.get("container").is_none()
 }
 
 #[test]
@@ -28,7 +30,7 @@ fn live_routed_load_uses_the_canonical_runner_environment() {
     let source = fs::read_to_string(CI_WORKFLOW).expect("CI workflow should be readable UTF-8");
     assert!(
         load_runner_environment_is_canonical(&source),
-        "routed evidence must execute on the reviewed GitHub-hosted runner environment"
+        "routed evidence must execute directly on the reviewed GitHub-hosted runner environment"
     );
 }
 
