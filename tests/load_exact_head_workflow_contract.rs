@@ -56,7 +56,7 @@ fn process_local_git_environment_overridden(node: &Value) -> bool {
         .and_then(Value::as_str)
         .is_some_and(|run| {
             run.split_ascii_whitespace().any(|token| {
-                let token = token.trim_matches(['\'', '"', '\\']);
+                let token = token.trim_matches(|character| matches!(character, '\'' | '"' | '\\'));
                 token.starts_with("GIT_") && token.contains('=')
             })
         })
