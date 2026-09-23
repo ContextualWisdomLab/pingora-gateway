@@ -228,10 +228,10 @@ jobs:
           }
           trap cleanup EXIT
 
-          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
-          while IFS= read -r -d '' path; do test "$(git hash-object --no-filters -- "$path")" = "$(git rev-parse "HEAD:$path")"; done < <(git ls-tree -r --name-only -z HEAD -- Cargo.toml Cargo.lock src tests/load/load_origin.rs tests/load/pg_erd_gateway_smoke.js)
-          git ls-files -z -- Cargo.toml Cargo.lock src tests/load/load_origin.rs tests/load/pg_erd_gateway_smoke.js | git update-index --no-assume-unchanged --no-skip-worktree -z --stdin
-          git diff --exit-code HEAD -- Cargo.toml Cargo.lock src tests/load/load_origin.rs tests/load/pg_erd_gateway_smoke.js
+          test "$(git --no-replace-objects rev-parse HEAD)" = "$EXPECTED_SHA"
+          while IFS= read -r -d '' path; do test "$(git --no-replace-objects hash-object --no-filters -- "$path")" = "$(git --no-replace-objects rev-parse "HEAD:$path")"; done < <(git --no-replace-objects ls-tree -r --name-only -z HEAD -- Cargo.toml Cargo.lock src tests/load/load_origin.rs tests/load/pg_erd_gateway_smoke.js)
+          git --no-replace-objects ls-files -z -- Cargo.toml Cargo.lock src tests/load/load_origin.rs tests/load/pg_erd_gateway_smoke.js | git --no-replace-objects update-index --no-assume-unchanged --no-skip-worktree -z --stdin
+          git --no-replace-objects diff --exit-code HEAD -- Cargo.toml Cargo.lock src tests/load/load_origin.rs tests/load/pg_erd_gateway_smoke.js
           rustc --edition 2021 -D warnings -C opt-level=3 -C debuginfo=0 --out-dir /tmp tests/load/load_origin.rs
 
           UPSTREAM_PORT=18181 UPSTREAM_PAYLOAD=backend-ok \
@@ -302,9 +302,9 @@ jobs:
           done
           [[ ! -e "${CARGO_HOME}/config" && ! -e "${CARGO_HOME}/config.toml" ]]
           test ! -e build.rs
-          while IFS= read -r -d '' path; do test "$(git hash-object --no-filters -- "$path")" = "$(git rev-parse "HEAD:$path")"; done < <(git ls-tree -r --name-only -z HEAD -- Cargo.toml Cargo.lock src)
-          git ls-files -z -- Cargo.toml Cargo.lock src | git update-index --no-assume-unchanged --no-skip-worktree -z --stdin
-          git diff --exit-code HEAD -- Cargo.toml Cargo.lock src
+          while IFS= read -r -d '' path; do test "$(git --no-replace-objects hash-object --no-filters -- "$path")" = "$(git --no-replace-objects rev-parse "HEAD:$path")"; done < <(git --no-replace-objects ls-tree -r --name-only -z HEAD -- Cargo.toml Cargo.lock src)
+          git --no-replace-objects ls-files -z -- Cargo.toml Cargo.lock src | git --no-replace-objects update-index --no-assume-unchanged --no-skip-worktree -z --stdin
+          git --no-replace-objects diff --exit-code HEAD -- Cargo.toml Cargo.lock src
           cargo clean --release
           cargo build --release --locked --bin cwl-pingora-pg-erd-migration
           target/release/cwl-pingora-pg-erd-migration --config /tmp/pg-erd-load.yaml >/tmp/pingora-pg-erd-load.log 2>&1 &
@@ -326,9 +326,9 @@ jobs:
             exit 1
           fi
 
-          while IFS= read -r -d '' path; do test "$(git hash-object --no-filters -- "$path")" = "$(git rev-parse "HEAD:$path")"; done < <(git ls-tree -r --name-only -z HEAD -- tests/load/pg_erd_gateway_smoke.js)
-          git ls-files -z -- tests/load/pg_erd_gateway_smoke.js | git update-index --no-assume-unchanged --no-skip-worktree -z --stdin
-          git diff --exit-code HEAD -- tests/load/pg_erd_gateway_smoke.js
+          while IFS= read -r -d '' path; do test "$(git --no-replace-objects hash-object --no-filters -- "$path")" = "$(git --no-replace-objects rev-parse "HEAD:$path")"; done < <(git --no-replace-objects ls-tree -r --name-only -z HEAD -- tests/load/pg_erd_gateway_smoke.js)
+          git --no-replace-objects ls-files -z -- tests/load/pg_erd_gateway_smoke.js | git --no-replace-objects update-index --no-assume-unchanged --no-skip-worktree -z --stdin
+          git --no-replace-objects diff --exit-code HEAD -- tests/load/pg_erd_gateway_smoke.js
           rm -rf /tmp/cwl-k6-routed
           mkdir -p /tmp/cwl-k6-routed
           echo "b5a8003c86f35f5cd5ceef1490312c48e587696c94d998cefc6d7b3b4cb1597d  /tmp/k6-v2.2.0-linux-amd64.tar.gz" | sha256sum --check --strict
