@@ -41,7 +41,11 @@ fn unique_index(lines: &[&str], needle: &str) -> Option<usize> {
         .enumerate()
         .filter_map(|(index, line)| (*line == needle).then_some(index))
         .collect::<Vec<_>>();
-    (matches.len() == 1).then_some(matches[0])
+    if matches.len() == 1 {
+        Some(matches[0])
+    } else {
+        None
+    }
 }
 
 fn reset_immediately_precedes_diff(lines: &[&str], reset: &str, diff: &str) -> bool {
