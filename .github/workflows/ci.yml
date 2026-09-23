@@ -31,10 +31,10 @@ jobs:
         run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
       - name: Install native dependencies
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends pkg-config libssl-dev openssl
-      - name: Install Rust 1.98.0
+      - name: Install Rust 1.98.1
         run: |
-          rustup toolchain install 1.98.0 --profile minimal --component clippy,rustfmt
-          rustup default 1.98.0
+          rustup toolchain install 1.98.1 --profile minimal --component clippy,rustfmt
+          rustup default 1.98.1
       - name: Verify formatting
         run: cargo fmt --all -- --check
       - name: Compile and test
@@ -45,7 +45,7 @@ jobs:
         run: RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --locked
       - name: Install pinned coverage tooling
         run: |
-          rustup component add llvm-tools-preview --toolchain 1.98.0
+          rustup component add llvm-tools-preview --toolchain 1.98.1
           cargo install cargo-llvm-cov --version 0.9.0 --locked
       - name: Run owned production coverage workload
         run: cargo llvm-cov --all-targets --locked --no-report
@@ -86,10 +86,10 @@ jobs:
         run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
       - name: Install native dependencies
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ca-certificates cmake curl libssl-dev pkg-config
-      - name: Install Rust 1.98.0
+      - name: Install Rust 1.98.1
         run: |
-          rustup toolchain install 1.98.0 --profile minimal --component rustfmt
-          rustup default 1.98.0
+          rustup toolchain install 1.98.1 --profile minimal --component rustfmt
+          rustup default 1.98.1
       - name: Build exact gateway and Rust fixture candidates
         run: |
           set -euo pipefail
@@ -205,6 +205,8 @@ jobs:
           declare -rx CARGO_HOME=/tmp/cwl-routed-cargo-home
           declare -rx RUSTUP_HOME=/etc/skel/.rustup
           declare -rx RUSTUP_TOOLCHAIN=stable-x86_64-unknown-linux-gnu
+          [[ "$(rustc --version)" == rustc\ 1.98.1\ * ]]
+          [[ "$(cargo --version)" == cargo\ 1.98.1\ * ]]
           unset RUSTC RUSTC_WRAPPER RUSTC_WORKSPACE_WRAPPER RUSTFLAGS CARGO_ENCODED_RUSTFLAGS CARGO_BUILD_RUSTC CARGO_BUILD_RUSTC_WRAPPER CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER CARGO_BUILD_RUSTFLAGS CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER
           unset CARGO_TARGET_DIR CARGO_BUILD_TARGET_DIR CARGO_BUILD_TARGET
           rm -rf -- "$CARGO_HOME"
