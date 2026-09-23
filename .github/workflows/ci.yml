@@ -223,6 +223,18 @@ jobs:
                 ;;
             esac
           done < <(/usr/bin/env)
+          while IFS='=' read -r cmake_env _; do
+            case "$cmake_env" in
+              CMAKE|CMAKE_*|HOST_CMAKE|HOST_CMAKE_*|TARGET_CMAKE|TARGET_CMAKE_*)
+                if [[ "$cmake_env" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+                  unset "$cmake_env"
+                else
+                  echo "unsupported inherited CMake environment name: $cmake_env" >&2
+                  exit 1
+                fi
+                ;;
+            esac
+          done < <(/usr/bin/env)
           while IFS='=' read -r profile_env _; do
             case "$profile_env" in
               CARGO_PROFILE_RELEASE_*) unset "$profile_env" ;;
