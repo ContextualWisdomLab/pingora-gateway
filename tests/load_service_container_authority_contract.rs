@@ -16,11 +16,11 @@ fn load_network_authority_is_canonical(source: &str) -> bool {
     let Ok(document) = serde_yaml::from_str::<Value>(source) else {
         return false;
     };
+    let Some(job) = document.get("jobs").and_then(|jobs| jobs.get(LOAD_JOB)) else {
+        return false;
+    };
 
-    document
-        .get("jobs")
-        .and_then(|jobs| jobs.get(LOAD_JOB))
-        .is_some()
+    job.get("services").is_none()
 }
 
 #[test]
