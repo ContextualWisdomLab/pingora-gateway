@@ -229,6 +229,7 @@ jobs:
           trap cleanup EXIT
 
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          while IFS= read -r -d '' path; do test "$(git hash-object --no-filters -- "$path")" = "$(git rev-parse "HEAD:$path")"; done < <(git ls-tree -r --name-only -z HEAD -- Cargo.toml Cargo.lock src tests/load/load_origin.rs tests/load/pg_erd_gateway_smoke.js)
           git ls-files -z -- Cargo.toml Cargo.lock src tests/load/load_origin.rs tests/load/pg_erd_gateway_smoke.js | git update-index --no-assume-unchanged --no-skip-worktree -z --stdin
           git diff --exit-code HEAD -- Cargo.toml Cargo.lock src tests/load/load_origin.rs tests/load/pg_erd_gateway_smoke.js
           rustc --edition 2021 -D warnings -C opt-level=3 -C debuginfo=0 --out-dir /tmp tests/load/load_origin.rs
@@ -300,6 +301,7 @@ jobs:
             [[ -n "${cargo_config_dir}" ]] || cargo_config_dir="/"
           done
           [[ ! -e "${CARGO_HOME}/config" && ! -e "${CARGO_HOME}/config.toml" ]]
+          while IFS= read -r -d '' path; do test "$(git hash-object --no-filters -- "$path")" = "$(git rev-parse "HEAD:$path")"; done < <(git ls-tree -r --name-only -z HEAD -- Cargo.toml Cargo.lock src)
           git ls-files -z -- Cargo.toml Cargo.lock src | git update-index --no-assume-unchanged --no-skip-worktree -z --stdin
           git diff --exit-code HEAD -- Cargo.toml Cargo.lock src
           cargo clean --release
@@ -323,6 +325,7 @@ jobs:
             exit 1
           fi
 
+          while IFS= read -r -d '' path; do test "$(git hash-object --no-filters -- "$path")" = "$(git rev-parse "HEAD:$path")"; done < <(git ls-tree -r --name-only -z HEAD -- tests/load/pg_erd_gateway_smoke.js)
           git ls-files -z -- tests/load/pg_erd_gateway_smoke.js | git update-index --no-assume-unchanged --no-skip-worktree -z --stdin
           git diff --exit-code HEAD -- tests/load/pg_erd_gateway_smoke.js
           rm -rf /tmp/cwl-k6-routed
