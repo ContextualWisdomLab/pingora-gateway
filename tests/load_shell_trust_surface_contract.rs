@@ -4,8 +4,8 @@
 //! arbitrary command template such as `sudo bash {0}`. The load job therefore permits explicit
 //! `shell:` only on the three reviewed traffic/tool steps, and each must be exactly `bash`; all
 //! other steps stay on the GitHub-hosted runner's default shell contract. The routed evidence shell
-//! also rejects alias, function, and dynamically loaded builtin mutations that can redirect
-//! protected evidence commands before `PATH` resolution.
+//! also rejects alias, function, command-hash, and dynamically loaded builtin mutations that can
+//! redirect protected evidence commands before `PATH` resolution.
 
 use serde_yaml::Value;
 use std::fs;
@@ -60,6 +60,15 @@ fn line_mutates_builtin_namespace(line: &str) -> bool {
     }
 }
 
+fn line_mutates_hash_namespace(line: &str) -> bool {
+    let mut tokens = line.split_ascii_whitespace();
+    match tokens.next() {
+        Some("hash") => true,
+        Some("builtin" | "command") => matches!(tokens.next(), Some("hash")),
+        _ => false,
+    }
+}
+
 fn function_name_from_line(line: &str) -> Option<&str> {
     let trimmed = line.trim_start();
     if let Some(rest) = trimmed.strip_prefix("function ") {
@@ -96,6 +105,7 @@ fn routed_step_preserves_command_namespace(steps: &[Value]) -> bool {
             active_shell_lines(run).all(|line| {
                 !line_mutates_alias_namespace(line)
                     && !line_mutates_builtin_namespace(line)
+                    && !line_mutates_hash_namespace(line)
                     && !line_rebinds_protected_command(line)
             })
         })
