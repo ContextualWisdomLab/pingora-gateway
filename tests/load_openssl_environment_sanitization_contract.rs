@@ -3,11 +3,11 @@
 //! `openssl-sys` accepts manual OpenSSL installation and linkage authority from environment
 //! variables, including target-prefixed forms. The exact Pingora graph also enables the vendored
 //! OpenSSL feature, so `openssl-src` selects the Perl executable used to run OpenSSL `Configure`
-//! from `OPENSSL_SRC_PERL` or `PERL`. Perl itself also consumes `PERL5OPT`, `PERL5LIB`, `PERLLIB`,
-//! and `PERL_USE_UNSAFE_INC`; those can preload modules or alter module search before `Configure`
-//! executes. Because the measured candidate links through this path, the routed release rebuild
-//! must clear both installation/linkage and vendored-configurator/runtime authority before Cargo
-//! resolves and links the candidate.
+//! from `OPENSSL_SRC_PERL` or `PERL`. Perl itself consumes a wider `PERL*` process-environment
+//! namespace for startup switches, module search, I/O layers, Unicode handling, hash behavior,
+//! signals, and other runtime semantics. Because the measured candidate links through this path,
+//! the routed release rebuild clears manual OpenSSL authority, the explicit openssl-src executable
+//! override, and all inherited Perl runtime authority before Cargo resolves and links the candidate.
 
 use serde_yaml::Value;
 use std::fs;
@@ -16,8 +16,19 @@ const CI_WORKFLOW: &str = ".github/workflows/ci.yml";
 const LOAD_JOB: &str = "load-contract";
 const ROUTED_STEP: &str = "Run routed pg-erd loopback traffic";
 const CANONICAL_SANITIZE: &str = "unset OPENSSL_DIR OPENSSL_LIB_DIR OPENSSL_INCLUDE_DIR OPENSSL_STATIC OPENSSL_LIBS OPENSSL_NO_VENDOR OPENSSL_CONFIG_DIR X86_64_UNKNOWN_LINUX_GNU_OPENSSL_DIR X86_64_UNKNOWN_LINUX_GNU_OPENSSL_LIB_DIR X86_64_UNKNOWN_LINUX_GNU_OPENSSL_INCLUDE_DIR X86_64_UNKNOWN_LINUX_GNU_OPENSSL_STATIC X86_64_UNKNOWN_LINUX_GNU_OPENSSL_LIBS X86_64_UNKNOWN_LINUX_GNU_OPENSSL_NO_VENDOR X86_64_UNKNOWN_LINUX_GNU_OPENSSL_CONFIG_DIR";
-const CANONICAL_VENDORED_CONFIGURE_SANITIZE: &str =
-    "unset OPENSSL_SRC_PERL PERL PERL5OPT PERL5LIB PERLLIB PERL_USE_UNSAFE_INC";
+const CANONICAL_OPENSSL_PERL_EXECUTABLE_SANITIZE: &str = "unset OPENSSL_SRC_PERL";
+const CANONICAL_PERL_ENV_SANITIZE: &str = r#"while IFS='=' read -r perl_env _; do
+  case "$perl_env" in
+    PERL*)
+      if [[ "$perl_env" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+        unset "$perl_env"
+      else
+        echo "unsupported inherited Perl environment name: $perl_env" >&2
+        exit 1
+      fi
+      ;;
+  esac
+done < <(/usr/bin/env)"#;
 const CARGO_CLEAN: &str = "cargo clean --release";
 const CARGO_BUILD: &str = "cargo build --release --locked --bin cwl-pingora-pg-erd-migration";
 
@@ -52,24 +63,40 @@ fn openssl_environment_is_sanitized_before_rebuild(source: &str) -> bool {
         .enumerate()
         .filter_map(|(index, line)| (*line == CANONICAL_SANITIZE).then_some(index))
         .collect();
-    let vendored_configure_positions: Vec<_> = lines
+    let executable_positions: Vec<_> = lines
         .iter()
         .enumerate()
         .filter_map(|(index, line)| {
-            (*line == CANONICAL_VENDORED_CONFIGURE_SANITIZE).then_some(index)
+            (*line == CANONICAL_OPENSSL_PERL_EXECUTABLE_SANITIZE).then_some(index)
         })
         .collect();
-    if sanitize_positions.len() != 1 || vendored_configure_positions.len() != 1 {
+    let Some(perl_env_index) = run.find(CANONICAL_PERL_ENV_SANITIZE) else {
+        return false;
+    };
+    if run[perl_env_index + CANONICAL_PERL_ENV_SANITIZE.len()..]
+        .contains(CANONICAL_PERL_ENV_SANITIZE)
+        || sanitize_positions.len() != 1
+        || executable_positions.len() != 1
+    {
         return false;
     }
-    let Some(clean_index) = lines.iter().position(|line| *line == CARGO_CLEAN) else {
+    let Some(clean_index) = run.find(CARGO_CLEAN) else {
         return false;
     };
-    let Some(build_index) = lines.iter().position(|line| *line == CARGO_BUILD) else {
+    let Some(build_index) = run.find(CARGO_BUILD) else {
         return false;
     };
-    sanitize_positions[0] < clean_index
-        && vendored_configure_positions[0] < clean_index
+    let executable_line_index = lines
+        .iter()
+        .position(|line| *line == CANONICAL_OPENSSL_PERL_EXECUTABLE_SANITIZE)
+        .expect("single executable sanitizer was established above");
+    let clean_line_index = lines
+        .iter()
+        .position(|line| *line == CARGO_CLEAN)
+        .expect("clean command was established above");
+    sanitize_positions[0] < clean_line_index
+        && executable_line_index < clean_line_index
+        && perl_env_index < clean_index
         && clean_index < build_index
 }
 
@@ -78,7 +105,7 @@ fn live_routed_rebuild_clears_inherited_openssl_build_authority() {
     let source = fs::read_to_string(CI_WORKFLOW).expect("CI workflow should be readable UTF-8");
     assert!(
         openssl_environment_is_sanitized_before_rebuild(&source),
-        "routed evidence must clear inherited openssl-sys installation/linkage plus vendored OpenSSL Perl executable/module-search authority before rebuilding the measured candidate"
+        "routed evidence must clear inherited openssl-sys selection, openssl-src Perl executable override, and the complete inherited PERL* runtime namespace before rebuilding the measured candidate"
     );
 }
 
@@ -97,40 +124,31 @@ jobs:
 }
 
 #[test]
-fn openssl_sanitization_after_build_is_rejected() {
+fn enumerating_only_known_perl_variables_is_rejected() {
+    let legacy = "unset OPENSSL_SRC_PERL PERL PERL5OPT PERL5LIB PERLLIB PERL_USE_UNSAFE_INC";
     let source = format!(
-        "jobs:\n  load-contract:\n    steps:\n      - name: {ROUTED_STEP}\n        run: |\n          {CARGO_CLEAN}\n          {CARGO_BUILD}\n          {CANONICAL_SANITIZE}\n          {CANONICAL_VENDORED_CONFIGURE_SANITIZE}\n"
+        "jobs:\n  load-contract:\n    steps:\n      - name: {ROUTED_STEP}\n        run: |\n          {CANONICAL_SANITIZE}\n          {legacy}\n          {CARGO_CLEAN}\n          {CARGO_BUILD}\n"
+    );
+    assert!(
+        !openssl_environment_is_sanitized_before_rebuild(&source),
+        "an allowlist of known Perl variables leaves residual interpreter runtime authority such as PERLIO, PERL_UNICODE, and future PERL* controls"
+    );
+}
+
+#[test]
+fn perl_namespace_sanitization_after_build_is_rejected() {
+    let source = format!(
+        "jobs:\n  load-contract:\n    steps:\n      - name: {ROUTED_STEP}\n        run: |\n          {CANONICAL_SANITIZE}\n          {CANONICAL_OPENSSL_PERL_EXECUTABLE_SANITIZE}\n          {CARGO_CLEAN}\n          {CARGO_BUILD}\n          {}\n",
+        CANONICAL_PERL_ENV_SANITIZE.replace('\n', "\n          ")
     );
     assert!(!openssl_environment_is_sanitized_before_rebuild(&source));
 }
 
 #[test]
-fn vendored_openssl_configurator_authority_must_not_survive() {
-    let source = format!(
-        "jobs:\n  load-contract:\n    steps:\n      - name: {ROUTED_STEP}\n        run: |\n          {CANONICAL_SANITIZE}\n          {CARGO_CLEAN}\n          {CARGO_BUILD}\n"
-    );
-    assert!(
-        !openssl_environment_is_sanitized_before_rebuild(&source),
-        "OPENSSL_SRC_PERL/PERL and Perl startup environment can redirect or preload code into vendored OpenSSL Configure without changing PATH or Cargo.lock"
-    );
-}
-
-#[test]
-fn perl_module_injection_authority_must_not_survive() {
-    let executable_only = "unset OPENSSL_SRC_PERL PERL";
-    let source = format!(
-        "jobs:\n  load-contract:\n    steps:\n      - name: {ROUTED_STEP}\n        run: |\n          {CANONICAL_SANITIZE}\n          {executable_only}\n          {CARGO_CLEAN}\n          {CARGO_BUILD}\n"
-    );
-    assert!(
-        !openssl_environment_is_sanitized_before_rebuild(&source),
-        "PERL5OPT/PERL5LIB/PERLLIB/PERL_USE_UNSAFE_INC remain code/module-search authority even when the perl executable itself is canonical"
-    );
-}
-
-#[test]
 fn canonical_openssl_sanitization_before_clean_rebuild_is_admitted() {
     let source = format!(
-        "jobs:\n  load-contract:\n    steps:\n      - name: {ROUTED_STEP}\n        run: |\n          {CANONICAL_SANITIZE}\n          {CANONICAL_VENDORED_CONFIGURE_SANITIZE}\n          {CARGO_CLEAN}\n          {CARGO_BUILD}\n"
+        "jobs:\n  load-contract:\n    steps:\n      - name: {ROUTED_STEP}\n        run: |\n          {CANONICAL_SANITIZE}\n          {CANONICAL_OPENSSL_PERL_EXECUTABLE_SANITIZE}\n          {}\n          {CARGO_CLEAN}\n          {CARGO_BUILD}\n",
+        CANONICAL_PERL_ENV_SANITIZE.replace('\n', "\n          ")
     );
     assert!(openssl_environment_is_sanitized_before_rebuild(&source));
 }
