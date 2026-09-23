@@ -5,8 +5,8 @@
 //! replace a generated executable after checkout verification. The routed measurement therefore
 //! re-verifies HEAD, rejects index and working-tree drift from HEAD, rebuilds the Rust fixture,
 //! then re-verifies production source and performs clean/build/start as one exact candidate window.
-//! Same-shell functions must not shadow the materialization or startup commands that give that
-//! textual window its meaning.
+//! Same-shell functions or Bash hash-table rebinding must not shadow the materialization or startup
+//! commands that give that textual window its meaning.
 
 use serde_yaml::Value;
 use std::fs;
@@ -67,11 +67,22 @@ fn shell_function_defines(line: &str, command: &str) -> bool {
         })
 }
 
+fn shell_hash_rebinds(line: &str, command: &str) -> bool {
+    let tokens = line.split_ascii_whitespace().collect::<Vec<_>>();
+    let Some(hash_index) = tokens.iter().position(|token| *token == "hash") else {
+        return false;
+    };
+    tokens.get(hash_index + 1) == Some(&"-p")
+        && tokens.iter().skip(hash_index + 2).any(|token| {
+            token.trim_matches(|character| matches!(character, '\'' | '"' | '\\' | ';')) == command
+        })
+}
+
 fn candidate_tool_namespace_is_stable(lines: &[&str]) -> bool {
     !lines.iter().any(|line| {
-        CANDIDATE_COMMANDS
-            .iter()
-            .any(|command| shell_function_defines(line, command))
+        CANDIDATE_COMMANDS.iter().any(|command| {
+            shell_function_defines(line, command) || shell_hash_rebinds(line, command)
+        })
     })
 }
 
