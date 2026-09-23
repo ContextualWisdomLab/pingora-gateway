@@ -8,11 +8,13 @@
 
 use log::{Log, Metadata, Record};
 
+/// Replacement body emitted for admitted Pingora-family diagnostics after payload redaction.
 const REDACTED_PINGORA_DIAGNOSTIC: &str =
     "Pingora diagnostic message redacted by gateway payload-minimization policy";
 
 /// Wraps the configured `env_logger` filter while enforcing Pingora-message redaction.
 struct PayloadSafeLogger {
+    /// Operator-configured logger that retains target/level filtering and output formatting.
     inner: env_logger::Logger,
 }
 
