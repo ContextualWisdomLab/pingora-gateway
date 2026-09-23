@@ -1,10 +1,11 @@
 //! Fail-closed contract for inherited `cc` build-tool authority in routed-load evidence.
 //!
 //! `libz-ng-sys` is built through `cmake` 0.1.58, which uses `cc` to resolve native C/C++
-//! compiler and flag authority. `openssl-src` also resolves its compiler and archiver through `cc`;
-//! that exact build path documents `CROSS_COMPILE` as an input to `cc::Build` before OpenSSL later
-//! removes it from the `./Configure` child environment. The routed rebuild therefore clears compiler,
-//! archiver, flags, wrapper/prefix policy, and target-/host-prefixed authority, and fails closed when
+//! compiler and flag authority. `openssl-src` also resolves its compiler, archiver, and ranlib
+//! through `cc`; that exact build path documents `CROSS_COMPILE` as an input to `cc::Build` before
+//! OpenSSL later removes it from the `./Configure` child environment. `cc::Build::get_ranlib()` also
+//! consumes `RANLIB` and `RANLIBFLAGS`. The routed rebuild therefore clears compiler, archiver,
+//! ranlib, flags, wrapper/prefix policy, and target-/host-prefixed authority, and fails closed when
 //! a matching inherited name is not a valid Bash identifier.
 
 use serde_yaml::Value;
@@ -17,7 +18,7 @@ const CARGO_CLEAN: &str = "cargo clean --release";
 const CARGO_BUILD: &str = "cargo build --release --locked --bin cwl-pingora-pg-erd-migration";
 const CANONICAL_SANITIZE: &str = r#"while IFS='=' read -r cc_env _; do
   case "$cc_env" in
-    CC|CC_*|HOST_CC|HOST_CC_*|TARGET_CC|TARGET_CC_*|CFLAGS|CFLAGS_*|HOST_CFLAGS|HOST_CFLAGS_*|TARGET_CFLAGS|TARGET_CFLAGS_*|CXX|CXX_*|HOST_CXX|HOST_CXX_*|TARGET_CXX|TARGET_CXX_*|CXXFLAGS|CXXFLAGS_*|HOST_CXXFLAGS|HOST_CXXFLAGS_*|TARGET_CXXFLAGS|TARGET_CXXFLAGS_*|AR|AR_*|HOST_AR|HOST_AR_*|TARGET_AR|TARGET_AR_*|ARFLAGS|ARFLAGS_*|HOST_ARFLAGS|HOST_ARFLAGS_*|TARGET_ARFLAGS|TARGET_ARFLAGS_*|CXXSTDLIB|CXXSTDLIB_*|HOST_CXXSTDLIB|HOST_CXXSTDLIB_*|TARGET_CXXSTDLIB|TARGET_CXXSTDLIB_*|CRATE_CC_NO_DEFAULTS|CROSS_COMPILE)
+    CC|CC_*|HOST_CC|HOST_CC_*|TARGET_CC|TARGET_CC_*|CFLAGS|CFLAGS_*|HOST_CFLAGS|HOST_CFLAGS_*|TARGET_CFLAGS|TARGET_CFLAGS_*|CXX|CXX_*|HOST_CXX|HOST_CXX_*|TARGET_CXX|TARGET_CXX_*|CXXFLAGS|CXXFLAGS_*|HOST_CXXFLAGS|HOST_CXXFLAGS_*|TARGET_CXXFLAGS|TARGET_CXXFLAGS_*|AR|AR_*|HOST_AR|HOST_AR_*|TARGET_AR|TARGET_AR_*|ARFLAGS|ARFLAGS_*|HOST_ARFLAGS|HOST_ARFLAGS_*|TARGET_ARFLAGS|TARGET_ARFLAGS_*|RANLIB|RANLIB_*|HOST_RANLIB|HOST_RANLIB_*|TARGET_RANLIB|TARGET_RANLIB_*|RANLIBFLAGS|RANLIBFLAGS_*|HOST_RANLIBFLAGS|HOST_RANLIBFLAGS_*|TARGET_RANLIBFLAGS|TARGET_RANLIBFLAGS_*|CXXSTDLIB|CXXSTDLIB_*|HOST_CXXSTDLIB|HOST_CXXSTDLIB_*|TARGET_CXXSTDLIB|TARGET_CXXSTDLIB_*|CRATE_CC_NO_DEFAULTS|CROSS_COMPILE)
       if [[ "$cc_env" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
         unset "$cc_env"
       else
@@ -66,7 +67,7 @@ fn live_routed_rebuild_neutralizes_inherited_cc_authority() {
     let source = fs::read_to_string(CI_WORKFLOW).expect("CI workflow should be readable UTF-8");
     assert!(
         cc_environment_is_sanitized_before_rebuild(&source),
-        "routed evidence must clear inherited cc compiler/archiver/flag/wrapper/prefix authority and fail closed on unsafely named target-suffixed variables before rebuilding the measured candidate"
+        "routed evidence must clear inherited cc compiler/archiver/ranlib/flag/wrapper/prefix authority and fail closed on unsafely named target-suffixed variables before rebuilding the measured candidate"
     );
 }
 
@@ -94,6 +95,22 @@ fn cross_compile_prefix_authority_must_not_survive() {
     assert!(
         !cc_environment_is_sanitized_before_rebuild(&source),
         "CROSS_COMPILE can alter cc's native compiler/tool prefix before openssl-src removes it only from the later Configure child environment"
+    );
+}
+
+#[test]
+fn ranlib_authority_must_not_survive() {
+    let legacy_sanitize = CANONICAL_SANITIZE.replace(
+        "|RANLIB|RANLIB_*|HOST_RANLIB|HOST_RANLIB_*|TARGET_RANLIB|TARGET_RANLIB_*|RANLIBFLAGS|RANLIBFLAGS_*|HOST_RANLIBFLAGS|HOST_RANLIBFLAGS_*|TARGET_RANLIBFLAGS|TARGET_RANLIBFLAGS_*",
+        "",
+    );
+    let source = format!(
+        "jobs:\n  load-contract:\n    steps:\n      - name: {ROUTED_STEP}\n        run: |\n          {}\n          {CARGO_CLEAN}\n          {CARGO_BUILD}\n",
+        legacy_sanitize.replace('\n', "\n          ")
+    );
+    assert!(
+        !cc_environment_is_sanitized_before_rebuild(&source),
+        "RANLIB and RANLIBFLAGS can alter the native archive indexer and its arguments used by openssl-src through cc::Build::get_ranlib()"
     );
 }
 
