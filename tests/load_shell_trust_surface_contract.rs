@@ -297,3 +297,20 @@ jobs:
 "#;
     assert!(load_shell_surface_is_canonical(source));
 }
+
+#[test]
+fn routed_hash_table_rebinding_must_not_claim_release_evidence() {
+    for invocation in [
+        "hash -p /bin/true cargo",
+        "builtin hash -p /bin/true cargo",
+        "command hash -p /bin/true cargo",
+    ] {
+        let source = format!(
+            "jobs:\n  load-contract:\n    steps:\n      - name: {K6_INSTALL_STEP}\n        shell: bash\n      - name: {LOOPBACK_STEP}\n        shell: bash\n      - name: {ROUTED_STEP}\n        shell: bash\n        run: |\n          {invocation}\n          cargo clean --release\n          cargo build --release --locked --bin cwl-pingora-pg-erd-migration\n"
+        );
+        assert!(
+            !load_shell_surface_is_canonical(&source),
+            "Bash hash -p can bind a bare protected command to an arbitrary pathname without changing PATH"
+        );
+    }
+}
