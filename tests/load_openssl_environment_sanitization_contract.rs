@@ -1,8 +1,10 @@
 //! Fail-closed contract for inherited OpenSSL build-selection authority in routed-load evidence.
 //!
 //! `openssl-sys` accepts manual OpenSSL installation and linkage authority from environment
-//! variables, including target-prefixed forms. Because the measured Pingora candidate links through
-//! `pingora-openssl` -> `openssl-sys`, the routed release rebuild must clear those inherited values
+//! variables, including target-prefixed forms. The exact Pingora graph also enables the vendored
+//! OpenSSL feature, so `openssl-src` may select the Perl executable used to run OpenSSL `Configure`
+//! from `OPENSSL_SRC_PERL` or `PERL`. Because the measured candidate links through this path, the
+//! routed release rebuild must clear both installation/linkage and vendored-configurator authority
 //! before Cargo resolves and links the candidate.
 
 use serde_yaml::Value;
@@ -12,6 +14,7 @@ const CI_WORKFLOW: &str = ".github/workflows/ci.yml";
 const LOAD_JOB: &str = "load-contract";
 const ROUTED_STEP: &str = "Run routed pg-erd loopback traffic";
 const CANONICAL_SANITIZE: &str = "unset OPENSSL_DIR OPENSSL_LIB_DIR OPENSSL_INCLUDE_DIR OPENSSL_STATIC OPENSSL_LIBS OPENSSL_NO_VENDOR OPENSSL_CONFIG_DIR X86_64_UNKNOWN_LINUX_GNU_OPENSSL_DIR X86_64_UNKNOWN_LINUX_GNU_OPENSSL_LIB_DIR X86_64_UNKNOWN_LINUX_GNU_OPENSSL_INCLUDE_DIR X86_64_UNKNOWN_LINUX_GNU_OPENSSL_STATIC X86_64_UNKNOWN_LINUX_GNU_OPENSSL_LIBS X86_64_UNKNOWN_LINUX_GNU_OPENSSL_NO_VENDOR X86_64_UNKNOWN_LINUX_GNU_OPENSSL_CONFIG_DIR";
+const CANONICAL_VENDORED_CONFIGURE_SANITIZE: &str = "unset OPENSSL_SRC_PERL PERL";
 const CARGO_CLEAN: &str = "cargo clean --release";
 const CARGO_BUILD: &str = "cargo build --release --locked --bin cwl-pingora-pg-erd-migration";
 
@@ -46,7 +49,14 @@ fn openssl_environment_is_sanitized_before_rebuild(source: &str) -> bool {
         .enumerate()
         .filter_map(|(index, line)| (*line == CANONICAL_SANITIZE).then_some(index))
         .collect();
-    if sanitize_positions.len() != 1 {
+    let vendored_configure_positions: Vec<_> = lines
+        .iter()
+        .enumerate()
+        .filter_map(|(index, line)| {
+            (*line == CANONICAL_VENDORED_CONFIGURE_SANITIZE).then_some(index)
+        })
+        .collect();
+    if sanitize_positions.len() != 1 || vendored_configure_positions.len() != 1 {
         return false;
     }
     let Some(clean_index) = lines.iter().position(|line| *line == CARGO_CLEAN) else {
@@ -55,7 +65,9 @@ fn openssl_environment_is_sanitized_before_rebuild(source: &str) -> bool {
     let Some(build_index) = lines.iter().position(|line| *line == CARGO_BUILD) else {
         return false;
     };
-    sanitize_positions[0] < clean_index && clean_index < build_index
+    sanitize_positions[0] < clean_index
+        && vendored_configure_positions[0] < clean_index
+        && clean_index < build_index
 }
 
 #[test]
@@ -63,7 +75,7 @@ fn live_routed_rebuild_clears_inherited_openssl_build_authority() {
     let source = fs::read_to_string(CI_WORKFLOW).expect("CI workflow should be readable UTF-8");
     assert!(
         openssl_environment_is_sanitized_before_rebuild(&source),
-        "routed evidence must clear inherited openssl-sys installation and linkage authority before rebuilding the measured candidate"
+        "routed evidence must clear inherited openssl-sys installation/linkage and vendored OpenSSL configurator authority before rebuilding the measured candidate"
     );
 }
 
@@ -84,15 +96,26 @@ jobs:
 #[test]
 fn openssl_sanitization_after_build_is_rejected() {
     let source = format!(
-        "jobs:\n  load-contract:\n    steps:\n      - name: {ROUTED_STEP}\n        run: |\n          {CARGO_CLEAN}\n          {CARGO_BUILD}\n          {CANONICAL_SANITIZE}\n"
+        "jobs:\n  load-contract:\n    steps:\n      - name: {ROUTED_STEP}\n        run: |\n          {CARGO_CLEAN}\n          {CARGO_BUILD}\n          {CANONICAL_SANITIZE}\n          {CANONICAL_VENDORED_CONFIGURE_SANITIZE}\n"
     );
     assert!(!openssl_environment_is_sanitized_before_rebuild(&source));
 }
 
 #[test]
-fn canonical_openssl_sanitization_before_clean_rebuild_is_admitted() {
+fn vendored_openssl_configurator_authority_must_not_survive() {
     let source = format!(
         "jobs:\n  load-contract:\n    steps:\n      - name: {ROUTED_STEP}\n        run: |\n          {CANONICAL_SANITIZE}\n          {CARGO_CLEAN}\n          {CARGO_BUILD}\n"
+    );
+    assert!(
+        !openssl_environment_is_sanitized_before_rebuild(&source),
+        "OPENSSL_SRC_PERL/PERL can redirect the vendored OpenSSL Configure executable without changing PATH or Cargo.lock"
+    );
+}
+
+#[test]
+fn canonical_openssl_sanitization_before_clean_rebuild_is_admitted() {
+    let source = format!(
+        "jobs:\n  load-contract:\n    steps:\n      - name: {ROUTED_STEP}\n        run: |\n          {CANONICAL_SANITIZE}\n          {CANONICAL_VENDORED_CONFIGURE_SANITIZE}\n          {CARGO_CLEAN}\n          {CARGO_BUILD}\n"
     );
     assert!(openssl_environment_is_sanitized_before_rebuild(&source));
 }
