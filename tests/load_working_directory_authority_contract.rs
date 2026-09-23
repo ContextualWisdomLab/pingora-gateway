@@ -1,10 +1,10 @@
 //! Fail-closed contract for GitHub Actions working-directory authority in routed load evidence.
 //!
 //! Exact command text is not enough when GitHub can change the current directory before a `run`
-//! step starts. A step-local `working-directory` can redirect Git/Cargo/source-relative checks away
-//! from the exact checkout while leaving the reviewed shell text unchanged. This test-first version
-//! covers explicit evidence-step overrides; job/workflow `defaults.run.working-directory` remains
-//! the counterexample that the causal repair must close.
+//! step starts. Workflow/job `defaults.run.working-directory` and step-local `working-directory`
+//! can redirect Git/Cargo/source-relative checks away from the exact checkout while leaving the
+//! reviewed shell text unchanged. Routed evidence therefore rejects every explicit working-directory
+//! authority on the evidence-bearing path and relies on GitHub's checked-out workspace default.
 
 use serde_yaml::Value;
 use std::fs;
@@ -23,6 +23,13 @@ fn unique_named_step<'a>(steps: &'a [Value], name: &str) -> Option<&'a Value> {
     matches.next().is_none().then_some(step)
 }
 
+fn defaults_override_working_directory(node: &Value) -> bool {
+    node.get("defaults")
+        .and_then(|defaults| defaults.get("run"))
+        .and_then(|run| run.get("working-directory"))
+        .is_some()
+}
+
 fn step_overrides_working_directory(step: &Value) -> bool {
     step.get("working-directory").is_some()
 }
@@ -31,12 +38,18 @@ fn load_evidence_uses_checkout_working_directory(source: &str) -> bool {
     let Ok(document) = serde_yaml::from_str::<Value>(source) else {
         return false;
     };
-    let Some(steps) = document
-        .get("jobs")
-        .and_then(|jobs| jobs.get(LOAD_JOB))
-        .and_then(|job| job.get("steps"))
-        .and_then(Value::as_sequence)
-    else {
+    if defaults_override_working_directory(&document) {
+        return false;
+    }
+
+    let Some(job) = document.get("jobs").and_then(|jobs| jobs.get(LOAD_JOB)) else {
+        return false;
+    };
+    if defaults_override_working_directory(job) {
+        return false;
+    }
+
+    let Some(steps) = job.get("steps").and_then(Value::as_sequence) else {
         return false;
     };
 
@@ -92,5 +105,28 @@ jobs:
     assert!(
         !load_evidence_uses_checkout_working_directory(source),
         "job defaults can redirect every run step without adding a step-local working-directory key"
+    );
+}
+
+#[test]
+fn workflow_default_working_directory_override_must_not_claim_exact_head_evidence() {
+    let source = r#"
+defaults:
+  run:
+    working-directory: /tmp/alternate-worktree
+jobs:
+  load-contract:
+    steps:
+      - name: Verify checkout identity
+        run: git rev-parse HEAD
+      - name: Run routed pg-erd loopback traffic
+        run: cargo build --release --locked
+      - name: Require routed pg-erd latency summary
+        run: test -s k6-pg-erd-summary.json
+"#;
+
+    assert!(
+        !load_evidence_uses_checkout_working_directory(source),
+        "workflow defaults can redirect the load job before any evidence-step YAML changes"
     );
 }
