@@ -2,10 +2,11 @@
 //!
 //! `shell: bash` maps to `bash --noprofile --norc -eo pipefail {0}`, but those flags do not by
 //! themselves neutralize startup environment authority. GNU Bash can process `BASH_ENV`, import
-//! exported functions, honor inherited `SHELLOPTS`/`BASHOPTS`, and enter POSIX mode when
-//! `POSIXLY_CORRECT` is present before the first reviewed run line executes. The routed evidence
-//! shell therefore removes `POSIXLY_CORRECT` before Bash starts and uses Bash privileged mode,
-//! which ignores `BASH_ENV`/`ENV`, imported shell functions, `SHELLOPTS`, and `BASHOPTS`.
+//! exported functions, honor inherited `SHELLOPTS`/`BASHOPTS`, select compatibility behavior from
+//! `BASH_COMPAT`, and enter POSIX mode when `POSIXLY_CORRECT` is present before the first reviewed
+//! run line executes. The routed evidence shell removes `POSIXLY_CORRECT` and `BASH_COMPAT` before
+//! Bash starts and uses privileged mode, which ignores `BASH_ENV`/`ENV`, imported shell functions,
+//! `SHELLOPTS`, and `BASHOPTS`.
 
 use serde_yaml::Value;
 use std::fs;
@@ -13,8 +14,7 @@ use std::fs;
 const CI_WORKFLOW: &str = ".github/workflows/ci.yml";
 const LOAD_JOB: &str = "load-contract";
 const ROUTED_STEP: &str = "Run routed pg-erd loopback traffic";
-const CANONICAL_SHELL: &str =
-    "/usr/bin/env -u POSIXLY_CORRECT /bin/bash --noprofile --norc -p -eo pipefail {0}";
+const CANONICAL_SHELL: &str = "/usr/bin/env -u POSIXLY_CORRECT -u BASH_COMPAT /bin/bash --noprofile --norc -p -eo pipefail {0}";
 
 fn routed_shell(source: &str) -> Option<String> {
     let document = serde_yaml::from_str::<Value>(source).ok()?;
@@ -39,7 +39,7 @@ fn live_routed_step_isolates_bash_startup_before_the_script_runs() {
     let source = fs::read_to_string(CI_WORKFLOW).expect("CI workflow should be readable UTF-8");
     assert!(
         routed_bash_startup_is_isolated(&source),
-        "routed evidence must remove POSIXLY_CORRECT before Bash starts and use privileged Bash startup isolation"
+        "routed evidence must remove POSIXLY_CORRECT and BASH_COMPAT before Bash starts and use privileged Bash startup isolation"
     );
 }
 
@@ -59,13 +59,13 @@ jobs:
 #[test]
 fn no_profile_and_no_rc_without_privileged_mode_is_rejected() {
     let source = format!(
-        "jobs:\n  load-contract:\n    steps:\n      - name: {ROUTED_STEP}\n        shell: /usr/bin/env -u POSIXLY_CORRECT /bin/bash --noprofile --norc -eo pipefail {{0}}\n        run: echo measured\n"
+        "jobs:\n  load-contract:\n    steps:\n      - name: {ROUTED_STEP}\n        shell: /usr/bin/env -u POSIXLY_CORRECT -u BASH_COMPAT /bin/bash --noprofile --norc -eo pipefail {{0}}\n        run: echo measured\n"
     );
     assert!(!routed_bash_startup_is_isolated(&source));
 }
 
 #[test]
-fn privileged_bash_without_pre_start_posix_removal_is_rejected() {
+fn privileged_bash_without_pre_start_environment_removal_is_rejected() {
     let source = format!(
         "jobs:\n  load-contract:\n    steps:\n      - name: {ROUTED_STEP}\n        shell: /bin/bash --noprofile --norc -p -eo pipefail {{0}}\n        run: echo measured\n"
     );

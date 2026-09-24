@@ -1,7 +1,7 @@
 //! Fail-closed contract for `load-contract` shell selection and command namespace.
 //!
 //! Install/loopback tooling keeps GitHub's reviewed explicit `bash` shell. The routed evidence step
-//! uses a stricter custom shell that removes `POSIXLY_CORRECT` before Bash startup and enables Bash
+//! uses a stricter custom shell that removes pre-start compatibility/POSIX authority and enables Bash
 //! privileged mode so startup files, imported functions, and inherited shell-option authority cannot
 //! run before the reviewed script. Inside that shell, alias, function, command-hash, and dynamically
 //! loaded builtin mutations remain forbidden for protected evidence commands.
@@ -14,8 +14,7 @@ const LOAD_JOB: &str = "load-contract";
 const K6_INSTALL_STEP: &str = "Install checksum-pinned k6 2.2.0";
 const LOOPBACK_STEP: &str = "Exercise concurrent loopback traffic contract";
 const ROUTED_STEP: &str = "Run routed pg-erd loopback traffic";
-const ROUTED_SHELL: &str =
-    "/usr/bin/env -u POSIXLY_CORRECT /bin/bash --noprofile --norc -p -eo pipefail {0}";
+const ROUTED_SHELL: &str = "/usr/bin/env -u POSIXLY_CORRECT -u BASH_COMPAT /bin/bash --noprofile --norc -p -eo pipefail {0}";
 const PROTECTED_COMMANDS: &[&str] = &[
     "cargo",
     "git",
