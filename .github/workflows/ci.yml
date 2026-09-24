@@ -214,6 +214,7 @@ jobs:
           unset OPENSSL_DIR OPENSSL_LIB_DIR OPENSSL_INCLUDE_DIR OPENSSL_STATIC OPENSSL_LIBS OPENSSL_NO_VENDOR OPENSSL_CONFIG_DIR X86_64_UNKNOWN_LINUX_GNU_OPENSSL_DIR X86_64_UNKNOWN_LINUX_GNU_OPENSSL_LIB_DIR X86_64_UNKNOWN_LINUX_GNU_OPENSSL_INCLUDE_DIR X86_64_UNKNOWN_LINUX_GNU_OPENSSL_STATIC X86_64_UNKNOWN_LINUX_GNU_OPENSSL_LIBS X86_64_UNKNOWN_LINUX_GNU_OPENSSL_NO_VENDOR X86_64_UNKNOWN_LINUX_GNU_OPENSSL_CONFIG_DIR
           unset OPENSSL_LOCAL_CONFIG_DIR
           unset NM
+          unset KERNEL_BITS
           unset MAKEFLAGS MFLAGS GNUMAKEFLAGS MAKEFILES
           unset OPENSSL_SRC_PERL
           while IFS='=' read -r perl_env _; do
@@ -357,7 +358,6 @@ jobs:
               exit 1
             fi
           done
-
           cargo_config_dir="$PWD"
           while :; do
             [[ ! -e "${cargo_config_dir}/.cargo/config" ]]
