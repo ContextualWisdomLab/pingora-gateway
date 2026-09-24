@@ -358,6 +358,7 @@ jobs:
               exit 1
             fi
           done
+
           cargo_config_dir="$PWD"
           while :; do
             [[ ! -e "${cargo_config_dir}/.cargo/config" ]]
