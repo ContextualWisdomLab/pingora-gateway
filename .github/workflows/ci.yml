@@ -197,11 +197,17 @@ jobs:
           retention-days: 7
       - name: Run routed pg-erd loopback traffic
         shell: bash
+        env:
+          LD_PRELOAD: ""
+          LD_LIBRARY_PATH: ""
+          LD_AUDIT: ""
+          GLIBC_TUNABLES: ""
         run: |
           set -euo pipefail
           readonly EXPECTED_SHA
           readonly BASH_CMDS
           readonly PATH=/etc/skel/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+          unset LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT GLIBC_TUNABLES
           declare -rx CARGO_HOME=/tmp/cwl-routed-cargo-home
           declare -rx RUSTUP_HOME=/etc/skel/.rustup
           declare -rx RUSTUP_TOOLCHAIN=1.98.1-x86_64-unknown-linux-gnu
