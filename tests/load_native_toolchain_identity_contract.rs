@@ -17,6 +17,7 @@ const CARGO_BUILD: &str = "cargo build --release --locked --bin cwl-pingora-pg-e
 const REQUIRED_ASSERTIONS: &[&str] = &[
     "[[ \"$(cc -dumpfullversion -dumpversion)\" == \"13.3.0\" ]]",
     "[[ \"$(as --version | head -n1)\" == \"GNU assembler (GNU Binutils for Ubuntu) 2.42\" ]]",
+    "[[ \"$(ld --version | head -n1)\" == \"GNU ld (GNU Binutils for Ubuntu) 2.42\" ]]",
     "[[ \"$(make --version | head -n1)\" == \"GNU Make 4.3\" ]]",
     "[[ \"$(perl -e 'print $^V')\" == \"v5.38.2\" ]]",
     "[[ \"$(cmake --version | head -n1)\" == \"cmake version 3.31.6\" ]]",
