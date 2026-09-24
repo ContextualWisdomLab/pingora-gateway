@@ -196,7 +196,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
       - name: Run routed pg-erd loopback traffic
-        shell: bash
+        shell: /usr/bin/env -u POSIXLY_CORRECT /bin/bash --noprofile --norc -p -eo pipefail {0}
         env:
           LD_PRELOAD: ""
           LD_LIBRARY_PATH: ""
