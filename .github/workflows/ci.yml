@@ -31,10 +31,10 @@ jobs:
         run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
       - name: Install native dependencies
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends pkg-config libssl-dev openssl
-      - name: Install Rust 1.98.0
+      - name: Install Rust 1.98.1
         run: |
-          rustup toolchain install 1.98.0 --profile minimal --component clippy,rustfmt
-          rustup default 1.98.0
+          rustup toolchain install 1.98.1 --profile minimal --component clippy,rustfmt
+          rustup default 1.98.1
       - name: Verify formatting
         run: cargo fmt --all -- --check
       - name: Compile and test
@@ -45,7 +45,7 @@ jobs:
         run: RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --locked
       - name: Install pinned coverage tooling
         run: |
-          rustup component add llvm-tools-preview --toolchain 1.98.0
+          rustup component add llvm-tools-preview --toolchain 1.98.1
           cargo install cargo-llvm-cov --version 0.9.0 --locked
       - name: Run owned production coverage workload
         run: cargo llvm-cov --all-targets --locked --no-report
@@ -86,18 +86,26 @@ jobs:
         run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
       - name: Install native dependencies
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ca-certificates cmake curl libssl-dev pkg-config
-      - name: Install Rust 1.98.0
+      - name: Install Rust 1.98.1
         run: |
-          rustup toolchain install 1.98.0 --profile minimal
-          rustup default 1.98.0
-      - name: Build exact gateway candidate
-        run: cargo build --release --locked --bin cwl-pingora-gateway
+          rustup toolchain install 1.98.1 --profile minimal --component rustfmt
+          rustup default 1.98.1
+      - name: Build exact gateway and Rust fixture candidates
+        run: |
+          set -euo pipefail
+          cargo build --release --locked --bin cwl-pingora-gateway --bin cwl-pingora-pg-erd-migration
+          rustfmt --edition 2021 --check tests/load/load_origin.rs
+          rustc --edition 2021 -D warnings --test tests/load/load_origin.rs -o /tmp/load_origin_tests
+          /tmp/load_origin_tests
+          rustc --edition 2021 -D warnings -C opt-level=3 -C debuginfo=0 \
+            --out-dir /tmp tests/load/load_origin.rs
       - name: Install checksum-pinned k6 2.2.0
         shell: bash
         run: |
           set -euo pipefail
+          unset TAR_OPTIONS
           archive="k6-v2.2.0-linux-amd64.tar.gz"
-          curl --fail --location --silent --show-error \
+          curl -q --fail --location --silent --show-error \
             "https://github.com/grafana/k6/releases/download/v2.2.0/${archive}" \
             --output "/tmp/${archive}"
           echo "b5a8003c86f35f5cd5ceef1490312c48e587696c94d998cefc6d7b3b4cb1597d  /tmp/${archive}" | sha256sum --check --strict
@@ -108,11 +116,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 tests/load/upstream_fixture.py >/tmp/upstream-fixture.log 2>&1 &
+          /tmp/load_origin >/tmp/upstream-fixture.log 2>&1 &
           upstream_pid=$!
           gateway_pid=""
-          # Invoked indirectly by the EXIT trap.
-          # shellcheck disable=SC2329
+
           cleanup() {
             status=$?
             if [ -n "$gateway_pid" ]; then
@@ -124,7 +131,7 @@ jobs:
             if [ "$status" -ne 0 ]; then
               echo "--- gateway log ---"
               cat /tmp/gateway-load.log || true
-              echo "--- upstream fixture log ---"
+              echo "--- Rust origin log ---"
               cat /tmp/upstream-fixture.log || true
             fi
           }
@@ -149,25 +156,25 @@ jobs:
                 idle_ms: 5000
           EOF
 
-          # Prove the measured origin has bound before gateway startup and measured traffic.
+          # Prove the measured Rust origin has bound before gateway startup and measured traffic.
           # This is fixture liveness, not a gateway-route warm-up.
           for _ in $(seq 1 80); do
-            if curl --fail --silent --show-error --max-time 1 http://127.0.0.1:18081/fixture-ready >/dev/null; then
+            if curl -q --fail --silent --show-error --max-time 1 http://127.0.0.1:18081/fixture-ready >/dev/null; then
               break
             fi
             if ! kill -0 "$upstream_pid" 2>/dev/null; then
-              echo "upstream fixture exited before becoming ready" >&2
+              echo "Rust origin exited before becoming ready" >&2
               exit 1
             fi
             sleep 0.05
           done
-          curl --fail --silent --show-error --max-time 1 http://127.0.0.1:18081/fixture-ready >/dev/null
+          curl -q --fail --silent --show-error --max-time 1 http://127.0.0.1:18081/fixture-ready >/dev/null
 
           target/release/cwl-pingora-gateway --config /tmp/gateway-load.yaml >/tmp/gateway-load.log 2>&1 &
           gateway_pid=$!
 
           for _ in $(seq 1 80); do
-            if curl --fail --silent --show-error --max-time 1 http://127.0.0.1:18080/livez >/dev/null; then
+            if curl -q --fail --silent --show-error --max-time 1 http://127.0.0.1:18080/livez >/dev/null; then
               break
             fi
             if ! kill -0 "$gateway_pid" 2>/dev/null; then
@@ -176,9 +183,25 @@ jobs:
             fi
             sleep 0.1
           done
-          curl --fail --silent --show-error --max-time 1 http://127.0.0.1:18080/livez >/dev/null
+          curl -q --fail --silent --show-error --max-time 1 http://127.0.0.1:18080/livez >/dev/null
 
-          GATEWAY_URL=http://127.0.0.1:18080 k6 run --quiet tests/load/gateway_smoke.js
+          while IFS='=' read -r k6_env _; do
+            case "$k6_env" in
+              K6_*)
+                if [[ "$k6_env" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+                  unset "$k6_env"
+                else
+                  echo "unsupported inherited k6 environment name: $k6_env" >&2
+                  exit 1
+                fi
+                ;;
+            esac
+          done < <(/usr/bin/env)
+          rm -rf /tmp/cwl-k6-generic
+          mkdir -p /tmp/cwl-k6-generic
+          printf '%s\n' '{}' > /tmp/cwl-k6-generic/config.json
+          GATEWAY_URL=http://127.0.0.1:18080 \
+            /usr/local/bin/k6 run --no-usage-report --config /tmp/cwl-k6-generic/config.json --quiet tests/load/gateway_smoke.js
       - name: Require loopback latency summary
         run: test -s k6-summary.json
       - name: Upload loopback latency evidence
@@ -187,6 +210,272 @@ jobs:
         with:
           name: k6-loopback-${{ env.EXPECTED_SHA }}
           path: k6-summary.json
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Run routed pg-erd loopback traffic
+        shell: /usr/bin/env -u POSIXLY_CORRECT -u BASH_COMPAT /bin/bash --noprofile --norc -p -eo pipefail {0}
+        env:
+          LD_PRELOAD: ""
+          LD_LIBRARY_PATH: ""
+          LD_AUDIT: ""
+          GLIBC_TUNABLES: ""
+        run: |
+          set -euo pipefail
+          readonly EXPECTED_SHA
+          readonly BASH_CMDS
+          readonly PATH=/etc/skel/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+          unset LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT GLIBC_TUNABLES
+          unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_NAMESPACE
+          declare -rx GIT_CONFIG_GLOBAL=/dev/null
+          declare -rx GIT_CONFIG_SYSTEM=/dev/null
+          unset GIT_CONFIG_NOSYSTEM GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS
+          unset GIT_LITERAL_PATHSPECS GIT_GLOB_PATHSPECS GIT_NOGLOB_PATHSPECS GIT_ICASE_PATHSPECS
+          declare -rx CARGO_HOME=/tmp/cwl-routed-cargo-home
+          declare -rx RUSTUP_HOME=/etc/skel/.rustup
+          declare -rx RUSTUP_TOOLCHAIN=1.98.1-x86_64-unknown-linux-gnu
+          [[ "$(rustc --version)" == rustc\ 1.98.1\ * ]]
+          [[ "$(cargo --version)" == cargo\ 1.98.1\ * ]]
+          [[ "$(cc -dumpfullversion -dumpversion)" == "13.3.0" ]]
+          [[ "$(as --version | head -n1)" == "GNU assembler (GNU Binutils for Ubuntu) 2.42" ]]
+          [[ "$(ld --version | head -n1)" == "GNU ld (GNU Binutils for Ubuntu) 2.42" ]]
+          [[ "$(make --version | head -n1)" == "GNU Make 4.3" ]]
+          [[ "$(perl -e 'print $^V')" == "v5.38.2" ]]
+          [[ "$(cmake --version | head -n1)" == "cmake version 3.31.6" ]]
+          [[ "$(pkg-config --version)" == "1.8.1" ]]
+          [[ "$(ar --version | head -n1)" == "GNU ar (GNU Binutils for Ubuntu) 2.42" ]]
+          [[ "$(ranlib --version | head -n1)" == "GNU ranlib (GNU Binutils for Ubuntu) 2.42" ]]
+          [[ "$(nm --version | head -n1)" == "GNU nm (GNU Binutils for Ubuntu) 2.42" ]]
+          unset RUSTC RUSTC_WRAPPER RUSTC_WORKSPACE_WRAPPER RUSTFLAGS RUSTC_BOOTSTRAP CARGO_ENCODED_RUSTFLAGS CARGO_BUILD_RUSTC CARGO_BUILD_RUSTC_WRAPPER CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER CARGO_BUILD_RUSTFLAGS CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER
+          unset CARGO_TARGET_DIR CARGO_BUILD_TARGET_DIR CARGO_BUILD_TARGET
+          unset CARGO_BUILD_INCREMENTAL CARGO_INCREMENTAL
+          unset ZSTD_SYS_USE_PKG_CONFIG
+          unset OPENSSL_DIR OPENSSL_LIB_DIR OPENSSL_INCLUDE_DIR OPENSSL_STATIC OPENSSL_LIBS OPENSSL_NO_VENDOR OPENSSL_CONFIG_DIR X86_64_UNKNOWN_LINUX_GNU_OPENSSL_DIR X86_64_UNKNOWN_LINUX_GNU_OPENSSL_LIB_DIR X86_64_UNKNOWN_LINUX_GNU_OPENSSL_INCLUDE_DIR X86_64_UNKNOWN_LINUX_GNU_OPENSSL_STATIC X86_64_UNKNOWN_LINUX_GNU_OPENSSL_LIBS X86_64_UNKNOWN_LINUX_GNU_OPENSSL_NO_VENDOR X86_64_UNKNOWN_LINUX_GNU_OPENSSL_CONFIG_DIR
+          unset OPENSSL_LOCAL_CONFIG_DIR
+          unset BUILDFILE
+          unset NM
+          unset KERNEL_BITS
+          unset AS ASFLAGS
+          unset CPP LD
+          unset LDFLAGS LDLIBS
+          unset LD_RUN_PATH
+          unset GNUTARGET LDEMULATION
+          unset CPPFLAGS __CNF_CPPDEFINES __CNF_CPPINCLUDES __CNF_CPPFLAGS __CNF_CFLAGS __CNF_CXXFLAGS __CNF_LDFLAGS __CNF_LDLIBS
+          unset CPPDEFINES CPPINCLUDES
+          unset GCC_EXEC_PREFIX COMPILER_PATH LIBRARY_PATH CPATH C_INCLUDE_PATH CPLUS_INCLUDE_PATH OBJC_INCLUDE_PATH
+          unset MAKEFLAGS MFLAGS GNUMAKEFLAGS MAKEFILES
+          unset CARGO_MAKEFLAGS
+          unset OPENSSL_SRC_PERL
+          unset HASHBANGPERL
+          while IFS='=' read -r perl_env _; do
+            case "$perl_env" in
+              PERL*)
+                if [[ "$perl_env" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+                  unset "$perl_env"
+                else
+                  echo "unsupported inherited Perl environment name: $perl_env" >&2
+                  exit 1
+                fi
+                ;;
+            esac
+          done < <(/usr/bin/env)
+          while IFS='=' read -r pkg_env _; do
+            case "$pkg_env" in
+              OPENSSL_DYNAMIC|OPENSSL_NO_PKG_CONFIG|PKG_CONFIG|PKG_CONFIG_*|HOST_PKG_CONFIG_*|TARGET_PKG_CONFIG_*)
+                if [[ "$pkg_env" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+                  unset "$pkg_env"
+                else
+                  echo "unsupported inherited pkg-config environment name: $pkg_env" >&2
+                  exit 1
+                fi
+                ;;
+            esac
+          done < <(/usr/bin/env)
+          while IFS='=' read -r cmake_env _; do
+            case "$cmake_env" in
+              CMAKE|CMAKE_*|HOST_CMAKE|HOST_CMAKE_*|TARGET_CMAKE|TARGET_CMAKE_*)
+                if [[ "$cmake_env" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+                  unset "$cmake_env"
+                else
+                  echo "unsupported inherited CMake environment name: $cmake_env" >&2
+                  exit 1
+                fi
+                ;;
+            esac
+          done < <(/usr/bin/env)
+          while IFS='=' read -r cc_env _; do
+            case "$cc_env" in
+              CC|CC_*|HOST_CC|HOST_CC_*|TARGET_CC|TARGET_CC_*|CFLAGS|CFLAGS_*|HOST_CFLAGS|HOST_CFLAGS_*|TARGET_CFLAGS|TARGET_CFLAGS_*|CXX|CXX_*|HOST_CXX|HOST_CXX_*|TARGET_CXX|TARGET_CXX_*|CXXFLAGS|CXXFLAGS_*|HOST_CXXFLAGS|HOST_CXXFLAGS_*|TARGET_CXXFLAGS|TARGET_CXXFLAGS_*|AR|AR_*|HOST_AR|HOST_AR_*|TARGET_AR|TARGET_AR_*|ARFLAGS|ARFLAGS_*|HOST_ARFLAGS|HOST_ARFLAGS_*|TARGET_ARFLAGS|TARGET_ARFLAGS_*|RANLIB|RANLIB_*|HOST_RANLIB|HOST_RANLIB_*|TARGET_RANLIB|TARGET_RANLIB_*|RANLIBFLAGS|RANLIBFLAGS_*|HOST_RANLIBFLAGS|HOST_RANLIBFLAGS_*|TARGET_RANLIBFLAGS|TARGET_RANLIBFLAGS_*|CXXSTDLIB|CXXSTDLIB_*|HOST_CXXSTDLIB|HOST_CXXSTDLIB_*|TARGET_CXXSTDLIB|TARGET_CXXSTDLIB_*|CRATE_CC_NO_DEFAULTS|CROSS_COMPILE)
+                if [[ "$cc_env" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+                  unset "$cc_env"
+                else
+                  echo "unsupported inherited cc environment name: $cc_env" >&2
+                  exit 1
+                fi
+                ;;
+            esac
+          done < <(/usr/bin/env)
+          while IFS='=' read -r profile_env _; do
+            case "$profile_env" in
+              CARGO_PROFILE_RELEASE_*) unset "$profile_env" ;;
+            esac
+          done < <(/usr/bin/env)
+          rm -rf -- "$CARGO_HOME"
+          install -d -m 0700 -- "$CARGO_HOME"
+          [[ -d "$CARGO_HOME" && ! -L "$CARGO_HOME" && -O "$CARGO_HOME" && -w "$CARGO_HOME" ]]
+          backend_pid=""
+          frontend_pid=""
+          pg_erd_pid=""
+          cleanup() {
+            status=$?
+            for pid in "$pg_erd_pid" "$backend_pid" "$frontend_pid"; do
+              if [ -n "$pid" ]; then
+                kill "$pid" >/dev/null 2>&1 || true
+                wait "$pid" >/dev/null 2>&1 || true
+              fi
+            done
+            if [ "$status" -ne 0 ]; then
+              echo "--- pg-erd log ---"
+              cat /tmp/pingora-pg-erd-load.log || true
+              echo "--- backend Rust origin log ---"
+              cat /tmp/pg-erd-backend.log || true
+              echo "--- frontend Rust origin log ---"
+              cat /tmp/pg-erd-frontend.log || true
+            fi
+          }
+          trap cleanup EXIT
+
+          test "$(git --no-replace-objects rev-parse --show-toplevel)" = "$GITHUB_WORKSPACE"
+          test "$(git --no-replace-objects rev-parse HEAD)" = "$EXPECTED_SHA"
+          while IFS= read -r -d '' path; do test "$(git --no-replace-objects hash-object --no-filters -- "$path")" = "$(git --no-replace-objects rev-parse "HEAD:$path")"; done < <(git --no-replace-objects ls-tree -r --name-only -z HEAD -- Cargo.toml Cargo.lock src tests/load/load_origin.rs tests/load/pg_erd_gateway_smoke.js)
+          git --no-replace-objects ls-files -z -- Cargo.toml Cargo.lock src tests/load/load_origin.rs tests/load/pg_erd_gateway_smoke.js | git --no-replace-objects update-index --no-assume-unchanged --no-skip-worktree -z --stdin
+          git --no-replace-objects diff --no-ext-diff --no-textconv --exit-code HEAD -- Cargo.toml Cargo.lock src tests/load/load_origin.rs tests/load/pg_erd_gateway_smoke.js
+          rustc --edition 2021 -D warnings -C opt-level=3 -C debuginfo=0 --out-dir /tmp tests/load/load_origin.rs
+
+          UPSTREAM_PORT=18181 UPSTREAM_PAYLOAD=backend-ok \
+            /tmp/load_origin >/tmp/pg-erd-backend.log 2>&1 &
+          backend_pid=$!
+          UPSTREAM_PORT=18183 UPSTREAM_PAYLOAD=frontend-ok \
+            /tmp/load_origin >/tmp/pg-erd-frontend.log 2>&1 &
+          frontend_pid=$!
+
+          cat >/tmp/pg-erd-load.yaml <<'EOF'
+          version: 1
+          listener: 127.0.0.1:18180
+          metrics_listener: 127.0.0.1:18182
+          max_request_body_bytes: 1048576
+          max_in_flight_requests: 128
+          upstream_keepalive_pool_size: 32
+          upstreams:
+            - name: backend
+              address: 127.0.0.1:18181
+              tls: false
+              timeouts:
+                connection_ms: 500
+                total_connection_ms: 1000
+                read_ms: 1000
+                write_ms: 2000
+                idle_ms: 5000
+            - name: frontend
+              address: 127.0.0.1:18183
+              tls: false
+              timeouts:
+                connection_ms: 500
+                total_connection_ms: 1000
+                read_ms: 1000
+                write_ms: 2000
+                idle_ms: 5000
+          EOF
+
+          for origin in 18181 18183; do
+            ready=0
+            for _ in $(seq 1 80); do
+              if curl -q --fail --silent --show-error --max-time 1 "http://127.0.0.1:${origin}/fixture-ready" >/dev/null; then
+                ready=1
+                break
+              fi
+              origin_pid="$backend_pid"
+              if [ "$origin" = "18183" ]; then
+                origin_pid="$frontend_pid"
+              fi
+              if ! kill -0 "$origin_pid" 2>/dev/null; then
+                echo "Rust origin ${origin} exited before becoming ready" >&2
+                exit 1
+              fi
+              sleep 0.05
+            done
+            if [ "$ready" -ne 1 ]; then
+              echo "Rust origin ${origin} never became ready" >&2
+              exit 1
+            fi
+          done
+
+          cargo_config_dir="$PWD"
+          while :; do
+            [[ ! -e "${cargo_config_dir}/.cargo/config" ]]
+            [[ ! -e "${cargo_config_dir}/.cargo/config.toml" ]]
+            [[ "${cargo_config_dir}" = "/" ]] && break
+            cargo_config_dir="${cargo_config_dir%/*}"
+            [[ -n "${cargo_config_dir}" ]] || cargo_config_dir="/"
+          done
+          [[ ! -e "${CARGO_HOME}/config" && ! -e "${CARGO_HOME}/config.toml" ]]
+          test ! -e build.rs
+          while IFS= read -r -d '' path; do test "$(git --no-replace-objects hash-object --no-filters -- "$path")" = "$(git --no-replace-objects rev-parse "HEAD:$path")"; done < <(git --no-replace-objects ls-tree -r --name-only -z HEAD -- Cargo.toml Cargo.lock src)
+          git --no-replace-objects ls-files -z -- Cargo.toml Cargo.lock src | git --no-replace-objects update-index --no-assume-unchanged --no-skip-worktree -z --stdin
+          git --no-replace-objects diff --no-ext-diff --no-textconv --exit-code HEAD -- Cargo.toml Cargo.lock src
+          declare -rx SOURCE_DATE_EPOCH="$(git --no-replace-objects show -s --format=%ct "$EXPECTED_SHA")"
+          cargo clean --release
+          cargo build --release --locked --bin cwl-pingora-pg-erd-migration
+          target/release/cwl-pingora-pg-erd-migration --config /tmp/pg-erd-load.yaml >/tmp/pingora-pg-erd-load.log 2>&1 &
+          pg_erd_pid=$!
+          ready=0
+          for _ in $(seq 1 80); do
+            if curl -q --fail --silent --show-error --max-time 1 http://127.0.0.1:18180/livez >/dev/null; then
+              ready=1
+              break
+            fi
+            if ! kill -0 "$pg_erd_pid" 2>/dev/null; then
+              echo "pg-erd candidate exited before becoming live" >&2
+              exit 1
+            fi
+            sleep 0.1
+          done
+          if [ "$ready" -ne 1 ]; then
+            echo "pg-erd candidate never became live" >&2
+            exit 1
+          fi
+
+          while IFS= read -r -d '' path; do test "$(git --no-replace-objects hash-object --no-filters -- "$path")" = "$(git --no-replace-objects rev-parse "HEAD:$path")"; done < <(git --no-replace-objects ls-tree -r --name-only -z HEAD -- tests/load/pg_erd_gateway_smoke.js)
+          git --no-replace-objects ls-files -z -- tests/load/pg_erd_gateway_smoke.js | git --no-replace-objects update-index --no-assume-unchanged --no-skip-worktree -z --stdin
+          git --no-replace-objects diff --no-ext-diff --no-textconv --exit-code HEAD -- tests/load/pg_erd_gateway_smoke.js
+          unset TAR_OPTIONS
+          rm -rf /tmp/cwl-k6-routed
+          mkdir -p /tmp/cwl-k6-routed
+          echo "b5a8003c86f35f5cd5ceef1490312c48e587696c94d998cefc6d7b3b4cb1597d  /tmp/k6-v2.2.0-linux-amd64.tar.gz" | sha256sum --check --strict
+          tar -xzf /tmp/k6-v2.2.0-linux-amd64.tar.gz -C /tmp/cwl-k6-routed
+          cmp --silent /tmp/cwl-k6-routed/k6-v2.2.0-linux-amd64/k6 /usr/local/bin/k6
+          while IFS='=' read -r k6_env _; do
+            case "$k6_env" in
+              K6_*)
+                if [[ "$k6_env" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+                  unset "$k6_env"
+                else
+                  echo "unsupported inherited k6 environment name: $k6_env" >&2
+                  exit 1
+                fi
+                ;;
+            esac
+          done < <(/usr/bin/env)
+          printf '%s\n' '{}' > /tmp/cwl-k6-routed/config.json
+          PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
+            /usr/local/bin/k6 run --no-usage-report --config /tmp/cwl-k6-routed/config.json --quiet tests/load/pg_erd_gateway_smoke.js
+      - name: Require routed pg-erd latency summary
+        run: test -s k6-pg-erd-summary.json
+      - name: Upload routed pg-erd exact-SHA load evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: k6-pg-erd-loopback-${{ env.EXPECTED_SHA }}
+          path: k6-pg-erd-summary.json
           if-no-files-found: ignore
           retention-days: 7
 
@@ -229,14 +518,18 @@ jobs:
             --mount "type=bind,src=${PWD}/examples/gateway.yaml,dst=/etc/cwl/gateway.yaml,readonly" \
             "${image}" \
             --config /etc/cwl/gateway.yaml)"
-          trap 'docker logs "${cid}" || true; docker rm --force "${cid}" >/dev/null 2>&1 || true' EXIT
+          cleanup() {
+            docker logs "${cid}" || true
+            docker rm --force "${cid}" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
 
           test "$(docker inspect "${cid}" --format '{{.HostConfig.ReadonlyRootfs}}')" = "true"
           test "$(docker inspect "${cid}" --format '{{json .HostConfig.CapDrop}}')" = '["ALL"]'
           docker inspect "${cid}" --format '{{json .HostConfig.SecurityOpt}}' | grep -Fq 'no-new-privileges'
 
           for _ in $(seq 1 80); do
-            if curl --fail --silent --show-error --max-time 1 http://127.0.0.1:6188/livez >/dev/null; then
+            if curl -q --fail --silent --show-error --max-time 1 http://127.0.0.1:6188/livez >/dev/null; then
               exit 0
             fi
             if ! docker inspect "${cid}" --format '{{.State.Running}}' | grep -qx true; then
@@ -273,8 +566,8 @@ jobs:
           docker inspect "${cid}" --format '{{json .HostConfig.SecurityOpt}}' | grep -Fq 'no-new-privileges'
 
           for _ in $(seq 1 80); do
-            if curl --fail --silent --show-error --max-time 1 http://127.0.0.1:6288/livez >/dev/null \
-              && metrics_content_type="$(curl --fail --silent --show-error --max-time 1 --output /dev/null --write-out '%{content_type}' http://127.0.0.1:6289/metrics)" \
+            if curl -q --fail --silent --show-error --max-time 1 http://127.0.0.1:6288/livez >/dev/null \
+              && metrics_content_type="$(curl -q --fail --silent --show-error --max-time 1 --output /dev/null --write-out '%{content_type}' http://127.0.0.1:6289/metrics)" \
               && [[ "${metrics_content_type%%;*}" == "text/plain" ]]; then
               exit 0
             fi
