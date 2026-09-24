@@ -16,7 +16,7 @@ const ROUTED_STEP: &str = "Run routed pg-erd loopback traffic";
 const CANONICAL_SHELL: &str =
     "/usr/bin/env -u POSIXLY_CORRECT /bin/bash --noprofile --norc -p -eo pipefail {0}";
 
-fn routed_shell(source: &str) -> Option<&str> {
+fn routed_shell(source: &str) -> Option<String> {
     let document = serde_yaml::from_str::<Value>(source).ok()?;
     let steps = document
         .get("jobs")?
@@ -26,12 +26,12 @@ fn routed_shell(source: &str) -> Option<&str> {
     let mut matches = steps
         .iter()
         .filter(|step| step.get("name").and_then(Value::as_str) == Some(ROUTED_STEP));
-    let shell = matches.next()?.get("shell")?.as_str()?;
+    let shell = matches.next()?.get("shell")?.as_str()?.to_owned();
     matches.next().is_none().then_some(shell)
 }
 
 fn routed_bash_startup_is_isolated(source: &str) -> bool {
-    routed_shell(source) == Some(CANONICAL_SHELL)
+    routed_shell(source).as_deref() == Some(CANONICAL_SHELL)
 }
 
 #[test]
