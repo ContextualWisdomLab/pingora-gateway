@@ -20,7 +20,7 @@ const CANONICAL_PATH: &str =
 const CANONICAL_CARGO_HOME: &str = "declare -rx CARGO_HOME=/tmp/cwl-routed-cargo-home";
 const CANONICAL_RUSTUP_HOME: &str = "declare -rx RUSTUP_HOME=/etc/skel/.rustup";
 const CANONICAL_RUSTUP_TOOLCHAIN: &str =
-    "declare -rx RUSTUP_TOOLCHAIN=stable-x86_64-unknown-linux-gnu";
+    "declare -rx RUSTUP_TOOLCHAIN=1.98.1-x86_64-unknown-linux-gnu";
 const ROUTED_URL_ASSIGNMENT: &str = "PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \\";
 const ROUTED_K6: &str = "/usr/local/bin/k6 run --quiet tests/load/pg_erd_gateway_smoke.js";
 const K6_PATH: &str = "/usr/local/bin/k6";
@@ -220,11 +220,27 @@ readonly BASH_CMDS
 readonly PATH=/etc/skel/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 declare -rx CARGO_HOME=/tmp/cwl-routed-cargo-home
 declare -rx RUSTUP_HOME=/etc/skel/.rustup
-declare -rx RUSTUP_TOOLCHAIN=stable-x86_64-unknown-linux-gnu
+declare -rx RUSTUP_TOOLCHAIN=1.98.1-x86_64-unknown-linux-gnu
 PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
   /usr/local/bin/k6 run --quiet tests/load/pg_erd_gateway_smoke.js
 "#;
     assert!(routed_shell_environment_is_stable(run));
+}
+
+#[test]
+fn floating_rustup_toolchain_is_rejected() {
+    let run = r#"
+set -euo pipefail
+readonly EXPECTED_SHA
+readonly BASH_CMDS
+readonly PATH=/etc/skel/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+declare -rx CARGO_HOME=/tmp/cwl-routed-cargo-home
+declare -rx RUSTUP_HOME=/etc/skel/.rustup
+declare -rx RUSTUP_TOOLCHAIN=stable-x86_64-unknown-linux-gnu
+PG_ERD_GATEWAY_URL=http://127.0.0.1:18180 \
+  /usr/local/bin/k6 run --quiet tests/load/pg_erd_gateway_smoke.js
+"#;
+    assert!(!routed_shell_environment_is_stable(run));
 }
 
 #[test]
