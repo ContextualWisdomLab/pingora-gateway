@@ -215,6 +215,7 @@ jobs:
           unset OPENSSL_LOCAL_CONFIG_DIR
           unset NM
           unset KERNEL_BITS
+          unset LDFLAGS LDLIBS
           unset MAKEFLAGS MFLAGS GNUMAKEFLAGS MAKEFILES
           unset OPENSSL_SRC_PERL
           while IFS='=' read -r perl_env _; do
