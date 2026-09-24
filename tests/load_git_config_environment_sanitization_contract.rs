@@ -1,9 +1,10 @@
 //! Fail-closed contract for inherited Git protected-configuration authority in routed evidence.
 //!
 //! Git reads system/global configuration before repository-local configuration and also accepts
-//! command-scope configuration through `GIT_CONFIG_COUNT` plus numbered key/value pairs. The routed
-//! step uses Git as a provenance oracle, so inherited runner configuration must not be able to
-//! redirect those protected configuration scopes. System/global files are pinned to `/dev/null`,
+//! command-scope configuration through `GIT_CONFIG_COUNT` plus numbered key/value pairs and the
+//! legacy/internal `GIT_CONFIG_PARAMETERS` transport used to propagate `-c` configuration. The
+//! routed step uses Git as a provenance oracle, so inherited runner configuration must not be able
+//! to redirect those protected configuration scopes. System/global files are pinned to `/dev/null`,
 //! and command-scope/system-suppression environment authority is removed before the first Git proof.
 
 use serde_yaml::Value;
@@ -14,7 +15,8 @@ const LOAD_JOB: &str = "load-contract";
 const ROUTED_STEP: &str = "Run routed pg-erd loopback traffic";
 const GLOBAL_CONFIG: &str = "declare -rx GIT_CONFIG_GLOBAL=/dev/null";
 const SYSTEM_CONFIG: &str = "declare -rx GIT_CONFIG_SYSTEM=/dev/null";
-const CONFIG_SANITIZER: &str = "unset GIT_CONFIG_NOSYSTEM GIT_CONFIG_COUNT";
+const CONFIG_SANITIZER: &str =
+    "unset GIT_CONFIG_NOSYSTEM GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS";
 const FIRST_GIT_PROOF: &str =
     "test \"$(git --no-replace-objects rev-parse HEAD)\" = \"$EXPECTED_SHA\"";
 
@@ -70,6 +72,14 @@ fn live_routed_evidence_neutralizes_inherited_git_config_authority() {
 fn missing_command_scope_sanitizer_is_rejected() {
     let source = format!(
         "jobs:\n  load-contract:\n    steps:\n      - name: {ROUTED_STEP}\n        run: |\n          {GLOBAL_CONFIG}\n          {SYSTEM_CONFIG}\n          {FIRST_GIT_PROOF}\n"
+    );
+    assert!(!git_config_environment_is_canonical(&source));
+}
+
+#[test]
+fn legacy_config_count_only_sanitizer_is_rejected() {
+    let source = format!(
+        "jobs:\n  load-contract:\n    steps:\n      - name: {ROUTED_STEP}\n        run: |\n          {GLOBAL_CONFIG}\n          {SYSTEM_CONFIG}\n          unset GIT_CONFIG_NOSYSTEM GIT_CONFIG_COUNT\n          {FIRST_GIT_PROOF}\n"
     );
     assert!(!git_config_environment_is_canonical(&source));
 }
