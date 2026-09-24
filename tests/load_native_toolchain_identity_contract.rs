@@ -2,8 +2,9 @@
 //!
 //! Sanitizing environment variables is not sufficient when the hosted Ubuntu image itself can move.
 //! The routed release build compiles vendored OpenSSL and other native dependencies with the system
-//! C toolchain, GNU make, Perl, CMake, pkg-config, and binutils. Exact evidence therefore verifies the
-//! versions documented by the admitted Ubuntu 24.04 runner image before rebuilding the candidate.
+//! C toolchain, assembler, GNU make, Perl, CMake, pkg-config, and binutils. Exact evidence therefore
+//! verifies the versions documented by the admitted Ubuntu 24.04 runner image before rebuilding the
+//! candidate.
 
 use serde_yaml::Value;
 use std::fs;
@@ -15,6 +16,7 @@ const CARGO_CLEAN: &str = "cargo clean --release";
 const CARGO_BUILD: &str = "cargo build --release --locked --bin cwl-pingora-pg-erd-migration";
 const REQUIRED_ASSERTIONS: &[&str] = &[
     "[[ \"$(cc -dumpfullversion -dumpversion)\" == \"13.3.0\" ]]",
+    "[[ \"$(as --version | head -n1)\" == \"GNU assembler (GNU Binutils for Ubuntu) 2.42\" ]]",
     "[[ \"$(make --version | head -n1)\" == \"GNU Make 4.3\" ]]",
     "[[ \"$(perl -e 'print $^V')\" == \"v5.38.2\" ]]",
     "[[ \"$(cmake --version | head -n1)\" == \"cmake version 3.31.6\" ]]",
