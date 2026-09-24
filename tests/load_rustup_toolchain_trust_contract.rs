@@ -17,7 +17,7 @@ const CANONICAL_PATH: &str =
 const CANONICAL_CARGO_HOME: &str = "declare -rx CARGO_HOME=/tmp/cwl-routed-cargo-home";
 const CANONICAL_RUSTUP_HOME: &str = "declare -rx RUSTUP_HOME=/etc/skel/.rustup";
 const CANONICAL_RUSTUP_TOOLCHAIN: &str =
-    "declare -rx RUSTUP_TOOLCHAIN=stable-x86_64-unknown-linux-gnu";
+    "declare -rx RUSTUP_TOOLCHAIN=1.98.1-x86_64-unknown-linux-gnu";
 
 const FORBIDDEN_ENV_KEYS: &[&str] = &[
     "RUSTC",
@@ -174,7 +174,7 @@ jobs:
           set -euo pipefail
           readonly PATH=/etc/skel/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
           readonly RUSTUP_HOME=/etc/skel/.rustup
-          readonly RUSTUP_TOOLCHAIN=stable-x86_64-unknown-linux-gnu
+          readonly RUSTUP_TOOLCHAIN=1.98.1-x86_64-unknown-linux-gnu
           rustc --version
 "#;
     assert!(!routed_rust_toolchain_is_root_owned(source));
@@ -197,7 +197,7 @@ jobs:
           readonly PATH=/etc/skel/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
           declare -rx CARGO_HOME=/tmp/cwl-routed-cargo-home
           declare -rx RUSTUP_HOME=/etc/skel/.rustup
-          declare -rx RUSTUP_TOOLCHAIN=stable-x86_64-unknown-linux-gnu
+          declare -rx RUSTUP_TOOLCHAIN=1.98.1-x86_64-unknown-linux-gnu
 "#;
     assert!(!routed_rust_toolchain_is_root_owned(source));
 }
@@ -219,7 +219,7 @@ jobs:
           readonly PATH=/etc/skel/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
           declare -rx CARGO_HOME=/tmp/cwl-routed-cargo-home
           declare -rx RUSTUP_HOME=/etc/skel/.rustup
-          declare -rx RUSTUP_TOOLCHAIN=stable-x86_64-unknown-linux-gnu
+          declare -rx RUSTUP_TOOLCHAIN=1.98.1-x86_64-unknown-linux-gnu
 "#;
     assert!(!routed_rust_toolchain_is_root_owned(source));
 }
@@ -239,7 +239,7 @@ jobs:
           readonly PATH=/etc/skel/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
           declare -rx CARGO_HOME=/tmp/cwl-routed-cargo-home
           declare -rx RUSTUP_HOME=/etc/skel/.rustup
-          declare -rx RUSTUP_TOOLCHAIN=stable-x86_64-unknown-linux-gnu
+          declare -rx RUSTUP_TOOLCHAIN=1.98.1-x86_64-unknown-linux-gnu
           RUSTFLAGS="-C target-cpu=native" cargo build --release --locked --bin cwl-pingora-pg-erd-migration
 "#;
     assert!(!routed_rust_toolchain_is_root_owned(source));
@@ -260,7 +260,7 @@ jobs:
           readonly PATH=/etc/skel/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
           declare -rx CARGO_HOME=/tmp/cwl-routed-cargo-home
           declare -rx RUSTUP_HOME=/etc/skel/.rustup
-          declare -rx RUSTUP_TOOLCHAIN=stable-x86_64-unknown-linux-gnu
+          declare -rx RUSTUP_TOOLCHAIN=1.98.1-x86_64-unknown-linux-gnu
           rustc --version
 "#;
     assert!(routed_rust_toolchain_is_root_owned(source));
