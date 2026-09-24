@@ -6,7 +6,9 @@
 //! while `GLIBC_TUNABLES` can alter runtime behavior relevant to a latency receipt. These controls
 //! must not become an unreviewed authority over exact-head source checks, candidate construction,
 //! or the measured process. YAML `env:` is not the only authority: Bash also permits process-local
-//! assignment words such as `LD_PRELOAD=/tmp/interpose.so cargo build ...`.
+//! assignment words such as `LD_PRELOAD=/tmp/interpose.so cargo build ...`. Explicit empty values
+//! are admitted only as neutralization; non-empty, expression-valued, null, or other values remain
+//! authority and fail closed.
 
 use serde_yaml::Value;
 use std::fs;
@@ -22,8 +24,12 @@ fn env_sets_dynamic_loader_authority(node: &Value) -> bool {
     node.get("env")
         .and_then(Value::as_mapping)
         .is_some_and(|env| {
-            env.keys().filter_map(Value::as_str).any(|key| {
-                key.starts_with("LD_") || key == "GLIBC_TUNABLES"
+            env.iter().any(|(key, value)| {
+                let Some(key) = key.as_str() else {
+                    return false;
+                };
+                let is_loader_control = key.starts_with("LD_") || key == "GLIBC_TUNABLES";
+                is_loader_control && value.as_str() != Some("")
             })
         })
 }
@@ -182,6 +188,51 @@ jobs:
       - name: Run routed pg-erd loopback traffic
         env:
           GLIBC_TUNABLES: glibc.malloc.tcache_count=0
+        run: echo measured
+      - name: Require routed pg-erd latency summary
+        run: echo summary
+"#;
+
+    assert!(!load_evidence_has_closed_dynamic_loader_environment(source));
+}
+
+#[test]
+fn routed_explicit_empty_loader_environment_is_neutralization_not_authority() {
+    let source = r#"
+jobs:
+  load-contract:
+    steps:
+      - name: Checkout exact revision
+        run: echo checkout
+      - name: Verify checkout identity
+        run: echo verify
+      - name: Run routed pg-erd loopback traffic
+        env:
+          LD_PRELOAD: ""
+          LD_LIBRARY_PATH: ""
+          LD_AUDIT: ""
+          GLIBC_TUNABLES: ""
+        run: echo measured
+      - name: Require routed pg-erd latency summary
+        run: echo summary
+"#;
+
+    assert!(load_evidence_has_closed_dynamic_loader_environment(source));
+}
+
+#[test]
+fn routed_null_loader_environment_remains_authority() {
+    let source = r#"
+jobs:
+  load-contract:
+    steps:
+      - name: Checkout exact revision
+        run: echo checkout
+      - name: Verify checkout identity
+        run: echo verify
+      - name: Run routed pg-erd loopback traffic
+        env:
+          LD_PRELOAD:
         run: echo measured
       - name: Require routed pg-erd latency summary
         run: echo summary
