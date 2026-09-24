@@ -105,7 +105,7 @@ jobs:
           set -euo pipefail
           unset TAR_OPTIONS
           archive="k6-v2.2.0-linux-amd64.tar.gz"
-          curl --fail --location --silent --show-error \
+          curl -q --fail --location --silent --show-error \
             "https://github.com/grafana/k6/releases/download/v2.2.0/${archive}" \
             --output "/tmp/${archive}"
           echo "b5a8003c86f35f5cd5ceef1490312c48e587696c94d998cefc6d7b3b4cb1597d  /tmp/${archive}" | sha256sum --check --strict
@@ -159,7 +159,7 @@ jobs:
           # Prove the measured Rust origin has bound before gateway startup and measured traffic.
           # This is fixture liveness, not a gateway-route warm-up.
           for _ in $(seq 1 80); do
-            if curl --fail --silent --show-error --max-time 1 http://127.0.0.1:18081/fixture-ready >/dev/null; then
+            if curl -q --fail --silent --show-error --max-time 1 http://127.0.0.1:18081/fixture-ready >/dev/null; then
               break
             fi
             if ! kill -0 "$upstream_pid" 2>/dev/null; then
@@ -168,13 +168,13 @@ jobs:
             fi
             sleep 0.05
           done
-          curl --fail --silent --show-error --max-time 1 http://127.0.0.1:18081/fixture-ready >/dev/null
+          curl -q --fail --silent --show-error --max-time 1 http://127.0.0.1:18081/fixture-ready >/dev/null
 
           target/release/cwl-pingora-gateway --config /tmp/gateway-load.yaml >/tmp/gateway-load.log 2>&1 &
           gateway_pid=$!
 
           for _ in $(seq 1 80); do
-            if curl --fail --silent --show-error --max-time 1 http://127.0.0.1:18080/livez >/dev/null; then
+            if curl -q --fail --silent --show-error --max-time 1 http://127.0.0.1:18080/livez >/dev/null; then
               break
             fi
             if ! kill -0 "$gateway_pid" 2>/dev/null; then
@@ -183,7 +183,7 @@ jobs:
             fi
             sleep 0.1
           done
-          curl --fail --silent --show-error --max-time 1 http://127.0.0.1:18080/livez >/dev/null
+          curl -q --fail --silent --show-error --max-time 1 http://127.0.0.1:18080/livez >/dev/null
 
           while IFS='=' read -r k6_env _; do
             case "$k6_env" in
@@ -389,7 +389,7 @@ jobs:
           for origin in 18181 18183; do
             ready=0
             for _ in $(seq 1 80); do
-              if curl --fail --silent --show-error --max-time 1 "http://127.0.0.1:${origin}/fixture-ready" >/dev/null; then
+              if curl -q --fail --silent --show-error --max-time 1 "http://127.0.0.1:${origin}/fixture-ready" >/dev/null; then
                 ready=1
                 break
               fi
@@ -429,7 +429,7 @@ jobs:
           pg_erd_pid=$!
           ready=0
           for _ in $(seq 1 80); do
-            if curl --fail --silent --show-error --max-time 1 http://127.0.0.1:18180/livez >/dev/null; then
+            if curl -q --fail --silent --show-error --max-time 1 http://127.0.0.1:18180/livez >/dev/null; then
               ready=1
               break
             fi
@@ -529,7 +529,7 @@ jobs:
           docker inspect "${cid}" --format '{{json .HostConfig.SecurityOpt}}' | grep -Fq 'no-new-privileges'
 
           for _ in $(seq 1 80); do
-            if curl --fail --silent --show-error --max-time 1 http://127.0.0.1:6188/livez >/dev/null; then
+            if curl -q --fail --silent --show-error --max-time 1 http://127.0.0.1:6188/livez >/dev/null; then
               exit 0
             fi
             if ! docker inspect "${cid}" --format '{{.State.Running}}' | grep -qx true; then
@@ -566,8 +566,8 @@ jobs:
           docker inspect "${cid}" --format '{{json .HostConfig.SecurityOpt}}' | grep -Fq 'no-new-privileges'
 
           for _ in $(seq 1 80); do
-            if curl --fail --silent --show-error --max-time 1 http://127.0.0.1:6288/livez >/dev/null \
-              && metrics_content_type="$(curl --fail --silent --show-error --max-time 1 --output /dev/null --write-out '%{content_type}' http://127.0.0.1:6289/metrics)" \
+            if curl -q --fail --silent --show-error --max-time 1 http://127.0.0.1:6288/livez >/dev/null \
+              && metrics_content_type="$(curl -q --fail --silent --show-error --max-time 1 --output /dev/null --write-out '%{content_type}' http://127.0.0.1:6289/metrics)" \
               && [[ "${metrics_content_type%%;*}" == "text/plain" ]]; then
               exit 0
             fi
