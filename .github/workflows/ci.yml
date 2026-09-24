@@ -226,6 +226,7 @@ jobs:
           unset NM
           unset KERNEL_BITS
           unset AS ASFLAGS
+          unset CPP LD
           unset LDFLAGS LDLIBS
           unset CPPFLAGS __CNF_CPPDEFINES __CNF_CPPINCLUDES __CNF_CPPFLAGS __CNF_CFLAGS __CNF_CXXFLAGS __CNF_LDFLAGS __CNF_LDLIBS
           unset MAKEFLAGS MFLAGS GNUMAKEFLAGS MAKEFILES
