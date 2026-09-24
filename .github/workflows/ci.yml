@@ -184,7 +184,23 @@ jobs:
           done
           curl --fail --silent --show-error --max-time 1 http://127.0.0.1:18080/livez >/dev/null
 
-          GATEWAY_URL=http://127.0.0.1:18080 k6 run --quiet tests/load/gateway_smoke.js
+          while IFS='=' read -r k6_env _; do
+            case "$k6_env" in
+              K6_*)
+                if [[ "$k6_env" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+                  unset "$k6_env"
+                else
+                  echo "unsupported inherited k6 environment name: $k6_env" >&2
+                  exit 1
+                fi
+                ;;
+            esac
+          done < <(/usr/bin/env)
+          rm -rf /tmp/cwl-k6-generic
+          mkdir -p /tmp/cwl-k6-generic
+          printf '%s\n' '{}' > /tmp/cwl-k6-generic/config.json
+          GATEWAY_URL=http://127.0.0.1:18080 \
+            /usr/local/bin/k6 run --no-usage-report --config /tmp/cwl-k6-generic/config.json --quiet tests/load/gateway_smoke.js
       - name: Require loopback latency summary
         run: test -s k6-summary.json
       - name: Upload loopback latency evidence
