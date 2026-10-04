@@ -6,6 +6,14 @@ Run `cwl-pingora-gateway --config /path/to/gateway.yaml`. Configuration is read 
 
 The trust bundle is deployment input, not certificate-authority ownership. Mount it read-only from the platform or canonical secret/certificate owner and rotate it by replacing the deployment revision. The gateway does not issue certificates, manage ACME, or write trust material.
 
+## Configuration-only preflight
+
+Run `cwl-pingora-gateway --check --config /path/to/gateway.yaml` (or `--config /path/to/gateway.yaml --check`) before starting a deployment. Both forms require exactly one explicit configuration path and at most one `--check`; unknown arguments, repeated options and missing path values fail closed. Success prints only `gateway configuration is valid` to stdout and exits 0. Validation failures exit 2 with a diagnostic on stderr and no success line. Invalid configuration semantics produce a static contract diagnostic rather than echoing YAML values; the library's structured configuration errors remain available to callers.
+
+Preflight uses the normal strict versioned configuration parser and upstream trust-bundle loader, then returns before constructing or bootstrapping a Pingora server. It does not bind the traffic or metrics listener or contact the upstream; occupied listener ports and an unreachable upstream do not invalidate a locally valid configuration.
+
+This is local validation only, not proof of upstream reachability, free ports, issuer identity, TLS handshake success, deployment readiness, or release readiness. Certificate issuance/rotation and release gates retain their existing owners. Normal startup rereads configuration and trust material after preflight: files, permissions and environment may have changed, so a prior successful check never replaces startup validation. Omitting `--check` preserves the normal serving lifecycle.
+
 ## Health and backpressure
 
 `/livez` and `/readyz` return 200 with `Cache-Control: no-store` through the Pingora serving path. In v1 readiness is process/configuration readiness, not upstream reachability. Do not use it as proof that a dependent application is healthy.

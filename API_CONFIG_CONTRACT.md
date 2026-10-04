@@ -21,6 +21,8 @@ upstreams:
       idle_ms: 10000
 ```
 
+The binary accepts `--config PATH` for normal serving and optionally one `--check` before or after that pair for configuration-only preflight. Check mode validates this same contract and the same custom trust material, prints `gateway configuration is valid` on success, and exits without starting listeners. Empty paths and option-shaped path values are rejected; prefix a filename beginning with `--` with `./`. It is not an upstream probe, port-availability check, issuer-identity check, or deployment/release admission. Normal serving always reads and validates its own inputs again.
+
 Unknown fields are rejected. `version` must be `1`. `listener`, `metrics_listener`, and `address` are socket addresses. Traffic and metrics listeners must be distinct. `max_request_body_bytes`, `max_in_flight_requests`, and `upstream_keepalive_pool_size` must all be positive. V1 requires exactly one upstream and a non-empty stable upstream name. Every timeout must be positive.
 
 `max_in_flight_requests` is a process-local backpressure boundary for non-health downstream requests. When the budget is exhausted, the runtime fails fast with HTTP 503 instead of admitting unbounded work. `/livez` and `/readyz` bypass this application admission budget so saturation does not hide process health. The admission lease is released when the request context ends, including failed requests. `upstream_keepalive_pool_size` is wired directly into Pingora's `ServerConf`; the runtime does not inherit Pingora's framework default of 128 reusable upstream connections.

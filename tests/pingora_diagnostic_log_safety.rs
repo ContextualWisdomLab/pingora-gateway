@@ -177,7 +177,14 @@ fn accept_origin(origin: &TcpListener) -> TcpStream {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         match origin.accept() {
-            Ok((stream, _)) => return stream,
+            Ok((stream, _)) => {
+                // macOS inherits the listener's nonblocking mode on accepted sockets. Restore
+                // blocking reads so the whole-header deadline, not connect/header timing, governs.
+                stream
+                    .set_nonblocking(false)
+                    .expect("accepted origin stream should use bounded blocking reads");
+                return stream;
+            }
             Err(error) if error.kind() == ErrorKind::WouldBlock => {
                 assert!(
                     Instant::now() < deadline,
@@ -188,6 +195,35 @@ fn accept_origin(origin: &TcpListener) -> TcpStream {
             Err(error) => panic!("unexpected origin accept failure: {error}"),
         }
     }
+}
+
+/// Keeps accepted-origin reads bounded but blocking when connection establishment precedes headers.
+#[test]
+fn accepted_origin_waits_for_delayed_request_headers() {
+    let origin = TcpListener::bind("127.0.0.1:0").expect("origin fixture should bind");
+    let address = origin.local_addr().expect("origin address should exist");
+    let (accepted_tx, accepted_rx) = std::sync::mpsc::channel();
+    let reader = thread::spawn(move || {
+        let mut stream = accept_origin(&origin);
+        accepted_tx
+            .send(())
+            .expect("acceptance should be observable");
+        read_request_headers(&mut stream)
+    });
+    let mut client = TcpStream::connect(address).expect("client should connect");
+    accepted_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("origin should accept within the fixture budget");
+    thread::sleep(Duration::from_millis(50));
+    let written = client.write_all(b"GET /delayed HTTP/1.1\r\nHost: fixture.test\r\n\r\n");
+    let request = reader
+        .join()
+        .expect("delayed request should remain readable");
+    written.expect("client request should be writable");
+    assert_eq!(
+        request,
+        "GET /delayed HTTP/1.1\r\nHost: fixture.test\r\n\r\n"
+    );
 }
 
 /// Reads one origin request header inside one whole-header deadline and finite byte budget.

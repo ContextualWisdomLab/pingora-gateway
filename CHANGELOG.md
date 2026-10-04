@@ -4,6 +4,8 @@ All notable changes are tracked here. No release has been published yet.
 
 ## Unreleased
 
+- Added optional `--check --config PATH` configuration-only preflight (either flag ordering), reusing normal strict configuration and custom trust validation without constructing a server or binding listeners; normal serving still validates its own inputs and release gates remain unchanged.
+- Bounded binary configuration-semantic diagnostics to a static message so malformed YAML or invalid upstream names cannot echo input values; library configuration/error APIs remain unchanged.
 - Bootstrapped an executable Rust Pingora proxy through pull-request governance.
 - Added strict v1 configuration, explicit one-upstream network authority, TLS identity verification, and explicit upstream I/O budgets.
 - Added mandatory positive `max_in_flight_requests` and `upstream_keepalive_pool_size` capacity budgets; Pingora's framework keepalive default is overridden from the validated edge contract.

@@ -13,11 +13,11 @@ use std::process::ExitCode;
 use cwl_pingora_gateway::gateway_proxy::GatewayProxy;
 use cwl_pingora_gateway::logging_policy::init_runtime_logging;
 use cwl_pingora_gateway::runtime_policy::build_server_conf;
-use cwl_pingora_gateway::startup::GatewayCommand;
+use cwl_pingora_gateway::startup::{GatewayCommand, GatewayCommandError};
 use pingora::prelude::{http_proxy_service, Server};
 use pingora::server::RunArgs;
 
-/// Initializes payload-safe logging, validates Admin Config, then grants listener authority.
+/// Initializes payload-safe logging, validates config/trust, and either checks or grants authority.
 fn main() -> ExitCode {
     init_runtime_logging();
 
@@ -28,12 +28,19 @@ fn main() -> ExitCode {
     };
     let config = match command.load_config() {
         Ok(config) => config,
+        Err(GatewayCommandError::InvalidConfig { .. }) => {
+            return exit_with_error("gateway configuration is invalid for the current contract");
+        }
         Err(error) => return exit_with_error(error),
     };
     let proxy = match GatewayProxy::try_from_config(&config) {
         Ok(proxy) => proxy,
         Err(error) => return exit_with_error(error),
     };
+    if command.check_only() {
+        println!("gateway configuration is valid");
+        return ExitCode::SUCCESS;
+    }
     let listener = config.listener.to_string();
     let metrics_listener = config.metrics_listener.to_string();
 
