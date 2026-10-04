@@ -20,7 +20,11 @@ env:
 jobs:
   test:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
-    runs-on: ubuntu-24.04
+    # Public PR code must never enter persistent privileged/control capacity.
+    # Missing isolated capacity remains a visible admission failure, not a fallback.
+    runs-on:
+      group: CWL CI isolated
+      labels: [self-hosted, Linux, X64, cwlab-ci-isolated]
     steps:
       - name: Checkout exact revision
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
@@ -75,7 +79,11 @@ jobs:
 
   load-contract:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
-    runs-on: ubuntu-24.04
+    # Public PR code must never enter persistent privileged/control capacity.
+    # Missing isolated capacity remains a visible admission failure, not a fallback.
+    runs-on:
+      group: CWL CI isolated
+      labels: [self-hosted, Linux, X64, cwlab-ci-isolated]
     timeout-minutes: 15
     steps:
       - name: Checkout exact revision
@@ -186,7 +194,11 @@ jobs:
 
   oci-runtime:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
-    runs-on: ubuntu-24.04
+    # Public PR code must never enter persistent privileged/control capacity.
+    # Missing isolated capacity remains a visible admission failure, not a fallback.
+    runs-on:
+      group: CWL CI isolated
+      labels: [self-hosted, Linux, X64, cwlab-ci-isolated]
     steps:
       - name: Checkout exact revision
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
