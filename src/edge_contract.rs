@@ -5,7 +5,7 @@
 //! consumer products never depend on Pingora internals.
 
 use std::collections::HashSet;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 
 use serde::Deserialize;
@@ -89,6 +89,12 @@ pub enum GatewayConfigError {
     /// Traffic and metrics endpoints must never compete for the same socket authority.
     #[error("listener and metrics_listener must use distinct socket addresses")]
     ListenerCollision,
+    /// Upstream authority must not resolve back into a socket owned by this gateway process.
+    #[error("upstream {upstream_name} must not overlap a gateway listener authority")]
+    UpstreamListenerCollision {
+        /// Stable upstream whose transport authority overlaps traffic or metrics listener authority.
+        upstream_name: String,
+    },
     /// A zero request-body limit would reject every body and is almost certainly misconfiguration.
     #[error("max_request_body_bytes must be greater than zero")]
     InvalidRequestBodyLimit,
@@ -199,6 +205,13 @@ impl GatewayConfig {
         for upstream in &self.upstreams {
             upstream.validate()?;
             let normalized_name = upstream.name.trim();
+            if socket_authorities_overlap(self.listener, upstream.address)
+                || socket_authorities_overlap(self.metrics_listener, upstream.address)
+            {
+                return Err(GatewayConfigError::UpstreamListenerCollision {
+                    upstream_name: normalized_name.to_string(),
+                });
+            }
             if !names.insert(normalized_name) {
                 return Err(GatewayConfigError::DuplicateUpstreamName {
                     upstream_name: normalized_name.to_string(),
@@ -213,6 +226,45 @@ impl GatewayConfig {
         }
 
         Ok(())
+    }
+}
+
+/// Returns true when two listener declarations can claim the same effective socket authority.
+///
+/// IPv4-mapped IPv6 addresses are first reduced to their mapped IPv4 authority so wildcard and
+/// equality rules cannot diverge merely because two declarations use different address families.
+/// An unmapped IPv6 wildcard may also consume the IPv4 port on dual-stack platforms when
+/// `IPV6_V6ONLY` is disabled. These cases are rejected before listener activation while distinct
+/// concrete non-aliased addresses remain independent.
+pub(crate) fn socket_authorities_overlap(left: SocketAddr, right: SocketAddr) -> bool {
+    if left.port() != right.port() {
+        return false;
+    }
+
+    /// Address-family identity after IPv4-mapped alias normalization.
+    enum CanonicalIpAuthority {
+        /// Concrete or wildcard IPv4 socket authority.
+        V4(std::net::Ipv4Addr),
+        /// Unmapped IPv6 socket authority.
+        V6(std::net::Ipv6Addr),
+    }
+
+    let canonical = |ip: IpAddr| match ip {
+        IpAddr::V4(ipv4) => CanonicalIpAuthority::V4(ipv4),
+        IpAddr::V6(ipv6) => ipv6
+            .to_ipv4_mapped()
+            .map_or(CanonicalIpAuthority::V6(ipv6), CanonicalIpAuthority::V4),
+    };
+
+    match (canonical(left.ip()), canonical(right.ip())) {
+        (CanonicalIpAuthority::V4(left), CanonicalIpAuthority::V4(right)) => {
+            left == right || left.is_unspecified() || right.is_unspecified()
+        }
+        (CanonicalIpAuthority::V6(left), CanonicalIpAuthority::V6(right)) => {
+            left == right || left.is_unspecified() || right.is_unspecified()
+        }
+        (CanonicalIpAuthority::V6(ipv6), CanonicalIpAuthority::V4(_))
+        | (CanonicalIpAuthority::V4(_), CanonicalIpAuthority::V6(ipv6)) => ipv6.is_unspecified(),
     }
 }
 

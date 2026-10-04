@@ -4,6 +4,9 @@ All notable changes are tracked here. No release has been published yet.
 
 ## Unreleased
 
+- Made test startup lease release explicit so a forked pre-exec child cannot prolong a dropped parent lease; retained timeout, abrupt-exit and successor-ownership controls.
+- Reused the existing network-authority repair for generic v1: reject upstream overlap with the process traffic or metrics listener before serving or `--check`, with mapped-address/wildcard controls and bounded compiled startup tests. Zero/unspecified endpoints and listener-to-listener alias overlap remain separate gaps.
+
 - Added optional `--check --config PATH` configuration-only preflight (either flag ordering), reusing normal strict configuration and custom trust validation without constructing a server or binding listeners; normal serving still validates its own inputs and release gates remain unchanged.
 - Bounded binary configuration-semantic diagnostics to a static message so malformed YAML or invalid upstream names cannot echo input values; library configuration/error APIs remain unchanged.
 - Bootstrapped an executable Rust Pingora proxy through pull-request governance.

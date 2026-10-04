@@ -120,6 +120,30 @@ fn check_rejects_the_same_strict_config_failures_as_serving() {
     }
 }
 
+/// Both real process modes reject self-routing while fixture sockets stay occupied.
+#[test]
+fn check_and_serving_reject_upstream_into_process_owned_listeners() {
+    let traffic = TcpListener::bind("127.0.0.1:0").unwrap();
+    let metrics = TcpListener::bind("127.0.0.1:0").unwrap();
+    let directory = tempfile::tempdir_in(std::env::temp_dir()).unwrap();
+    let path = directory.path().join("gateway.yaml");
+    for target in [traffic.local_addr().unwrap(), metrics.local_addr().unwrap()] {
+        let config = config_source(traffic.local_addr().unwrap(), metrics.local_addr().unwrap())
+            .replace("address: 127.0.0.1:1", &format!("address: {target}"))
+            .replace("name: fixture", "name: config-credential-sentinel");
+        fs::write(&path, config).unwrap();
+        assert_same_failure(&path, "gateway configuration", "config-credential-sentinel");
+    }
+    traffic.set_nonblocking(true).unwrap();
+    metrics.set_nonblocking(true).unwrap();
+    for listener in [&traffic, &metrics] {
+        match listener.accept() {
+            Err(error) => assert_eq!(error.kind(), std::io::ErrorKind::WouldBlock),
+            Ok(_) => panic!("rejected configuration must not contact process-owned listener"),
+        }
+    }
+}
+
 #[test]
 fn check_rejects_unreadable_config_like_serving() {
     let directory = tempfile::tempdir_in(std::env::temp_dir()).unwrap();
