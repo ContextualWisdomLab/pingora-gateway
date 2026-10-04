@@ -12,10 +12,16 @@ fn assert_cpu_pool(source: &str, expected_jobs: usize) {
         "every direct job is accounted for"
     );
     for (name, job) in jobs {
-        let selector = job["runs-on"]
+        let selector = &job["runs-on"];
+        let mapping = selector
+            .as_mapping()
+            .expect("public PR execution must require the isolated runner group");
+        assert_eq!(mapping.len(), 2, "runner authority must have no extra keys");
+        assert_eq!(selector["group"].as_str(), Some("CWL CI isolated"));
+        let labels = selector["labels"]
             .as_sequence()
-            .expect("execution jobs must use an explicit self-hosted label sequence");
-        let actual: Vec<&str> = selector
+            .expect("isolated capability labels must be explicit");
+        let actual: Vec<&str> = labels
             .iter()
             .map(|label| {
                 label
@@ -25,7 +31,7 @@ fn assert_cpu_pool(source: &str, expected_jobs: usize) {
             .collect();
         assert_eq!(
             actual,
-            ["self-hosted", "Linux", "X64", "cwlab"],
+            ["self-hosted", "Linux", "X64", "cwlab-ci-isolated"],
             "job {name:?} must use the established organization CPU pool"
         );
     }
