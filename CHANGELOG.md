@@ -4,8 +4,9 @@ All notable changes are tracked here. No release has been published yet.
 
 ## Unreleased
 
+- Rejected port-zero traffic, metrics and upstream endpoints, unspecified upstream addresses (including `::ffff:0.0.0.0`), and wildcard/mapped/dual-stack alias overlap between the traffic and metrics listeners before serving or `--check`. Upstream self-routing is still reported first for listener aliases, after a blank upstream name. The listener-collision diagnostic now reads `listener and metrics_listener socket authorities must not overlap`. `GatewayConfigError` gains `ZeroListenerPort`, `ZeroMetricsListenerPort`, `ZeroUpstreamPort` and `UnspecifiedUpstreamAddress`; exhaustive external matches must add these variants.
 - Made test startup lease release explicit so a forked pre-exec child cannot prolong a dropped parent lease; retained timeout, abrupt-exit and successor-ownership controls.
-- Reused the existing network-authority repair for generic v1: reject upstream overlap with the process traffic or metrics listener before serving or `--check`, with mapped-address/wildcard controls and bounded compiled startup tests. Zero/unspecified endpoints and listener-to-listener alias overlap remain separate gaps.
+- Reused the existing network-authority repair for generic v1: reject upstream overlap with the process traffic or metrics listener before serving or `--check`, with mapped-address/wildcard controls and bounded compiled startup tests.
 
 - Added optional `--check --config PATH` configuration-only preflight (either flag ordering), reusing normal strict configuration and custom trust validation without constructing a server or binding listeners; normal serving still validates its own inputs and release gates remain unchanged.
 - Bounded binary configuration-semantic diagnostics to a static message so malformed YAML or invalid upstream names cannot echo input values; library configuration/error APIs remain unchanged.

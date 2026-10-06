@@ -53,7 +53,7 @@ cp examples/gateway.yaml ./gateway.yaml
 cargo run --locked --bin cwl-pingora-gateway -- --config ./gateway.yaml
 ```
 
-The configuration is fail-closed: unknown fields, unsupported versions, listener collisions, zero body/concurrency/keepalive budgets or timeouts, multiple v1 upstreams, and incomplete TLS identity are rejected rather than normalized into a guessed configuration.
+The configuration is fail-closed: unknown fields, unsupported versions, port-zero endpoints, unspecified upstream addresses, traffic/metrics listener overlap, upstream self-routing to either listener, zero body/concurrency/keepalive budgets or timeouts, multiple v1 upstreams, and incomplete TLS identity are rejected rather than normalized into a guessed configuration.
 
 Check the local process separately for liveness and readiness:
 
